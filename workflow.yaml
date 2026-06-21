@@ -1,0 +1,44 @@
+name: specrail
+version: 0.1.0
+description: Issue-first, spec-first, AI-assisted repository workflow pack.
+
+durable_state:
+  provider: github
+  objects:
+    - issues
+    - labels
+    - pull_requests
+    - comments
+    - reviews
+    - branches
+
+automation_policy:
+  default_mode: dry_run
+  allowed_agent_actions:
+    - propose_labels
+    - draft_specs
+    - review_pull_request
+    - diagnose_ci
+    - draft_release_notes
+  forbidden_agent_actions:
+    - final_approval
+    - merge
+    - force_push
+    - close_disputed_issue
+    - public_security_disclosure
+    - permission_change
+
+required_human_gates:
+  - readiness_label
+  - spec_approval
+  - final_pr_review
+  - security_decision
+  - merge
+  - release
+
+artifacts:
+  spec_packet: specs/GH{issue_number}/
+  product_spec: specs/GH{issue_number}/product.md
+  tech_spec: specs/GH{issue_number}/tech.md
+  agent_review: artifacts/review/pr-{pr_number}.json
+  triage_result: artifacts/triage/issue-{issue_number}.json
