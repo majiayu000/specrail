@@ -3,6 +3,17 @@
 This repository defines reusable repository workflow contracts. Keep changes
 small, explicit, and verifiable.
 
+## Agent Entry
+
+- Treat SpecRail as an agent-facing workflow contract, not a human project
+  management guide.
+- Read `AGENT_USAGE.md` before creating issues, specs, PRs, reviews, or
+  handoffs.
+- Use `PLAN.md` for current direction, known limits, and roadmap.
+- When the user writes Chinese or the selected locale is `zh-CN`, write
+  human-facing issue/spec/PR/handoff text in Chinese while keeping stable IDs,
+  paths, commands, and JSON keys in English.
+
 ## Rules
 
 - Search before adding a new workflow, schema, template, check, or policy.
@@ -19,4 +30,3 @@ Run before completion after changing workflow assets:
 ```sh
 python3 checks/check_workflow.py --repo .
 ```
-
