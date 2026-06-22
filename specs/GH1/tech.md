@@ -265,6 +265,80 @@ The relationship is:
 
 For example, a repository can run `workflow_run_mode: comment_only` with `evaluator_enforcement: required` to post comments but fail the check when a configured human gate is missing.
 
+### 10. Add localized presentation support
+
+Add a presentation layer that localizes human-facing text without changing machine-facing protocol identifiers.
+
+Configuration:
+
+```yaml
+presentation:
+  default_locale: en-US
+  supported_locales:
+    - en-US
+    - zh-CN
+  fallback_locale: en-US
+```
+
+Suggested files:
+
+```text
+locales/
+  en-US/messages.yaml
+  zh-CN/messages.yaml
+templates/
+  en-US/
+    issue_bug.md
+    issue_feature.md
+    product_spec.md
+    tech_spec.md
+    pull_request.md
+  zh-CN/
+    issue_bug.md
+    issue_feature.md
+    product_spec.md
+    tech_spec.md
+    pull_request.md
+```
+
+Keep the current root-level `templates/*.md` files as the default pack templates for backward compatibility. Localized template directories are optional overlays; when a localized file is missing, resolve in this order:
+
+1. requested locale template
+2. configured fallback locale template
+3. current root-level template
+
+Evaluator JSON should keep stable codes and include localized display text:
+
+```json
+{
+  "decision": "needs_human",
+  "messages": [
+    {
+      "code": "missing_readiness_label",
+      "message": "缺少人工确认的 readiness 标签，agent 不能继续实现。"
+    }
+  ]
+}
+```
+
+Do not translate these values:
+
+- action IDs such as `write_spec`
+- state IDs such as `ready_to_spec`
+- decision values such as `needs_human`
+- artifact IDs such as `product_spec`
+- schema keys and file names used by machine consumers
+- command names and CLI flags
+
+Locale selection should use this order:
+
+1. explicit CLI flag, for example `--locale zh-CN`
+2. explicit agent input
+3. `presentation.default_locale`
+4. fallback locale
+
+The Codex-facing skill should add a simple rule: when the user writes Chinese or the repo default locale is `zh-CN`, write issue bodies, PR bodies, summaries, and handoffs in Chinese while keeping stable IDs, paths, commands, and JSON keys unchanged.
+
 ## End-to-End Flow
 
 ```mermaid
@@ -292,15 +366,17 @@ Map to `product.md` behavior:
 - Behavior 9: test `dry_run`, `advisory`, and `required` mode exit-code behavior.
 - Behavior 10-13: add fixture-based tests for `write_spec`, `implement`, `review_pr`, and `fix_ci`.
 - Behavior 14: test both text output and stable JSON output.
-- Behavior 16: run all evaluator unit tests without network access.
-- Behavior 17: test malformed config, unknown states, conflicting labels, and impossible transitions.
-- Behavior 18: test that default config stays generic and repository-specific examples live in example overlays.
+- Behavior 16-19: test locale selection, `zh-CN` messages, stable untranslated IDs, and fallback when a localized message or template is missing.
+- Behavior 20: run all evaluator unit tests without network access.
+- Behavior 21: test malformed config, unknown states, conflicting labels, and impossible transitions.
+- Behavior 22: test that default config stays generic and repository-specific examples live in example overlays.
 
 Validation commands for the implementation PR:
 
 ```sh
 python3 checks/check_workflow.py --repo .
 python3 checks/specrail_check.py --repo . --action write_spec --labels ready-to-spec --work-id configurable-agent-workflow-evaluator --json
+python3 checks/specrail_check.py --repo . --action write_spec --labels ready-to-spec --work-id configurable-agent-workflow-evaluator --locale zh-CN --json
 python3 -m unittest discover -s checks -p '*test*.py'
 ```
 
@@ -312,8 +388,9 @@ The initial implementation should be additive. If the evaluator produces noisy o
 
 1. Keep existing `checks/check_workflow.py` as the authoritative pack validator.
 2. Disable evaluator usage by leaving `evaluator_enforcement` unset or set to `dry_run`.
-3. Remove the new CLI invocation from CI without changing existing templates, schemas, or workflow-check behavior.
-4. Revert `actions.yaml`, evaluator schemas, and evaluator scripts independently because they should not mutate existing issue, PR, label, or merge state.
+3. Disable localized presentation by omitting `presentation.default_locale` or removing locale overlays; machine decisions remain unchanged.
+4. Remove the new CLI invocation from CI without changing existing templates, schemas, or workflow-check behavior.
+5. Revert `actions.yaml`, evaluator schemas, locale overlays, and evaluator scripts independently because they should not mutate existing issue, PR, label, or merge state.
 
 ## Risks and Mitigations
 
@@ -328,6 +405,10 @@ Mitigation: return explicit `decision`, `missing`, and `human_gates` fields. The
 Risk: JSON output becomes unstable and breaks agent integrations.
 
 Mitigation: add `evaluation_result.schema.json` and test output against it.
+
+Risk: translated text changes semantics or breaks agent integrations.
+
+Mitigation: keep machine IDs and JSON keys untranslated, require stable message codes, and test `zh-CN` output against the same decision fixtures as `en-US`.
 
 Risk: live GitHub integration adds network flakiness to core checks.
 

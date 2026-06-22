@@ -19,6 +19,7 @@ SpecRail already defines a portable workflow pack with states, labels, schemas, 
 - Keep repository maintainers in control of workflow policy.
 - Preserve SpecRail's dry-run and advisory-first adoption model.
 - Keep hard-coded behavior limited to universal safety boundaries.
+- Support localized human-facing workflow text without translating stable machine protocol identifiers.
 
 ## Non-Goals
 
@@ -27,6 +28,7 @@ SpecRail already defines a portable workflow pack with states, labels, schemas, 
 - Replace human readiness labels, final approval, security decisions, or merge authority.
 - Enforce one fixed GitHub label taxonomy, spec directory layout, CI provider, or PR template.
 - Implement language-specific build or test rules.
+- Translate canonical state IDs, action IDs, JSON keys, schema names, or command names.
 
 ## Behavior
 
@@ -93,11 +95,23 @@ SpecRail already defines a portable workflow pack with states, labels, schemas, 
 
 15. A code agent using SpecRail can include the evaluator result in its preflight, handoff, or PR body without rewriting the reasoning by hand.
 
-16. The evaluator should be useful without network access when the caller provides local metadata files or artifact paths. GitHub integration may be added later as an adapter, but the core decision logic should not depend on live GitHub API calls.
+16. Human-facing evaluator text is localizable. Repositories can configure a default locale such as `zh-CN` so issue templates, PR templates, agent summaries, error explanations, and handoff text can be shown in Chinese or another supported language.
 
-17. Misconfiguration is treated as a first-class result. If workflow configuration cannot be parsed, references unknown states, defines impossible transitions, or maps one action to conflicting gates, the evaluator reports `blocked` with configuration errors.
+17. Machine-facing identifiers remain stable across locales. Values such as `write_spec`, `ready_to_spec`, `needs_human`, `blocked`, schema keys, command names, and artifact IDs are not translated. Localized output is attached as display text alongside stable codes.
 
-18. The default SpecRail pack remains generic. Repository-specific labels, path conventions, CI names, and PR rules belong in consumer overlays or explicit config files, not in the evaluator source code.
+18. Locale selection follows a predictable order:
+   - explicit CLI or agent option, such as `--locale zh-CN`
+   - repository `presentation.default_locale`
+   - user's detected/requested language when the agent is producing prose
+   - SpecRail's default locale
+
+19. If a localized message is missing, SpecRail falls back to the default locale while preserving the stable message code. Missing localization must not change the evaluator decision.
+
+20. The evaluator should be useful without network access when the caller provides local metadata files or artifact paths. GitHub integration may be added later as an adapter, but the core decision logic should not depend on live GitHub API calls.
+
+21. Misconfiguration is treated as a first-class result. If workflow configuration cannot be parsed, references unknown states, defines impossible transitions, or maps one action to conflicting gates, the evaluator reports `blocked` with configuration errors.
+
+22. The default SpecRail pack remains generic. Repository-specific labels, path conventions, CI names, PR rules, and locale choices belong in consumer overlays or explicit config files, not in the evaluator source code.
 
 ## Acceptance Criteria
 
@@ -106,4 +120,5 @@ SpecRail already defines a portable workflow pack with states, labels, schemas, 
 - [ ] Missing issue labels, PR metadata, spec files, CI evidence, or artifact evidence never produce silent success.
 - [ ] Universal agent safety boundaries remain enforced regardless of repository configuration.
 - [ ] Existing workflow-run automation modes remain distinguishable from evaluator severity modes.
+- [ ] Human-facing evaluator messages, issue/PR templates, and agent summaries can be presented in `zh-CN` without translating stable protocol IDs.
 - [ ] The default SpecRail pack remains generic, with repository-specific behavior expressed through overlays or explicit config.
