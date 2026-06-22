@@ -31,6 +31,8 @@ workflow.yaml          # workflow metadata and adoption policy
 states.yaml            # canonical issue/spec/PR state machine
 labels.yaml            # recommended label taxonomy
 templates/             # issue, spec, and PR templates
+locales/               # localized human-facing evaluator messages
+skills/                # agent workflow entrypoints, including Codex-compatible skills
 schemas/               # machine-readable artifact contracts
 review/                # agent-first and human-final review guides
 policies/              # security and maintainer escalation policy
