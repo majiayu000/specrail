@@ -11,6 +11,8 @@ from pathlib import Path
 
 REQUIRED_FILES = [
     "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
     "SPEC.md",
     "workflow.yaml",
     "states.yaml",

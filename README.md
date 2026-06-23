@@ -1,5 +1,9 @@
 # SpecRail
 
+[![workflow-check](https://github.com/majiayu000/specrail/actions/workflows/workflow-check.yml/badge.svg)](https://github.com/majiayu000/specrail/actions/workflows/workflow-check.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/majiayu000/specrail?include_prereleases&label=release)](https://github.com/majiayu000/specrail/releases)
+
 Agent-facing workflow pack for issue-first, spec-first, AI-assisted repository operations.
 
 SpecRail is not a bot and not an agent runtime. It is a portable process
@@ -30,6 +34,8 @@ release.
 ## MVP Contents
 
 ```text
+LICENSE                # MIT license
+CHANGELOG.md           # release notes
 workflow.yaml          # workflow metadata and adoption policy
 states.yaml            # canonical issue/spec/PR state machine
 labels.yaml            # recommended label taxonomy
@@ -41,6 +47,40 @@ review/                # agent-first and human-final review guides
 policies/              # security and maintainer escalation policy
 checks/check_workflow.py
 .github/workflows/workflow-check.yml
+```
+
+## Quick Start
+
+Validate the pack locally:
+
+```sh
+git clone https://github.com/majiayu000/specrail.git
+cd specrail
+python3 checks/check_workflow.py --repo .
+```
+
+Validate a spec packet:
+
+```sh
+python3 checks/check_workflow.py --repo . --spec-dir specs/GH1
+```
+
+Use the pack as a repository workflow contract:
+
+```sh
+cp -R templates schemas review policies checks skills .github /path/to/your-repo/
+cp AGENT_USAGE.md workflow.yaml states.yaml labels.yaml /path/to/your-repo/
+```
+
+Then ask your agent to read:
+
+```text
+AGENTS.md
+workflow.yaml
+states.yaml
+labels.yaml
+AGENT_USAGE.md
+skills/specrail-workflow/SKILL.md
 ```
 
 ## Adoption Path
@@ -56,6 +96,12 @@ checks/check_workflow.py
 
 See [`PLAN.md`](PLAN.md) for the agent-first product direction, current limits,
 and the roadmap from templates to deterministic evaluator to automation.
+
+## Release
+
+Current release notes live in [`CHANGELOG.md`](CHANGELOG.md). SpecRail v0.1.0 is
+the first public workflow-pack release and remains intentionally advisory:
+deterministic checks first, automation later.
 
 ## Core Principle
 

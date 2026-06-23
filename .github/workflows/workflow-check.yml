@@ -1,6 +1,7 @@
 name: workflow-check
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
@@ -18,4 +19,3 @@ jobs:
         with:
           python-version: "3.x"
       - run: python3 checks/check_workflow.py --repo .
-
