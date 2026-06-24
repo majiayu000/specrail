@@ -33,6 +33,8 @@ handoff. SpecRail is still a reusable contract that needs repeated real use.
 5. Human-facing text follows the selected locale.
 6. Deterministic checks come before LLM automation.
 7. Automation starts in dry-run or advisory mode.
+8. Spec-first is the default for ambiguous, architecture, product-facing,
+   public API, cross-module, and workflow-policy changes.
 
 ## Why The Skill Exists
 
@@ -55,15 +57,18 @@ that should be tested against real tasks and then tightened.
 
 ### Phase 2: Configurable Evaluator
 
-Implement an offline evaluator that reads repo config and evidence, then returns:
+Implement and harden an offline evaluator that reads repo config and evidence,
+then returns:
 
 - `allowed`
 - `warn`
 - `needs_human`
 - `blocked`
 
-The evaluator should support localized messages, but its JSON keys and stable IDs
-must stay language-independent.
+The first local route gate lives at `checks/route_gate.py`. It is intentionally
+read-only and local-evidence based. Next hardening steps are richer artifact
+validation, localized display messages, and GitHub evidence adapters. JSON keys
+and stable IDs must stay language-independent.
 
 ### Phase 3: Evidence Adapters
 
@@ -85,6 +90,8 @@ Make SpecRail easy to give to agents:
 - install or reference `skills/specrail-workflow`
 - optionally set `presentation.default_locale: zh-CN`
 - run deterministic checks before and after agent work
+- use optional integration docs, such as `integrations/threads.md`, when the
+  task needs queue orchestration, parallel lanes, or closure audit
 
 ### Phase 5: Automation
 
@@ -106,3 +113,18 @@ explaining the workflow in chat.
 
 SpecRail becomes trustworthy when repeated real runs produce fewer process
 mistakes, not just nicer templates.
+
+## Optional Integrations
+
+Integrations are advisory execution designs, not required runtime dependencies.
+They let SpecRail describe how an agent should combine the core contract with a
+separate orchestration skill.
+
+The first integration is `integrations/threads.md`. It keeps the boundary
+explicit:
+
+- SpecRail owns policy, artifacts, locale, human gates, and deterministic checks.
+- Threads owns lane maps, queue gates, review-thread truth, merge gates, and
+  closure audit.
+- The handoff remains a lightweight text/YAML artifact until repeated real runs
+  justify turning it into a schema and validator check.

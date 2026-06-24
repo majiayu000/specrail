@@ -22,7 +22,8 @@
       "minimum": 1
     },
     "readiness_label": {
-      "enum": ["ready_to_implement"]
+      "type": "string",
+      "minLength": 1
     },
     "spec_packet": {
       "type": ["string", "null"]

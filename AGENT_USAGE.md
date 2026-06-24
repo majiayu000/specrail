@@ -20,6 +20,9 @@ The skill is an execution guide. The YAML files and templates are the workflow
 contract. The agent should not treat the skill as final authority when it
 conflicts with repository policy or human instructions.
 
+Optional integration documents under `integrations/` are loaded only when the
+task needs that execution model. They do not replace the core SpecRail contract.
+
 ## Basic Agent Flow
 
 1. Search existing issues and PRs before creating new work.
@@ -30,20 +33,51 @@ conflicts with repository policy or human instructions.
    - `review_pr`
    - `fix_ci`
    - `draft_release_note`
-3. Confirm the current state from durable repo state when possible.
-4. Create or update the required artifact:
+3. Default to `write_spec` before `implement` for product-facing,
+   architecture, cross-module, public API, workflow-policy, or ambiguous
+   behavior changes.
+4. Choose direct `implement` only when an approved spec already exists, the
+   change is small and mechanical, or the user explicitly asks to skip spec
+   creation.
+5. Confirm the current state from durable repo state when possible.
+6. Create or update the required artifact:
    - issue
    - `specs/GH<issue-number>/product.md`
    - `specs/GH<issue-number>/tech.md`
+   - `specs/GH<issue-number>/tasks.md`
    - PR body
    - review result
    - handoff
-5. Run deterministic checks before claiming completion:
+7. Run the local evaluator before taking the route action:
+
+```sh
+python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
+python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json
+```
+
+8. Run deterministic checks before claiming completion:
 
 ```sh
 python3 checks/check_workflow.py --repo .
 python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue-number>
 ```
+
+If `write_spec` is selected and no GitHub issue number is available, the agent
+should search for an existing issue first. If none exists and GitHub workflow is
+in scope, create or request a linked issue before writing the numbered spec
+packet. A missing issue number is not permission to skip spec creation.
+
+## Optional Threads Integration
+
+If the task is a GitHub issue or PR queue, needs disjoint parallel lanes, or
+requires review-thread, CI, merge-gate, or closure-audit handling, load
+`integrations/threads.md` after SpecRail preflight. SpecRail still owns policy,
+locale, required artifacts, and human gates. Threads owns lane orchestration,
+remote queue truth, and closure audit.
+
+If no threads skill or native subagent capability is available, continue with
+the normal single-agent SpecRail flow and report that no native threads were
+launched.
 
 ## Locale Behavior
 
@@ -83,8 +117,10 @@ SpecRail currently provides:
 - issue/spec/PR templates
 - `zh-CN` templates
 - localized message files
+- an optional threads integration design
 - a Codex-compatible `specrail-workflow` skill
 - a deterministic pack validator
+- a local evaluator that returns `allowed`, `warn`, `needs_human`, or `blocked`
 
 This is enough for an agent to follow the process more consistently than raw
 README instructions.
@@ -93,15 +129,15 @@ README instructions.
 
 SpecRail does not yet provide:
 
-- a full evaluator that returns `allowed`, `warn`, `needs_human`, or `blocked`
 - GitHub API evidence adapters
 - automatic issue label checks
 - automatic PR gate checks
 - automatic template rendering commands
 - automatic merge or final approval
 
-Until those exist, agents should use SpecRail as a contract and must report what
-they verified rather than claiming workflow state from assumptions.
+Until those exist, agents should treat `checks/route_gate.py` as a local gate and
+must report what they verified rather than claiming live GitHub workflow state
+from assumptions.
 
 ## Human Gates
 
@@ -112,4 +148,3 @@ Agents may draft, propose, review, and diagnose. Agents must not:
 - publish private security details
 - change repository permissions
 - bypass readiness labels or other human gates
-
