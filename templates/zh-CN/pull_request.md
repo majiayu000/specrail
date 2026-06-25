@@ -26,6 +26,7 @@
 - [ ] 已检查 review threads，未解决的 actionable threads 已处理。
 - [ ] merge state 为 clean。
 - [ ] merge 前已记录 human merge authorization。
+- [ ] `python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --json > pr-evidence.json` 结果：
 - [ ] `python3 checks/pr_gate.py --repo . --evidence <evidence.json>` 结果：
 
 ## Verification

@@ -90,14 +90,17 @@ Before reporting a pull request as merge-ready, collect PR evidence and run the
 offline gate when available:
 
 ```sh
+python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --json > <evidence.json>
 python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
 ```
 
-The evidence may come from GitHub CLI, a threads lane, or another read-only
-adapter. It should include PR head SHA, linked issue, CI/check rollup, review
-decision, review-thread resolution, merge state, and human merge authorization.
-`allowed` means the evidence is merge-ready. `needs_human` means deterministic
-checks passed but merge authorization is missing. `blocked` means do not merge.
+`checks/github_pr_evidence.py` is a read-only collector for GitHub CLI output,
+not a policy engine and not remote automation. The evidence may come from that
+adapter, a threads lane, or another read-only adapter. It should include PR head
+SHA, linked issue, CI/check rollup, review decision, review-thread resolution,
+merge state, and human merge authorization. `allowed` means the evidence is
+merge-ready. `needs_human` means deterministic checks passed but merge
+authorization is missing. `blocked` means do not merge.
 
 ## Optional Threads Integration
 

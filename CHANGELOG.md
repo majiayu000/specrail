@@ -6,6 +6,8 @@
 
 - Offline PR merge gate evaluator for head SHA, CI, review threads, merge state,
   linked issue, and human merge authorization evidence.
+- Read-only GitHub PR evidence adapter that converts `gh` PR metadata and
+  review-thread GraphQL output into `checks/pr_gate.py` evidence JSON.
 
 ## v0.1.0 - 2026-06-23
 

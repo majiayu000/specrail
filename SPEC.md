@@ -95,6 +95,8 @@ The first validator is intentionally deterministic:
 - templates include required sections
 - JSON schemas parse
 - optional spec packets contain `product.md` and `tech.md`
+- optional GitHub PR merge evidence can be collected read-only with
+  `checks/github_pr_evidence.py`
 - optional PR merge evidence can be checked with `checks/pr_gate.py`
 
 LLM-based triage and review should be added only after the deterministic checks

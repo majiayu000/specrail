@@ -48,6 +48,7 @@ review/                # agent-first and human-final review guides
 policies/              # security and maintainer escalation policy
 checks/check_workflow.py
 checks/route_gate.py
+checks/github_pr_evidence.py
 .github/workflows/workflow-check.yml
 ```
 
@@ -77,8 +78,12 @@ python3 checks/route_gate.py --repo . --route implement --issue 123 --state read
 Evaluate whether PR merge evidence is complete before a maintainer merges:
 
 ```sh
+python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr 123 --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 ```
+
+`checks/github_pr_evidence.py` is a read-only collector for GitHub CLI output.
+`checks/pr_gate.py` owns the offline merge-readiness decision.
 
 Evaluate a spec packet and adoption smoke evidence:
 
