@@ -65,12 +65,14 @@ python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue-number>
 9. Before reporting a PR as merge-ready, collect PR evidence and run:
 
 ```sh
+python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
 ```
 
-The PR gate is offline. GitHub or `threads` may collect evidence such as PR head
-SHA, CI status, review threads, merge state, and linked issue references. The
-gate only evaluates that evidence and never merges or writes remote state.
+The GitHub adapter is read-only and only reshapes `gh` output. The PR gate is
+offline. GitHub or `threads` may collect evidence such as PR head SHA, CI
+status, review threads, merge state, and linked issue references. The gate only
+evaluates that evidence and never merges or writes remote state.
 
 If `write_spec` is selected and no GitHub issue number is available, the agent
 should search for an existing issue first. If none exists and GitHub workflow is
@@ -130,6 +132,7 @@ SpecRail currently provides:
 - an optional threads integration design
 - a Codex-compatible `specrail-workflow` skill
 - a deterministic pack validator
+- a read-only GitHub PR evidence adapter
 - a local evaluator that returns `allowed`, `warn`, `needs_human`, or `blocked`
 
 This is enough for an agent to follow the process more consistently than raw
@@ -139,7 +142,7 @@ README instructions.
 
 SpecRail does not yet provide:
 
-- GitHub API evidence adapters
+- GitHub label or issue evidence adapters beyond PR merge-readiness evidence
 - automatic issue label checks
 - automatic template rendering commands
 - automatic merge or final approval

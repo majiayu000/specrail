@@ -26,6 +26,7 @@ Describe the change in 1-3 sentences.
 - [ ] Review threads were checked and unresolved actionable threads are addressed.
 - [ ] Merge state is clean.
 - [ ] Human merge authorization is recorded before merge.
+- [ ] `python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --json > pr-evidence.json` result:
 - [ ] `python3 checks/pr_gate.py --repo . --evidence <evidence.json>` result:
 
 ## Verification

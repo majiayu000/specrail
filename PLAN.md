@@ -87,6 +87,11 @@ evidence JSON and checks PR head, CI, review threads, merge state, linked issue,
 and human merge authorization. A later GitHub adapter can collect that evidence,
 but the policy decision should stay in the evaluator.
 
+The first GitHub evidence adapter is `checks/github_pr_evidence.py`. It uses
+`gh pr view` and `gh api graphql` to collect PR merge-readiness evidence and
+prints JSON that `checks/pr_gate.py` can evaluate. It does not write labels,
+comments, reviews, thread state, branches, or merges.
+
 ### Phase 4: Agent Installation
 
 Make SpecRail easy to give to agents:

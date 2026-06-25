@@ -28,6 +28,7 @@ REQUIRED_FILES = [
     "workflow.yaml",
     "states.yaml",
     "labels.yaml",
+    "checks/github_pr_evidence.py",
     "checks/pr_gate.py",
     "templates/issue_bug.md",
     "templates/issue_feature.md",
