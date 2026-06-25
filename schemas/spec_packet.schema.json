@@ -18,6 +18,10 @@
       "type": "string",
       "pattern": "^specs/GH[0-9]+/tech\\.md$"
     },
+    "task_plan": {
+      "type": ["string", "null"],
+      "pattern": "^specs/GH[0-9]+/tasks\\.md$"
+    },
     "acceptance_criteria": {
       "type": "array",
       "minItems": 1,

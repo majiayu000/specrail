@@ -19,6 +19,20 @@ Use this skill as the entrypoint for SpecRail-governed repository work.
    - `review_pr`
    - `fix_ci`
    - `draft_release_note`
+5. Run `checks/route_gate.py` for the selected route when the repository includes
+   it. Treat `allowed` as permission to proceed, `warn` as proceed-with-caution,
+   `needs_human` as a maintainer gate, and `blocked` as a stop condition.
+
+Default to `write_spec` before `implement` for product-facing, architecture,
+cross-module, public API, workflow-policy, or ambiguous behavior changes.
+Choose direct `implement` only when the change is already covered by an
+approved spec, is a small mechanical fix, is a test-only/doc-only correction, is
+a focused CI fix, or the user explicitly asks to skip spec creation.
+
+If `write_spec` is selected and no GitHub issue number is available, search for
+an existing issue first. If none exists and GitHub workflow is in scope, create
+or request a linked issue before writing `specs/GH<issue-number>/product.md` and
+`tech.md`. Do not treat a missing issue number as permission to skip the spec.
 
 ## Locale
 
@@ -53,15 +67,39 @@ Do not translate stable machine-facing identifiers:
 
 For feature work that needs a spec:
 
-1. Confirm or create a linked GitHub issue when the user asks for GitHub workflow.
+1. Confirm or create a linked GitHub issue before creating a numbered spec.
 2. Use `specs/GH<issue-number>/product.md` and `specs/GH<issue-number>/tech.md`.
 3. Prefer templates in `templates/<locale>/`; fall back to root `templates/`.
 4. Keep behavior in product spec and implementation plan in tech spec.
 5. Run:
 
 ```sh
+python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
 python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue-number>
 ```
+
+Before implementation, run:
+
+```sh
+python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json
+```
+
+## Optional Threads Integration
+
+If the task is a GitHub issue or PR queue, needs disjoint parallel lanes, or
+requires review-thread, CI, merge-gate, or closure-audit handling, read
+`integrations/threads.md` after this startup flow and use an available threads
+skill for orchestration.
+
+Keep the boundary clear:
+
+- SpecRail owns policy, locale, required artifacts, human gates, and
+  deterministic verification.
+- Threads owns lane maps, queue gates, remote truth refresh, review-thread
+  handling, and closure audit.
+- If no threads skill or native subagent capability is available, continue with
+  the single-agent SpecRail flow and report that no native threads were
+  launched.
 
 ## Agent Boundaries
 

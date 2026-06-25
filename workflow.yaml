@@ -17,6 +17,8 @@ automation_policy:
   allowed_agent_actions:
     - propose_labels
     - draft_specs
+    - draft_tasks
+    - implement_code
     - review_pull_request
     - diagnose_ci
     - draft_release_notes
@@ -40,8 +42,79 @@ artifacts:
   spec_packet: specs/GH{issue_number}/
   product_spec: specs/GH{issue_number}/product.md
   tech_spec: specs/GH{issue_number}/tech.md
+  task_plan: specs/GH{issue_number}/tasks.md
   agent_review: artifacts/review/pr-{pr_number}.json
   triage_result: artifacts/triage/issue-{issue_number}.json
+
+action_policy:
+  actions:
+    triage_issue:
+      allowed_from:
+        - new_issue
+        - needs_info
+        - triaged
+      required_artifacts: []
+      creates_artifacts:
+        - triage_result
+      human_gates: []
+
+    write_spec:
+      allowed_from:
+        - triaged
+        - ready_to_spec
+      required_artifacts:
+        - linked_issue
+      creates_artifacts:
+        - product_spec
+        - tech_spec
+      human_gates:
+        - readiness_label
+
+    implement:
+      allowed_from:
+        - ready_to_implement
+      required_artifacts:
+        - linked_issue
+        - product_spec
+        - tech_spec
+      creates_artifacts:
+        - task_plan
+      human_gates:
+        - readiness_label
+        - spec_approval
+
+    review_pr:
+      allowed_from:
+        - impl_pr_open
+        - agent_review
+        - human_review
+      required_artifacts:
+        - linked_issue
+        - linked_pr
+        - verification
+      creates_artifacts:
+        - agent_review
+      human_gates:
+        - final_pr_review
+
+    fix_ci:
+      allowed_from:
+        - human_review
+        - ci_green
+      required_artifacts:
+        - linked_pr
+      creates_artifacts:
+        - verification
+      human_gates: []
+
+    draft_release_note:
+      allowed_from:
+        - merged
+      required_artifacts:
+        - linked_pr
+      creates_artifacts: []
+      human_gates:
+        - release
 
 presentation:
   default_locale: en-US

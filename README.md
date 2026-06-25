@@ -41,11 +41,13 @@ states.yaml            # canonical issue/spec/PR state machine
 labels.yaml            # recommended label taxonomy
 templates/             # issue, spec, and PR templates
 locales/               # localized human-facing evaluator messages
+integrations/          # optional adapters to agent orchestration workflows
 skills/                # agent workflow entrypoints, including Codex-compatible skills
 schemas/               # machine-readable artifact contracts
 review/                # agent-first and human-final review guides
 policies/              # security and maintainer escalation policy
 checks/check_workflow.py
+checks/route_gate.py
 .github/workflows/workflow-check.yml
 ```
 
@@ -63,6 +65,19 @@ Validate a spec packet:
 
 ```sh
 python3 checks/check_workflow.py --repo . --spec-dir specs/GH1
+```
+
+Evaluate whether an agent may take the next workflow action from local evidence:
+
+```sh
+python3 checks/route_gate.py --repo . --route write_spec --issue 123 --state ready_to_spec --json
+python3 checks/route_gate.py --repo . --route implement --issue 123 --state ready_to_implement --json
+```
+
+Evaluate a spec packet and adoption smoke evidence:
+
+```sh
+python3 evaluate.py --repo . --spec-dir specs/GH1 --format json
 ```
 
 Use the pack as a repository workflow contract:
