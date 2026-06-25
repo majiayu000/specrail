@@ -19,6 +19,15 @@
 - [ ] 已请求 human final review。
 - [ ] 需要 ownership approval 时，已明确 owner。
 
+## Merge Gate
+
+- [ ] 已记录 PR head SHA。
+- [ ] CI/check rollup 已完成且通过。
+- [ ] 已检查 review threads，未解决的 actionable threads 已处理。
+- [ ] merge state 为 clean。
+- [ ] merge 前已记录 human merge authorization。
+- [ ] `python3 checks/pr_gate.py --repo . --evidence <evidence.json>` 结果：
+
 ## Verification
 
 - [ ] Tests:

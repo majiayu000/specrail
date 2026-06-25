@@ -82,6 +82,11 @@ Add adapters that collect evidence from GitHub:
 
 Adapters should produce evidence JSON. They should not own policy.
 
+The first merge-readiness evaluator is `checks/pr_gate.py`. It consumes local
+evidence JSON and checks PR head, CI, review threads, merge state, linked issue,
+and human merge authorization. A later GitHub adapter can collect that evidence,
+but the policy decision should stay in the evaluator.
+
 ### Phase 4: Agent Installation
 
 Make SpecRail easy to give to agents:

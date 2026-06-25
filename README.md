@@ -74,6 +74,12 @@ python3 checks/route_gate.py --repo . --route write_spec --issue 123 --state rea
 python3 checks/route_gate.py --repo . --route implement --issue 123 --state ready_to_implement --json
 ```
 
+Evaluate whether PR merge evidence is complete before a maintainer merges:
+
+```sh
+python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
+```
+
 Evaluate a spec packet and adoption smoke evidence:
 
 ```sh
