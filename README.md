@@ -125,8 +125,9 @@ and the roadmap from templates to deterministic evaluator to automation.
 
 ## Release
 
-Current release notes live in [`CHANGELOG.md`](CHANGELOG.md). SpecRail v0.1.0 is
-the first public workflow-pack release and remains intentionally advisory:
+Current release notes live in [`CHANGELOG.md`](CHANGELOG.md). SpecRail v0.2.0
+adds deterministic local evaluation, a PR merge-readiness gate, and a read-only
+GitHub PR evidence adapter while remaining intentionally advisory:
 deterministic checks first, automation later.
 
 ## Core Principle

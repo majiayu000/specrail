@@ -2,8 +2,15 @@
 
 ## Unreleased
 
+No unreleased changes.
+
+## v0.2.0 - 2026-06-25
+
 ### Added
 
+- Local workflow evaluator and evaluation result schema for checking
+  issue/spec/PR artifact quality against the SpecRail contract.
+- rclean pilot example showing a repository smoke test of the SpecRail flow.
 - Offline PR merge gate evaluator for head SHA, CI, review threads, merge state,
   linked issue, and human merge authorization evidence.
 - Read-only GitHub PR evidence adapter that converts `gh` PR metadata and
