@@ -84,6 +84,21 @@ Before implementation, run:
 python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json
 ```
 
+## Merge Readiness
+
+Before reporting a pull request as merge-ready, collect PR evidence and run the
+offline gate when available:
+
+```sh
+python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
+```
+
+The evidence may come from GitHub CLI, a threads lane, or another read-only
+adapter. It should include PR head SHA, linked issue, CI/check rollup, review
+decision, review-thread resolution, merge state, and human merge authorization.
+`allowed` means the evidence is merge-ready. `needs_human` means deterministic
+checks passed but merge authorization is missing. `blocked` means do not merge.
+
 ## Optional Threads Integration
 
 If the task is a GitHub issue or PR queue, needs disjoint parallel lanes, or
@@ -123,3 +138,4 @@ When reporting completion, include:
 - selected locale
 - stable IDs kept in English
 - verification commands and results
+- PR gate decision when merge readiness was evaluated

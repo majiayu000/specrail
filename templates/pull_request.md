@@ -19,6 +19,15 @@ Describe the change in 1-3 sentences.
 - [ ] Human final review requested.
 - [ ] Owner approval identified when ownership rules apply.
 
+## Merge Gate
+
+- [ ] PR head SHA recorded.
+- [ ] CI/check rollup is complete and passing.
+- [ ] Review threads were checked and unresolved actionable threads are addressed.
+- [ ] Merge state is clean.
+- [ ] Human merge authorization is recorded before merge.
+- [ ] `python3 checks/pr_gate.py --repo . --evidence <evidence.json>` result:
+
 ## Verification
 
 - [ ] Tests:
@@ -34,4 +43,3 @@ Describe the change in 1-3 sentences.
 
 - [ ] No agent was used.
 - [ ] Agent assisted; human author reviewed the full diff.
-

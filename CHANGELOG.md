@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Offline PR merge gate evaluator for head SHA, CI, review threads, merge state,
+  linked issue, and human merge authorization evidence.
+
 ## v0.1.0 - 2026-06-23
 
 Initial public release of SpecRail as a portable workflow pack for

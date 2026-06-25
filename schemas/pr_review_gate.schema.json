@@ -6,9 +6,14 @@
   "required": [
     "pr",
     "linked_issue",
+    "head_sha",
     "readiness_label",
     "agent_review",
     "human_review",
+    "merge_state",
+    "checks",
+    "review_threads",
+    "human_authorization",
     "verification"
   ],
   "additionalProperties": false,
@@ -20,6 +25,10 @@
     "linked_issue": {
       "type": "integer",
       "minimum": 1
+    },
+    "head_sha": {
+      "type": "string",
+      "minLength": 7
     },
     "readiness_label": {
       "type": "string",
@@ -33,6 +42,68 @@
     },
     "human_review": {
       "enum": ["pending", "approved", "changes_requested"]
+    },
+    "merge_state": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "conclusion"],
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conclusion": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "review_threads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["is_resolved", "is_outdated"],
+        "additionalProperties": true,
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "is_resolved": {
+            "type": "boolean"
+          },
+          "is_outdated": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "human_authorization": {
+      "type": ["object", "null"],
+      "required": ["actor", "source"],
+      "additionalProperties": true,
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
     },
     "verification": {
       "type": "object",

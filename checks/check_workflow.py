@@ -28,6 +28,7 @@ REQUIRED_FILES = [
     "workflow.yaml",
     "states.yaml",
     "labels.yaml",
+    "checks/pr_gate.py",
     "templates/issue_bug.md",
     "templates/issue_feature.md",
     "templates/product_spec.md",
@@ -92,6 +93,7 @@ REQUIRED_TOKENS = {
         "## Linked Work",
         "## Readiness Gate",
         "## Review Gate",
+        "## Merge Gate",
         "## Verification",
     ],
 }
