@@ -39,11 +39,13 @@ CHANGELOG.md           # release notes
 workflow.yaml          # workflow metadata and adoption policy
 states.yaml            # canonical issue/spec/PR state machine
 labels.yaml            # recommended label taxonomy
+docs/                  # adoption matrix and user-facing workflow docs
 templates/             # issue, spec, and PR templates
 locales/               # localized human-facing evaluator messages
 integrations/          # optional adapters to agent orchestration workflows
 skills/                # agent workflow entrypoints, including Codex-compatible skills
 schemas/               # machine-readable artifact contracts
+examples/adoptions/    # machine-readable adoption evidence fixtures
 review/                # agent-first and human-final review guides
 policies/              # security and maintainer escalation policy
 checks/check_workflow.py
@@ -90,6 +92,16 @@ Evaluate a spec packet and adoption smoke evidence:
 ```sh
 python3 evaluate.py --repo . --spec-dir specs/GH1 --format json
 ```
+
+Inspect the recorded real-repo adoption signals:
+
+- [`docs/ADOPTION_MATRIX.md`](docs/ADOPTION_MATRIX.md)
+- [`examples/adoptions/matrix.json`](examples/adoptions/matrix.json)
+
+The matrix currently records `rclean`, `litellm-rs`, and
+`Claude-Code-Monitor` / `claude-hub` as pilot evidence at different maturity
+levels. `evaluate.py` validates the required matrix records and local
+SpecRail evidence paths.
 
 Use the pack as a repository workflow contract:
 

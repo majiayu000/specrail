@@ -134,6 +134,8 @@ SpecRail currently provides:
 - a deterministic pack validator
 - a read-only GitHub PR evidence adapter
 - a local evaluator that returns `allowed`, `warn`, `needs_human`, or `blocked`
+- an adoption matrix and fixture for real repo pilot evidence:
+  `docs/ADOPTION_MATRIX.md` and `examples/adoptions/matrix.json`
 
 This is enough for an agent to follow the process more consistently than raw
 README instructions.
