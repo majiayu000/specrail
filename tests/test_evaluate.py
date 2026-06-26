@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(CHECKS))
 
 from check_workflow import validate_spec_packet, validate_task_plan  # noqa: E402
-from evaluate import evaluate_rclean_smoke  # noqa: E402
+from evaluate import evaluate_adoption_matrix, evaluate_rclean_smoke  # noqa: E402
 
 
 def write_text(path: Path, text: str) -> None:
@@ -122,3 +122,119 @@ def test_evaluate_json_contract_for_gh5() -> None:
     } <= set(payload)
     assert payload["status"] == "needs_human"
     assert payload["errors"] == []
+    assert payload["artifacts"]["adoption_matrix"] == "docs/ADOPTION_MATRIX.md"
+    assert payload["artifacts"]["adoption_fixture"] == "examples/adoptions/matrix.json"
+
+
+def test_adoption_matrix_requires_known_pilots(tmp_path: Path) -> None:
+    write_text(tmp_path / "docs" / "ADOPTION_MATRIX.md", "rclean\n")
+    write_text(
+        tmp_path / "examples" / "adoptions" / "matrix.json",
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "levels": ["smoke"],
+                "adoptions": [
+                    {
+                        "id": "rclean",
+                        "name": "rclean",
+                        "repo": "majiayu000/rclean",
+                        "current_level": "smoke",
+                        "status": "active",
+                        "evidence": [{"kind": "specrail_artifact", "path": "examples/rclean-smoke.md"}],
+                        "verified_behaviors": ["smoke"],
+                        "next_gap": "add more evidence",
+                    }
+                ],
+            }
+        ),
+    )
+    write_text(tmp_path / "examples" / "rclean-smoke.md", "smoke\n")
+
+    checks, errors, warnings = evaluate_adoption_matrix(tmp_path)
+
+    assert any(check["id"] == "adoption_matrix.required_ids" for check in checks)
+    assert any("litellm-rs" in error for error in errors)
+    assert warnings == []
+
+
+def test_adoption_matrix_needs_human_status_affects_checks(tmp_path: Path) -> None:
+    write_text(tmp_path / "docs" / "ADOPTION_MATRIX.md", "rclean\n")
+    write_text(tmp_path / "examples" / "rclean-smoke.md", "smoke\n")
+    write_text(
+        tmp_path / "examples" / "adoptions" / "matrix.json",
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "levels": ["smoke", "pr_gate", "spec_packet"],
+                "adoptions": [
+                    {
+                        "id": "rclean",
+                        "name": "rclean",
+                        "repo": "majiayu000/rclean",
+                        "current_level": "smoke",
+                        "status": "needs_human",
+                        "evidence": [{"kind": "specrail_artifact", "path": "examples/rclean-smoke.md"}],
+                        "verified_behaviors": ["smoke"],
+                        "next_gap": "review draft issues",
+                    },
+                    {
+                        "id": "litellm-rs",
+                        "name": "litellm-rs",
+                        "repo": "majiayu000/litellm-rs",
+                        "current_level": "pr_gate",
+                        "status": "active",
+                        "evidence": [{"kind": "github_pr", "repo": "majiayu000/litellm-rs", "number": 718, "url": "https://example.test/pr"}],
+                        "verified_behaviors": ["pr gate"],
+                        "next_gap": "add fixtures",
+                    },
+                    {
+                        "id": "claude-code-monitor",
+                        "name": "Claude-Code-Monitor",
+                        "repo": "majiayu000/claude-hub",
+                        "current_level": "spec_packet",
+                        "status": "active",
+                        "evidence": [{"kind": "external_artifact", "repo": "majiayu000/claude-hub", "path": "specs/GH44/product.md"}],
+                        "verified_behaviors": ["spec packet"],
+                        "next_gap": "decide integration",
+                    },
+                ],
+            }
+        ),
+    )
+
+    checks, errors, warnings = evaluate_adoption_matrix(tmp_path)
+
+    assert not errors
+    assert any(check["id"] == "adoption_matrix.status_needs_human" for check in checks)
+    assert any("rclean adoption still needs human review" in warning for warning in warnings)
+
+
+def test_adoption_matrix_rejects_unsafe_specrail_artifact_paths(tmp_path: Path) -> None:
+    write_text(tmp_path / "docs" / "ADOPTION_MATRIX.md", "rclean\n")
+    write_text(
+        tmp_path / "examples" / "adoptions" / "matrix.json",
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "levels": ["smoke"],
+                "adoptions": [
+                    {
+                        "id": "rclean",
+                        "name": "rclean",
+                        "repo": "majiayu000/rclean",
+                        "current_level": "smoke",
+                        "status": "active",
+                        "evidence": [{"kind": "specrail_artifact", "path": "../outside.md"}],
+                        "verified_behaviors": ["smoke"],
+                        "next_gap": "add more evidence",
+                    }
+                ],
+            }
+        ),
+    )
+
+    checks, errors, _warnings = evaluate_adoption_matrix(tmp_path)
+
+    assert any(check["id"] == "adoption_matrix.local_evidence" for check in checks)
+    assert any("must not contain '..'" in error for error in errors)

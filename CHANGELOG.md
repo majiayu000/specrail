@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-No unreleased changes.
+### Added
+
+- Adoption matrix documentation and machine-readable fixture for the current
+  `rclean`, `litellm-rs`, and `Claude-Code-Monitor` / `claude-hub` pilot
+  evidence.
+- Evaluator checks that validate required adoption pilot IDs and SpecRail-local
+  evidence paths.
 
 ## v0.2.0 - 2026-06-25
 
