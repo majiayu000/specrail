@@ -137,10 +137,10 @@ and the roadmap from templates to deterministic evaluator to automation.
 
 ## Release
 
-Current release notes live in [`CHANGELOG.md`](CHANGELOG.md). SpecRail v0.2.0
-adds deterministic local evaluation, a PR merge-readiness gate, and a read-only
-GitHub PR evidence adapter while remaining intentionally advisory:
-deterministic checks first, automation later.
+Current release notes live in [`CHANGELOG.md`](CHANGELOG.md). SpecRail v0.2.1
+adds adoption matrix evidence for real pilot repositories and hardens evaluator
+and CI coverage while remaining intentionally advisory: deterministic checks
+first, automation later.
 
 ## Core Principle
 

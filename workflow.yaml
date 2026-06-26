@@ -1,5 +1,5 @@
 name: specrail
-version: 0.2.0
+version: 0.2.1
 description: Issue-first, spec-first, AI-assisted repository workflow pack.
 
 durable_state:

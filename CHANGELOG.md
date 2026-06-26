@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No unreleased changes.
+
+## v0.2.1 - 2026-06-26
+
 ### Added
 
 - Adoption matrix documentation and machine-readable fixture for the current
