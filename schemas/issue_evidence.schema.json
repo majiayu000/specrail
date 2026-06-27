@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specrail.local/schemas/issue_evidence.schema.json",
+  "title": "GitHub Issue Evidence",
+  "type": "object",
+  "required": ["issue", "github_state", "state", "labels", "url", "title", "artifacts"],
+  "additionalProperties": false,
+  "properties": {
+    "issue": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "state": {
+      "type": ["string", "null"],
+      "enum": [
+        "needs_info",
+        "triaged",
+        "ready_to_spec",
+        "ready_to_implement",
+        "reserved_internal",
+        "security_private",
+        "duplicate",
+        "abandoned",
+        null
+      ]
+    },
+    "github_state": {
+      "enum": ["OPEN", "CLOSED"]
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["product_spec", "tech_spec", "task_plan"],
+      "additionalProperties": false,
+      "properties": {
+        "product_spec": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tech_spec": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_plan": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

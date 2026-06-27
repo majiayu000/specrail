@@ -33,6 +33,13 @@ The machine-readable record is `examples/adoptions/matrix.json`. The evaluator
 checks that the three known pilots stay present and that SpecRail-local evidence
 paths exist.
 
+## Gate Fixture Corpus
+
+`examples/fixtures/` contains deterministic inputs for route, PR, and review
+gate tests. These fixtures are benchmark artifacts for SpecRail's local policy
+checks. They are not live GitHub state and do not claim that a repository has
+adopted SpecRail.
+
 ## Non-Goals
 
 - This matrix does not claim that every listed repository is fully integrated.

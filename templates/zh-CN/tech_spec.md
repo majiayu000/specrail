@@ -8,13 +8,21 @@ GH-
 
 Link to `product.md`.
 
-## 当前系统
+## Codebase Context
 
-描述相关的当前实现和文件。
+| Area | Files | Current behavior | Why relevant |
+| --- | --- | --- | --- |
+|  |  |  |  |
 
 ## 设计方案
 
 说明计划中的实现方式。
+
+## Product-to-Test Mapping
+
+| Product invariant | Implementation area | Verification |
+| --- | --- | --- |
+| P1 |  |  |
 
 ## 数据流
 

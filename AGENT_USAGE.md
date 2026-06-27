@@ -15,6 +15,7 @@ creating issues, specs, PRs, or reviews:
 4. `labels.yaml`
 5. the relevant template under `templates/` or `templates/<locale>/`
 6. `skills/specrail-workflow/SKILL.md` when available
+7. `skills-lock.json` when the repository carries repo-distributed skills
 
 The skill is an execution guide. The YAML files and templates are the workflow
 contract. The agent should not treat the skill as final authority when it
@@ -51,6 +52,8 @@ task needs that execution model. They do not replace the core SpecRail contract.
 7. Run the local evaluator before taking the route action:
 
 ```sh
+python3 checks/github_issue_evidence.py --github-repo OWNER/REPO --issue <issue-number> --json > issue-evidence.json
+python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --evidence issue-evidence.json --json
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
 python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json
 ```
@@ -73,6 +76,16 @@ The GitHub adapter is read-only and only reshapes `gh` output. The PR gate is
 offline. GitHub or `threads` may collect evidence such as PR head SHA, CI
 status, review threads, merge state, and linked issue references. The gate only
 evaluates that evidence and never merges or writes remote state.
+
+10. Before treating an agent review artifact as publishable evidence, validate
+    it against the diff:
+
+```sh
+python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-number>.json --diff <patch> --json
+```
+
+The review gate validates advisory review JSON and inline diff locations. It
+does not approve, merge, or publish GitHub reviews.
 
 If `write_spec` is selected and no GitHub issue number is available, the agent
 should search for an existing issue first. If none exists and GitHub workflow is
@@ -130,12 +143,16 @@ SpecRail currently provides:
 - `zh-CN` templates
 - localized message files
 - an optional threads integration design
-- a Codex-compatible `specrail-workflow` skill
+- a Codex-compatible `specrail-workflow` router skill and focused route skills
+- `skills-lock.json` for repo-distributed SpecRail skills
 - a deterministic pack validator
+- a read-only GitHub issue evidence adapter
 - a read-only GitHub PR evidence adapter
+- an advisory review JSON gate
 - a local evaluator that returns `allowed`, `warn`, `needs_human`, or `blocked`
 - an adoption matrix and fixture for real repo pilot evidence:
   `docs/ADOPTION_MATRIX.md` and `examples/adoptions/matrix.json`
+- gate benchmark fixtures under `examples/fixtures/`
 
 This is enough for an agent to follow the process more consistently than raw
 README instructions.
@@ -144,7 +161,6 @@ README instructions.
 
 SpecRail does not yet provide:
 
-- GitHub label or issue evidence adapters beyond PR merge-readiness evidence
 - automatic issue label checks
 - automatic template rendering commands
 - automatic merge or final approval

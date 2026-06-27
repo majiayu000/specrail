@@ -107,6 +107,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     labels = list(args.label or [])
     labels.extend(str(label) for label in evidence.get("labels", []) if str(label).strip())
     explicit_state = args.state or evidence.get("state")
+    github_state = str(evidence.get("github_state") or "").upper()
 
     reasons: list[str] = []
     satisfied: list[str] = []
@@ -132,6 +133,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             "blocked_actions": [route],
             "verification_commands": ["python3 checks/check_workflow.py --repo ."],
         }
+
+    if github_state and github_state != "OPEN":
+        return blocked_result(
+            route,
+            explicit_state,
+            args,
+            [f"GitHub issue state must be OPEN; got {github_state}"],
+        )
 
     current_state, state_evidence = infer_state(config, explicit_state, labels)
     satisfied.extend(state_evidence)

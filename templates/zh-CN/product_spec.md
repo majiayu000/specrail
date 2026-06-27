@@ -16,9 +16,13 @@ GH-
 
 - 
 
-## 用户可见行为
+## Behavior Invariants
 
-用用户视角描述行为，不写实现细节。
+用编号列表写可观察、可测试、无实现细节的行为契约。相关时覆盖 happy path、
+empty、error、loading、cancellation、permission、offline/network failure、
+concurrency/race、compatibility、accessibility 等状态。
+
+1.
 
 ## 验收标准
 

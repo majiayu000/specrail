@@ -15,7 +15,7 @@ approval.
 
 ## Output
 
-Return structured findings:
+Return advisory structured findings. For simple chat review, use:
 
 ```json
 {
@@ -27,7 +27,16 @@ Return structured findings:
 }
 ```
 
+For a file artifact that should be checked before posting or handoff, use
+`schemas/review_result.schema.json` and validate it against the diff:
+
+```sh
+python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-number>.json --diff <patch> --json
+```
+
+Inline comments must reference real diff `path`, `line`, and `side` values.
+Severity must be `critical`, `important`, `suggestion`, or `nit`.
+
 ## Boundary
 
 Do not approve, merge, close issues, or mark security findings public.
-

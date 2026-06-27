@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -309,4 +310,120 @@ def validate_json_schemas(repo: Path) -> list[str]:
             errors.append(f"{path.relative_to(repo)}: missing title")
         if data.get("type") != "object":
             errors.append(f"{path.relative_to(repo)}: top-level type must be object")
+    return errors
+
+
+def _frontmatter(text: str) -> dict[str, str] | None:
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return None
+    raw = text[4:end]
+    metadata: dict[str, str] = {}
+    for line in raw.splitlines():
+        key, sep, value = line.partition(":")
+        if not sep:
+            return None
+        metadata[key.strip()] = value.strip()
+    return metadata
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def validate_skills_lock(repo: Path) -> list[str]:
+    """Validate repo-distributed SpecRail skills and their lockfile."""
+
+    errors: list[str] = []
+    lock_path = repo / "skills-lock.json"
+    if not lock_path.is_file():
+        return ["missing required file: skills-lock.json"]
+    try:
+        lock = json.loads(read_text(lock_path))
+    except json.JSONDecodeError as exc:
+        return [f"skills-lock.json: invalid JSON: {exc.msg}"]
+    if not isinstance(lock, dict):
+        return ["skills-lock.json: top-level value must be an object"]
+
+    if lock.get("version") != 1:
+        errors.append("skills-lock.json: version must be 1")
+    if lock.get("algorithm") != "sha256":
+        errors.append("skills-lock.json: algorithm must be sha256")
+
+    skills = lock.get("skills")
+    if not isinstance(skills, list) or not skills:
+        errors.append("skills-lock.json: skills must be a non-empty list")
+        return errors
+
+    seen_names: set[str] = set()
+    seen_paths: set[str] = set()
+    paths: list[str] = []
+    for index, item in enumerate(skills, start=1):
+        if not isinstance(item, dict):
+            errors.append(f"skills-lock.json: skill #{index} must be an object")
+            continue
+        name = item.get("name")
+        rel_path = item.get("path")
+        digest = item.get("computedHash")
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"skills-lock.json: skill #{index} missing name")
+            continue
+        if not isinstance(rel_path, str) or not rel_path.strip():
+            errors.append(f"skills-lock.json: skill {name} missing path")
+            continue
+        if name in seen_names:
+            errors.append(f"skills-lock.json: duplicate skill name {name}")
+        if rel_path in seen_paths:
+            errors.append(f"skills-lock.json: duplicate skill path {rel_path}")
+        seen_names.add(name)
+        seen_paths.add(rel_path)
+        paths.append(rel_path)
+
+        path = Path(rel_path)
+        if path.is_absolute() or ".." in path.parts:
+            errors.append(f"skills-lock.json: skill {name} path must be repo-relative")
+            continue
+        if path.parts[:1] != ("skills",) or path.name != "SKILL.md":
+            errors.append(f"skills-lock.json: skill {name} path must be skills/<name>/SKILL.md")
+            continue
+        if len(path.parts) != 3 or path.parts[1] != name:
+            errors.append(f"skills-lock.json: skill {name} path must match its name")
+
+        skill_path = repo / path
+        if not skill_path.is_file():
+            errors.append(f"skills-lock.json: skill file does not exist: {rel_path}")
+            continue
+        text = read_text(skill_path)
+        metadata = _frontmatter(text)
+        if metadata is None:
+            errors.append(f"{rel_path}: missing YAML frontmatter")
+        else:
+            if set(metadata) != {"name", "description"}:
+                errors.append(f"{rel_path}: frontmatter must contain only name and description")
+            if metadata.get("name") != name:
+                errors.append(f"{rel_path}: frontmatter name must be {name}")
+            if not metadata.get("description"):
+                errors.append(f"{rel_path}: description must not be empty")
+        if not isinstance(digest, str) or not digest.startswith("sha256:"):
+            errors.append(f"skills-lock.json: skill {name} computedHash must start with sha256:")
+        elif digest.removeprefix("sha256:") != _sha256_file(skill_path):
+            errors.append(f"skills-lock.json: skill {name} computedHash mismatch")
+
+    if paths != sorted(paths):
+        errors.append("skills-lock.json: skills must be sorted by path")
+
+    skill_files = {
+        str(path.relative_to(repo))
+        for path in sorted((repo / "skills").glob("specrail-*/SKILL.md"))
+    }
+    missing_from_lock = sorted(skill_files - seen_paths)
+    extra_in_lock = sorted(
+        path for path in seen_paths if path.startswith("skills/specrail-") and path not in skill_files
+    )
+    for rel_path in missing_from_lock:
+        errors.append(f"skills-lock.json: missing skill file {rel_path}")
+    for rel_path in extra_in_lock:
+        errors.append(f"skills-lock.json: locked skill file missing from repo {rel_path}")
     return errors

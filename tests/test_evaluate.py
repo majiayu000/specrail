@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -13,6 +14,7 @@ sys.path.insert(0, str(CHECKS))
 
 from check_workflow import validate_spec_packet, validate_task_plan  # noqa: E402
 from evaluate import evaluate_adoption_matrix, evaluate_rclean_smoke  # noqa: E402
+from specrail_lib import validate_skills_lock  # noqa: E402
 
 
 def write_text(path: Path, text: str) -> None:
@@ -58,6 +60,78 @@ def test_spec_packet_requires_tasks_md(tmp_path: Path) -> None:
     errors = validate_spec_packet(spec_dir)
 
     assert any("missing tasks.md" in error for error in errors)
+
+
+def test_skills_lock_validates_hashes(tmp_path: Path) -> None:
+    skill_path = tmp_path / "skills" / "specrail-example" / "SKILL.md"
+    skill_text = "\n".join(
+        [
+            "---",
+            "name: specrail-example",
+            "description: Example skill.",
+            "---",
+            "",
+            "# SpecRail Example",
+            "",
+        ]
+    )
+    write_text(skill_path, skill_text)
+    digest = hashlib.sha256(skill_text.encode("utf-8")).hexdigest()
+    write_text(
+        tmp_path / "skills-lock.json",
+        json.dumps(
+            {
+                "version": 1,
+                "algorithm": "sha256",
+                "skills": [
+                    {
+                        "name": "specrail-example",
+                        "path": "skills/specrail-example/SKILL.md",
+                        "computedHash": f"sha256:{digest}",
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert validate_skills_lock(tmp_path) == []
+
+
+def test_skills_lock_rejects_hash_mismatch(tmp_path: Path) -> None:
+    write_text(
+        tmp_path / "skills" / "specrail-example" / "SKILL.md",
+        "\n".join(
+            [
+                "---",
+                "name: specrail-example",
+                "description: Example skill.",
+                "---",
+                "",
+                "# SpecRail Example",
+                "",
+            ]
+        ),
+    )
+    write_text(
+        tmp_path / "skills-lock.json",
+        json.dumps(
+            {
+                "version": 1,
+                "algorithm": "sha256",
+                "skills": [
+                    {
+                        "name": "specrail-example",
+                        "path": "skills/specrail-example/SKILL.md",
+                        "computedHash": "sha256:0000",
+                    }
+                ],
+            }
+        ),
+    )
+
+    errors = validate_skills_lock(tmp_path)
+
+    assert any("computedHash mismatch" in error for error in errors)
 
 
 def test_rclean_smoke_requires_all_scenarios(tmp_path: Path) -> None:

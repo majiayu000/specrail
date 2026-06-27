@@ -8,13 +8,21 @@ GH-
 
 Link to `product.md`.
 
-## Current System
+## Codebase Context
 
-Describe the relevant current implementation and files.
+| Area | Files | Current behavior | Why relevant |
+| --- | --- | --- | --- |
+|  |  |  |  |
 
 ## Proposed Design
 
 Explain the planned implementation.
+
+## Product-to-Test Mapping
+
+| Product invariant | Implementation area | Verification |
+| --- | --- | --- |
+| P1 |  |  |
 
 ## Data Flow
 
@@ -40,4 +48,3 @@ Describe inputs, outputs, persistence, and external calls.
 ## Rollback Plan
 
 Describe how to revert or disable the change.
-
