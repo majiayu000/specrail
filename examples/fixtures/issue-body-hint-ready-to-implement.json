@@ -7,12 +7,11 @@
   "issue": 16,
   "github_state": "OPEN",
   "labels": [
-    "area_runtime",
-    "ready_to_spec"
+    "area_runtime"
   ],
-  "state": "ready_to_spec",
-  "state_source": "label",
-  "state_trusted": true,
+  "state": "ready_to_implement",
+  "state_source": "body_hint",
+  "state_trusted": false,
   "title": "Implement GitHub issue evidence adapter",
   "url": "https://github.com/majiayu000/specrail/issues/16"
 }

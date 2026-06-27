@@ -1,6 +1,6 @@
 {
   "verdict": "REJECT",
-  "body": "Advisory review artifact reporting that implementation and spec expectations differ.",
+  "body": "## Summary\nAdvisory review artifact reporting that implementation and spec expectations differ.\n\n## Verdict\nREJECT: the implementation and spec expectations differ.",
   "comments": [
     {
       "path": "src/app.py",

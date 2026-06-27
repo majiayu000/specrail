@@ -6,6 +6,10 @@
 
 - Read-only GitHub issue evidence adapter for `route_gate.py`.
 - Advisory review JSON gate with diff-line validation.
+- All-spec packet validation via `checks/check_workflow.py --all-specs`.
+- Trusted issue state metadata with `state_source` and `state_trusted`.
+- Review artifact validation for body headings, multi-line ranges, and
+  suggestion blocks.
 - Stronger product and tech spec templates based on behavior invariants,
   codebase context, and product-to-test mapping.
 - Focused SpecRail route skills pinned by `skills-lock.json`.

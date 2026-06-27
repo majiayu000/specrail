@@ -62,6 +62,7 @@ python3 checks/route_gate.py --repo . --route implement --issue <issue-number> -
 
 ```sh
 python3 checks/check_workflow.py --repo .
+python3 checks/check_workflow.py --repo . --all-specs
 python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue-number>
 ```
 
@@ -77,6 +78,11 @@ offline. GitHub or `threads` may collect evidence such as PR head SHA, CI
 status, review threads, merge state, and linked issue references. The gate only
 evaluates that evidence and never merges or writes remote state.
 
+Issue evidence includes `state_source` and `state_trusted`. Label-derived state
+is trusted readiness evidence. Body-hint state is useful context, but it is not
+a maintainer readiness label and human-gated routes must not treat it as direct
+permission.
+
 10. Before treating an agent review artifact as publishable evidence, validate
     it against the diff:
 
@@ -85,7 +91,10 @@ python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-num
 ```
 
 The review gate validates advisory review JSON and inline diff locations. It
-does not approve, merge, or publish GitHub reviews.
+does not approve, merge, or publish GitHub reviews. Review artifact bodies must
+include `## Summary` and `## Verdict`; inline comments may use paired
+`start_line` / `start_side` ranges, and suggestions must be non-empty RIGHT-side
+comments.
 
 If `write_spec` is selected and no GitHub issue number is available, the agent
 should search for an existing issue first. If none exists and GitHub workflow is

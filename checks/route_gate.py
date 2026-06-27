@@ -45,6 +45,7 @@ ARTIFACT_FILES = {
     "tech_spec",
     "task_plan",
 }
+READINESS_GATED_ROUTES = {"write_spec", "implement"}
 
 
 def normalize_route(raw: str) -> str:
@@ -106,8 +107,13 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     evidence = load_evidence(Path(args.evidence) if args.evidence else None)
     labels = list(args.label or [])
     labels.extend(str(label) for label in evidence.get("labels", []) if str(label).strip())
-    explicit_state = args.state or evidence.get("state")
+    evidence_state = evidence.get("state")
+    explicit_state = args.state or evidence_state
     github_state = str(evidence.get("github_state") or "").upper()
+    state_from_cli = args.state is not None
+    state_from_evidence = not state_from_cli and evidence_state is not None
+    state_source = str(evidence.get("state_source") or "none")
+    state_trusted = state_source == "label" and evidence.get("state_trusted") is True
 
     reasons: list[str] = []
     satisfied: list[str] = []
@@ -143,6 +149,8 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     current_state, state_evidence = infer_state(config, explicit_state, labels)
+    if state_from_evidence and current_state == evidence_state:
+        state_evidence = [f"state provided by evidence: {current_state} ({state_source})"]
     satisfied.extend(state_evidence)
 
     states = state_map(config)
@@ -177,6 +185,19 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         missing.append(f"allowed_state:{'|'.join(allowed_from)}")
         reasons.append(
             f"route {route} requires one of {', '.join(allowed_from)}; got {current_state}"
+        )
+
+    if (
+        route in READINESS_GATED_ROUTES
+        and "readiness_label" in human_gates
+        and state_from_evidence
+        and current_state in allowed_from
+        and not state_trusted
+    ):
+        missing.append("trusted_state")
+        reasons.append(
+            f"state {current_state} came from untrusted {state_source} evidence; "
+            "maintainer readiness label required"
         )
 
     provided_artifacts = dict(evidence.get("artifacts", {})) if isinstance(evidence.get("artifacts"), dict) else {}
@@ -232,7 +253,11 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         blocked_actions.extend(["final_approval", "merge", "force_push"])
 
     if missing:
-        if current_state is None or any(item.startswith("allowed_state:") for item in missing):
+        if (
+            current_state is None
+            or any(item.startswith("allowed_state:") for item in missing)
+            or "trusted_state" in missing
+        ):
             decision = "needs_human" if human_gates else "blocked"
         else:
             decision = "warn" if args.mode in {"dry_run", "advisory"} else "blocked"

@@ -3,8 +3,44 @@
   "$id": "https://specrail.local/schemas/issue_evidence.schema.json",
   "title": "GitHub Issue Evidence",
   "type": "object",
-  "required": ["issue", "github_state", "state", "labels", "url", "title", "artifacts"],
+  "required": [
+    "issue",
+    "github_state",
+    "state",
+    "state_source",
+    "state_trusted",
+    "labels",
+    "url",
+    "title",
+    "artifacts"
+  ],
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state_source": {
+            "const": "label"
+          }
+        },
+        "required": ["state_source"]
+      },
+      "then": {
+        "properties": {
+          "state_trusted": {
+            "const": true
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "state_trusted": {
+            "const": false
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "issue": {
       "type": "integer",
@@ -26,6 +62,12 @@
     },
     "github_state": {
       "enum": ["OPEN", "CLOSED"]
+    },
+    "state_source": {
+      "enum": ["label", "body_hint", "none"]
+    },
+    "state_trusted": {
+      "type": "boolean"
     },
     "labels": {
       "type": "array",

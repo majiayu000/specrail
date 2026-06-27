@@ -64,6 +64,8 @@ def test_build_evidence_matches_route_gate_contract_from_label() -> None:
         "issue": 16,
         "github_state": "OPEN",
         "state": "ready_to_spec",
+        "state_source": "label",
+        "state_trusted": True,
         "labels": ["area_runtime", "ready_to_spec"],
         "url": "https://github.com/majiayu000/specrail/issues/16",
         "title": "Implement GitHub issue evidence adapter",
@@ -84,7 +86,17 @@ def test_build_evidence_uses_body_state_hint_without_readiness_label() -> None:
     )
 
     assert evidence["state"] == "ready_to_implement"
+    assert evidence["state_source"] == "body_hint"
+    assert evidence["state_trusted"] is False
     assert evidence["labels"] == ["area_runtime"]
+
+
+def test_build_evidence_uses_none_source_without_state_evidence() -> None:
+    evidence = build_issue_evidence(issue_payload(labels=[{"name": "area_runtime"}]))
+
+    assert evidence["state"] is None
+    assert evidence["state_source"] == "none"
+    assert evidence["state_trusted"] is False
 
 
 def test_terminal_label_takes_precedence_over_readiness_label() -> None:
@@ -93,6 +105,8 @@ def test_terminal_label_takes_precedence_over_readiness_label() -> None:
     )
 
     assert evidence["state"] == "security_private"
+    assert evidence["state_source"] == "label"
+    assert evidence["state_trusted"] is True
 
 
 def test_terminal_states_are_valid_issue_evidence_schema_values() -> None:
@@ -165,6 +179,8 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
     assert evidence["issue"] == 16
     assert evidence["github_state"] == "OPEN"
     assert evidence["state"] == "ready_to_spec"
+    assert evidence["state_source"] == "body_hint"
+    assert evidence["state_trusted"] is False
     assert evidence["labels"] == ["area_runtime"]
     assert evidence["artifacts"]["product_spec"] == "specs/GH16/product.md"
 
@@ -196,6 +212,103 @@ def test_route_gate_consumes_issue_fixture() -> None:
     assert payload["decision"] == "allowed"
     assert payload["current_state"] == "ready_to_spec"
     assert "linked_issue: GH-16" in payload["satisfied"]
+
+
+def test_route_gate_requires_human_for_body_hint_state() -> None:
+    fixture = ROOT / "examples/fixtures/issue-body-hint-ready-to-implement.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/route_gate.py",
+            "--repo",
+            ".",
+            "--route",
+            "implement",
+            "--issue",
+            "16",
+            "--evidence",
+            str(fixture),
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "needs_human"
+    assert "trusted_state" in payload["missing"]
+    assert "state provided by evidence: ready_to_implement (body_hint)" in payload["satisfied"]
+    assert any("maintainer readiness label required" in reason for reason in payload["reasons"])
+
+
+def test_route_gate_rejects_inconsistent_trust_metadata(tmp_path: Path) -> None:
+    evidence = build_issue_evidence(
+        issue_payload(
+            labels=[{"name": "area_runtime"}],
+            body="state: ready_to_implement",
+        )
+    )
+    evidence["state_trusted"] = True
+    evidence_path = tmp_path / "inconsistent-evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/route_gate.py",
+            "--repo",
+            ".",
+            "--route",
+            "implement",
+            "--issue",
+            "16",
+            "--evidence",
+            str(evidence_path),
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "needs_human"
+    assert "trusted_state" in payload["missing"]
+
+
+def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence() -> None:
+    fixture = ROOT / "examples/fixtures/issue-body-hint-ready-to-implement.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/route_gate.py",
+            "--repo",
+            ".",
+            "--route",
+            "implement",
+            "--issue",
+            "16",
+            "--state",
+            "ready_to_implement",
+            "--evidence",
+            str(fixture),
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "allowed"
+    assert payload["current_state"] == "ready_to_implement"
 
 
 def test_route_gate_blocks_closed_issue_evidence(tmp_path: Path) -> None:

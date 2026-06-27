@@ -74,6 +74,12 @@ Validate a spec packet:
 python3 checks/check_workflow.py --repo . --spec-dir specs/GH1
 ```
 
+Validate every `specs/GH<number>` packet:
+
+```sh
+python3 checks/check_workflow.py --repo . --all-specs
+```
+
 Evaluate whether an agent may take the next workflow action from local evidence:
 
 ```sh
@@ -89,7 +95,10 @@ python3 checks/route_gate.py --repo . --route write_spec --issue 123 --evidence 
 ```
 
 `checks/github_issue_evidence.py` only reshapes `gh issue view` output into
-local route evidence. It does not write labels, comments, issues, or PRs.
+local route evidence. It does not write labels, comments, issues, or PRs. Issue
+states inferred from labels are trusted readiness evidence; states inferred from
+requester-editable body hints are marked `state_trusted: false` and cannot
+replace maintainer readiness labels for human-gated routes.
 
 Evaluate whether PR merge evidence is complete before a maintainer merges:
 
@@ -108,7 +117,8 @@ python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-123.jso
 ```
 
 Review artifacts are advisory evidence only. They do not grant final approval or
-merge authority.
+merge authority. Their body must include `## Summary` and `## Verdict`; inline
+comments may use validated multi-line ranges and RIGHT-side suggestion blocks.
 
 Evaluate a spec packet and adoption smoke evidence:
 

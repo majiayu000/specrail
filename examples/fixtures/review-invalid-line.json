@@ -1,6 +1,6 @@
 {
   "verdict": "REJECT",
-  "body": "Advisory review artifact with a misplaced inline comment.",
+  "body": "## Summary\nAdvisory review artifact with a misplaced inline comment.\n\n## Verdict\nREJECT: the inline comment location is invalid.",
   "comments": [
     {
       "path": "src/app.py",

@@ -10,6 +10,8 @@
     "reserved_internal"
   ],
   "state": "reserved_internal",
+  "state_source": "label",
+  "state_trusted": true,
   "title": "Implement GitHub issue evidence adapter",
   "url": "https://github.com/majiayu000/specrail/issues/16"
 }

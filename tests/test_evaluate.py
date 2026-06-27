@@ -12,7 +12,12 @@ CHECKS = ROOT / "checks"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(CHECKS))
 
-from check_workflow import validate_spec_packet, validate_task_plan  # noqa: E402
+from check_workflow import (  # noqa: E402
+    discover_spec_packet_dirs,
+    select_spec_packet_dirs,
+    validate_spec_packet,
+    validate_task_plan,
+)
 from evaluate import evaluate_adoption_matrix, evaluate_rclean_smoke  # noqa: E402
 from specrail_lib import validate_skills_lock  # noqa: E402
 
@@ -60,6 +65,32 @@ def test_spec_packet_requires_tasks_md(tmp_path: Path) -> None:
     errors = validate_spec_packet(spec_dir)
 
     assert any("missing tasks.md" in error for error in errors)
+
+
+def test_discover_spec_packet_dirs_sorts_numerically(tmp_path: Path) -> None:
+    for name in ["GH10", "GH2", "GH1", "draft", "GHX"]:
+        (tmp_path / "specs" / name).mkdir(parents=True)
+
+    spec_dirs = discover_spec_packet_dirs(tmp_path)
+
+    assert [path.name for path in spec_dirs] == ["GH1", "GH2", "GH10"]
+
+
+def test_discover_spec_packet_dirs_returns_empty_without_specs_dir(tmp_path: Path) -> None:
+    assert discover_spec_packet_dirs(tmp_path) == []
+
+
+def test_select_spec_packet_dirs_deduplicates_explicit_specs(tmp_path: Path) -> None:
+    for name in ["GH10", "GH2"]:
+        (tmp_path / "specs" / name).mkdir(parents=True)
+
+    spec_dirs = select_spec_packet_dirs(
+        tmp_path,
+        ["specs/GH10"],
+        all_specs=True,
+    )
+
+    assert [path.name for path in spec_dirs] == ["GH2", "GH10"]
 
 
 def test_skills_lock_validates_hashes(tmp_path: Path) -> None:

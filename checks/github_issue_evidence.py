@@ -123,6 +123,18 @@ def infer_state_from_body(body: str) -> str | None:
     return None
 
 
+def infer_state_with_source(labels: list[str], body: str) -> tuple[str | None, str, bool]:
+    state = infer_state_from_labels(labels)
+    if state is not None:
+        return state, "label", True
+
+    state = infer_state_from_body(body)
+    if state is not None:
+        return state, "body_hint", False
+
+    return None, "none", False
+
+
 def default_artifacts(issue_number: int) -> dict[str, str]:
     return {
         "product_spec": f"specs/GH{issue_number}/product.md",
@@ -138,14 +150,14 @@ def build_issue_evidence(issue_payload: dict[str, Any]) -> dict[str, Any]:
     url = _require_string(issue_payload, "url")
     labels = normalize_labels(issue_payload.get("labels"))
     body = _optional_body(issue_payload)
-    state = infer_state_from_labels(labels)
-    if state is None:
-        state = infer_state_from_body(body)
+    state, state_source, state_trusted = infer_state_with_source(labels, body)
 
     return {
         "issue": issue_number,
         "github_state": github_state,
         "state": state,
+        "state_source": state_source,
+        "state_trusted": state_trusted,
         "labels": labels,
         "url": url,
         "title": title,

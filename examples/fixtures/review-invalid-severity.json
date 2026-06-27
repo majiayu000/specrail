@@ -1,6 +1,6 @@
 {
   "verdict": "REJECT",
-  "body": "Advisory review artifact with an unsupported severity value.",
+  "body": "## Summary\nAdvisory review artifact with an unsupported severity value.\n\n## Verdict\nREJECT: the severity vocabulary is invalid.",
   "comments": [
     {
       "path": "src/app.py",
