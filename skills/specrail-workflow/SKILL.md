@@ -1,16 +1,17 @@
 ---
 name: specrail-workflow
-description: Use when working in a repository that adopts SpecRail for issue-first, spec-first, AI-assisted development. Handles triage, product specs, tech specs, PR bodies, review summaries, and handoffs with locale-aware human-facing text, including Chinese (`zh-CN`) when the user writes Chinese or the repository presentation config requests it.
+description: Use as the router/startup skill when working in a repository that adopts SpecRail for issue-first, spec-first, AI-assisted development. Routes triage, spec writing, task planning, implementation, PR review, CI diagnosis, PR gates, release notes, and spec-vs-implementation checks to focused SpecRail skills while preserving locale and human-gate boundaries.
 ---
 
 # SpecRail Workflow
 
-Use this skill as the entrypoint for SpecRail-governed repository work.
+Use this skill as the entrypoint for SpecRail-governed repository work. Load a
+focused SpecRail skill after the route is known.
 
 ## Startup
 
 1. Search before creating a new issue, spec, template, policy, schema, or workflow.
-2. Read applicable `AGENTS.md`.
+2. Read applicable `AGENTS.md`, then `AGENT_USAGE.md` and `PLAN.md` when present.
 3. Read `workflow.yaml`, `states.yaml`, `labels.yaml`, and relevant templates.
 4. Identify the route:
    - `triage_issue`
@@ -22,6 +23,33 @@ Use this skill as the entrypoint for SpecRail-governed repository work.
 5. Run `checks/route_gate.py` for the selected route when the repository includes
    it. Treat `allowed` as permission to proceed, `warn` as proceed-with-caution,
    `needs_human` as a maintainer gate, and `blocked` as a stop condition.
+6. When GitHub issue evidence is needed and the repository includes the adapter,
+   collect it read-only:
+
+```sh
+python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issue-number> --json > issue-evidence.json
+```
+
+## Route To Focused Skills
+
+- Use `skills/specrail-triage-issue/SKILL.md` for issue classification, duplicate
+  searches, label proposals, and triage handoffs.
+- Use `skills/specrail-write-product-spec/SKILL.md` for
+  `specs/GH<issue-number>/product.md`.
+- Use `skills/specrail-write-tech-spec/SKILL.md` for
+  `specs/GH<issue-number>/tech.md`.
+- Use `skills/specrail-plan-tasks/SKILL.md` for
+  `specs/GH<issue-number>/tasks.md`.
+- Use `skills/specrail-implement/SKILL.md` for code or workflow-asset changes
+  after the implementation gate.
+- Use `skills/specrail-check-impl-against-spec/SKILL.md` to compare a diff or PR
+  with the linked product spec, tech spec, and task plan.
+- Use `skills/specrail-review-pr/SKILL.md` for advisory PR review.
+- Use `skills/specrail-diagnose-ci/SKILL.md` for CI failure investigation and
+  focused fixes.
+- Use `skills/specrail-pr-gate/SKILL.md` before reporting merge readiness.
+- Use `skills/specrail-release-note/SKILL.md` after merge when drafting release
+  notes.
 
 Default to `write_spec` before `implement` for product-facing, architecture,
 cross-module, public API, workflow-policy, or ambiguous behavior changes.
@@ -63,45 +91,6 @@ Do not translate stable machine-facing identifiers:
 - command names and CLI flags
 - JSON keys and schema field names
 
-## Spec Creation
-
-For feature work that needs a spec:
-
-1. Confirm or create a linked GitHub issue before creating a numbered spec.
-2. Use `specs/GH<issue-number>/product.md` and `specs/GH<issue-number>/tech.md`.
-3. Prefer templates in `templates/<locale>/`; fall back to root `templates/`.
-4. Keep behavior in product spec and implementation plan in tech spec.
-5. Run:
-
-```sh
-python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
-python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue-number>
-```
-
-Before implementation, run:
-
-```sh
-python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json
-```
-
-## Merge Readiness
-
-Before reporting a pull request as merge-ready, collect PR evidence and run the
-offline gate when available:
-
-```sh
-python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --json > <evidence.json>
-python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
-```
-
-`checks/github_pr_evidence.py` is a read-only collector for GitHub CLI output,
-not a policy engine and not remote automation. The evidence may come from that
-adapter, a threads lane, or another read-only adapter. It should include PR head
-SHA, linked issue, CI/check rollup, review decision, review-thread resolution,
-merge state, and human merge authorization. `allowed` means the evidence is
-merge-ready. `needs_human` means deterministic checks passed but merge
-authorization is missing. `blocked` means do not merge.
-
 ## Optional Threads Integration
 
 If the task is a GitHub issue or PR queue, needs disjoint parallel lanes, or
@@ -131,6 +120,10 @@ Agents must not:
 - publish secrets or private security details
 - change repository permissions
 - bypass human gates
+
+Do not install repo-distributed SpecRail skills into `$HOME` unless a human
+explicitly requests installation. Treat `skills-lock.json`, when present, as the
+declared repo skill set.
 
 ## Output
 

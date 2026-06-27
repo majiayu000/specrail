@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-No unreleased changes.
+### Added
+
+- Read-only GitHub issue evidence adapter for `route_gate.py`.
+- Advisory review JSON gate with diff-line validation.
+- Stronger product and tech spec templates based on behavior invariants,
+  codebase context, and product-to-test mapping.
+- Focused SpecRail route skills pinned by `skills-lock.json`.
+- Deterministic gate fixture corpus under `examples/fixtures/`.
 
 ## v0.2.1 - 2026-06-26
 

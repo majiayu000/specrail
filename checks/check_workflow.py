@@ -16,6 +16,7 @@ from specrail_lib import (
     validate_json_schemas,
     validate_labels,
     validate_state_graph,
+    validate_skills_lock,
     validate_template_parity,
 )
 
@@ -30,8 +31,23 @@ REQUIRED_FILES = [
     "states.yaml",
     "labels.yaml",
     "examples/adoptions/matrix.json",
+    "examples/fixtures/issue-ready-to-implement.json",
+    "examples/fixtures/issue-ready-to-spec.json",
+    "examples/fixtures/issue-reserved-internal.json",
+    "examples/fixtures/pr-clean-authorized.json",
+    "examples/fixtures/pr-diff.patch",
+    "examples/fixtures/pr-missing-human-auth.json",
+    "examples/fixtures/pr-pending-ci.json",
+    "examples/fixtures/pr-unresolved-thread.json",
+    "examples/fixtures/review-invalid-line.json",
+    "examples/fixtures/review-invalid-severity.json",
+    "examples/fixtures/review-spec-drift.json",
+    "examples/fixtures/review-valid.json",
+    "checks/github_issue_evidence.py",
     "checks/github_pr_evidence.py",
     "checks/pr_gate.py",
+    "checks/review_json_gate.py",
+    "skills-lock.json",
     "templates/issue_bug.md",
     "templates/issue_feature.md",
     "templates/product_spec.md",
@@ -50,11 +66,13 @@ REQUIRED_FILES = [
     "policies/maintainer_escalation.md",
     "schemas/flow_manifest.schema.json",
     "schemas/issue_triage.schema.json",
+    "schemas/issue_evidence.schema.json",
     "schemas/evaluation_result.schema.json",
     "schemas/adoption_matrix.schema.json",
     "schemas/spec_packet.schema.json",
     "schemas/task_plan.schema.json",
     "schemas/pr_review_gate.schema.json",
+    "schemas/review_result.schema.json",
     "schemas/workflow_run.schema.json",
 ]
 
@@ -214,6 +232,7 @@ def main() -> int:
         errors.extend(validate_state_graph(config))
         errors.extend(validate_labels(config))
         errors.extend(validate_action_policy(config))
+        errors.extend(validate_skills_lock(repo))
         errors.extend(validate_template_parity(repo))
         for raw_spec_dir in args.spec_dir:
             errors.extend(validate_spec_packet((repo / raw_spec_dir).resolve()))

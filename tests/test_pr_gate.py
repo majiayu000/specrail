@@ -8,40 +8,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
+FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
 from pr_gate import evaluate_pr_gate  # noqa: E402
 
 
 def clean_evidence() -> dict[str, object]:
-    return {
-        "pr": 718,
-        "state": "OPEN",
-        "is_draft": False,
-        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
-        "merge_state": "CLEAN",
-        "linked_issue": 716,
-        "checks": [
-            {
-                "name": "Compile-check all features",
-                "status": "COMPLETED",
-                "conclusion": "SUCCESS",
-            }
-        ],
-        "reviews": [{"author": "gemini-code-assist", "state": "COMMENTED"}],
-        "review_threads": [
-            {
-                "url": "https://github.com/majiayu000/litellm-rs/pull/718#discussion_r3473213282",
-                "is_resolved": True,
-                "is_outdated": False,
-            }
-        ],
-        "human_authorization": {
-            "actor": "maintainer",
-            "source": "chat",
-            "summary": "merge approved",
-        },
-    }
+    return fixture("pr-clean-authorized.json")
+
+
+def fixture(name: str) -> dict[str, object]:
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
 def test_pr_gate_allows_clean_authorized_merge() -> None:
@@ -53,8 +31,7 @@ def test_pr_gate_allows_clean_authorized_merge() -> None:
 
 
 def test_pr_gate_needs_human_without_authorization() -> None:
-    evidence = clean_evidence()
-    evidence.pop("human_authorization")
+    evidence = fixture("pr-missing-human-auth.json")
 
     result = evaluate_pr_gate(evidence)
 
@@ -64,14 +41,7 @@ def test_pr_gate_needs_human_without_authorization() -> None:
 
 
 def test_pr_gate_blocks_pending_ci() -> None:
-    evidence = clean_evidence()
-    evidence["checks"] = [
-        {
-            "name": "workflow-check",
-            "status": "IN_PROGRESS",
-            "conclusion": "",
-        }
-    ]
+    evidence = fixture("pr-pending-ci.json")
 
     result = evaluate_pr_gate(evidence)
 
@@ -80,14 +50,7 @@ def test_pr_gate_blocks_pending_ci() -> None:
 
 
 def test_pr_gate_blocks_unresolved_thread() -> None:
-    evidence = clean_evidence()
-    evidence["review_threads"] = [
-        {
-            "url": "https://example.invalid/thread",
-            "is_resolved": False,
-            "is_outdated": False,
-        }
-    ]
+    evidence = fixture("pr-unresolved-thread.json")
 
     result = evaluate_pr_gate(evidence)
 

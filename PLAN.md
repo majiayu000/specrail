@@ -87,10 +87,19 @@ evidence JSON and checks PR head, CI, review threads, merge state, linked issue,
 and human merge authorization. A later GitHub adapter can collect that evidence,
 but the policy decision should stay in the evaluator.
 
-The first GitHub evidence adapter is `checks/github_pr_evidence.py`. It uses
-`gh pr view` and `gh api graphql` to collect PR merge-readiness evidence and
-prints JSON that `checks/pr_gate.py` can evaluate. It does not write labels,
-comments, reviews, thread state, branches, or merges.
+The first issue evidence adapter is `checks/github_issue_evidence.py`. It uses
+`gh issue view` to collect issue state, labels, title, URL, and default artifact
+paths, then prints JSON that `checks/route_gate.py` can evaluate. It does not
+write labels, comments, issues, PRs, or branches.
+
+The first PR evidence adapter is `checks/github_pr_evidence.py`. It uses `gh pr
+view` and `gh api graphql` to collect PR merge-readiness evidence and prints
+JSON that `checks/pr_gate.py` can evaluate. It does not write labels, comments,
+reviews, thread state, branches, or merges.
+
+The first review artifact gate is `checks/review_json_gate.py`. It validates
+advisory review JSON against a unified diff and blocks invalid paths, lines,
+severity values, spec drift, and final-approval or merge-authority language.
 
 ### Phase 4: Agent Installation
 
@@ -98,6 +107,7 @@ Make SpecRail easy to give to agents:
 
 - copy pack into a repo
 - install or reference `skills/specrail-workflow`
+- keep repo-distributed route skills pinned in `skills-lock.json`
 - optionally set `presentation.default_locale: zh-CN`
 - run deterministic checks before and after agent work
 - use optional integration docs, such as `integrations/threads.md`, when the

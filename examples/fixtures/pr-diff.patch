@@ -1,0 +1,13 @@
+diff --git a/src/app.py b/src/app.py
+index 5f58c91..b1a7832 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,6 +1,7 @@
+ def render_title(title):
+-    return title.strip()
++    cleaned = title.strip()
++    return cleaned
+ 
+ def load_config(raw):
+     value = raw.get("enabled", False)
+     return value
