@@ -32,6 +32,8 @@ def test_review_json_gate_allows_valid_review() -> None:
     assert result["advisory_only"] is True
     assert result["reasons"] == []
     assert result["missing"] == []
+    assert "body includes ## Summary" in result["satisfied"]
+    assert "body includes ## Verdict" in result["satisfied"]
 
 
 def test_review_json_gate_blocks_invalid_line() -> None:
@@ -48,6 +50,91 @@ def test_review_json_gate_blocks_invalid_severity() -> None:
     assert any("severity must be critical" in reason for reason in result["reasons"])
 
 
+def test_review_json_gate_blocks_invalid_range() -> None:
+    result = evaluate_review_gate(load_review("review-invalid-range.json"), load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("includes lines not present in the diff" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_blocks_unpaired_start_range_fields() -> None:
+    review = copy.deepcopy(load_review("review-valid.json"))
+    comments = review["comments"]
+    assert isinstance(comments, list)
+    first_comment = comments[0]
+    assert isinstance(first_comment, dict)
+    first_comment.pop("start_side")
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("start_line and start_side must appear together" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_blocks_cross_side_range() -> None:
+    review = copy.deepcopy(load_review("review-valid.json"))
+    comments = review["comments"]
+    assert isinstance(comments, list)
+    first_comment = comments[0]
+    assert isinstance(first_comment, dict)
+    first_comment["start_side"] = "LEFT"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert "comment #1 start_side must match side for a range" in result["reasons"]
+
+
+def test_review_json_gate_blocks_left_side_suggestion() -> None:
+    result = evaluate_review_gate(load_review("review-invalid-suggestion-side.json"), load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("suggestions are only allowed on RIGHT-side comments" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_blocks_empty_suggestion_field() -> None:
+    review = copy.deepcopy(load_review("review-valid.json"))
+    comments = review["comments"]
+    assert isinstance(comments, list)
+    first_comment = comments[0]
+    assert isinstance(first_comment, dict)
+    first_comment["suggestion"] = " "
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("suggestion must be a non-empty string" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_blocks_empty_fenced_suggestion() -> None:
+    result = evaluate_review_gate(load_review("review-invalid-empty-suggestion.json"), load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("suggestion block #1 must be non-empty" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_blocks_unclosed_fenced_suggestion() -> None:
+    review = copy.deepcopy(load_review("review-valid.json"))
+    comments = review["comments"]
+    assert isinstance(comments, list)
+    first_comment = comments[0]
+    assert isinstance(first_comment, dict)
+    first_comment["body"] = "Use a complete suggestion block.\n\n```suggestion\n    return title.strip()"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert "comment #1 has unterminated suggestion block" in result["reasons"]
+
+
+def test_review_json_gate_blocks_missing_body_headings() -> None:
+    result = evaluate_review_gate(load_review("review-invalid-body.json"), load_diff())
+
+    assert result["decision"] == "blocked"
+    assert "body must include ## Summary heading" in result["reasons"]
+    assert "body must include ## Verdict heading" in result["reasons"]
+
+
 def test_review_json_gate_blocks_spec_drift() -> None:
     result = evaluate_review_gate(load_review("review-spec-drift.json"), load_diff())
 
@@ -58,8 +145,9 @@ def test_review_json_gate_blocks_spec_drift() -> None:
 def test_review_json_gate_blocks_final_authority_language() -> None:
     review = copy.deepcopy(load_review("review-valid.json"))
     review["body"] = (
-        "I approve this PR. It is approved for merge. You can merge; ship it. "
-        "Go ahead and merge. Looks good to merge. Safe to merge. LGTM, merge."
+        "## Summary\nI approve this PR. It is approved for merge. You can merge; ship it. "
+        "Go ahead and merge. Looks good to merge. Safe to merge. LGTM, merge.\n\n"
+        "## Verdict\nThis advisory artifact still cannot grant merge authority."
     )
 
     result = evaluate_review_gate(review, load_diff())

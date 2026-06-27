@@ -34,13 +34,18 @@ REQUIRED_FILES = [
     "examples/fixtures/issue-ready-to-implement.json",
     "examples/fixtures/issue-ready-to-spec.json",
     "examples/fixtures/issue-reserved-internal.json",
+    "examples/fixtures/issue-body-hint-ready-to-implement.json",
     "examples/fixtures/pr-clean-authorized.json",
     "examples/fixtures/pr-diff.patch",
     "examples/fixtures/pr-missing-human-auth.json",
     "examples/fixtures/pr-pending-ci.json",
     "examples/fixtures/pr-unresolved-thread.json",
+    "examples/fixtures/review-invalid-body.json",
+    "examples/fixtures/review-invalid-empty-suggestion.json",
     "examples/fixtures/review-invalid-line.json",
+    "examples/fixtures/review-invalid-range.json",
     "examples/fixtures/review-invalid-severity.json",
+    "examples/fixtures/review-invalid-suggestion-side.json",
     "examples/fixtures/review-spec-drift.json",
     "examples/fixtures/review-valid.json",
     "checks/github_issue_evidence.py",
@@ -180,6 +185,51 @@ def validate_spec_packet(spec_dir: Path) -> list[str]:
     return errors
 
 
+def spec_packet_sort_key(spec_dir: Path) -> tuple[int, int, str]:
+    match = re.fullmatch(r"GH([0-9]+)", spec_dir.name)
+    if match:
+        return (0, int(match.group(1)), spec_dir.name)
+    return (1, 0, str(spec_dir))
+
+
+def discover_spec_packet_dirs(repo: Path) -> list[Path]:
+    specs_dir = repo / "specs"
+    if not specs_dir.is_dir():
+        return []
+    return sorted(
+        [
+            path.resolve()
+            for path in specs_dir.iterdir()
+            if path.is_dir() and re.fullmatch(r"GH([0-9]+)", path.name)
+        ],
+        key=spec_packet_sort_key,
+    )
+
+
+def select_spec_packet_dirs(
+    repo: Path,
+    raw_spec_dirs: list[str],
+    *,
+    all_specs: bool,
+) -> list[Path]:
+    spec_dirs: list[Path] = []
+    if all_specs:
+        spec_dirs.extend(discover_spec_packet_dirs(repo))
+    spec_dirs.extend((repo / raw_spec_dir).resolve() for raw_spec_dir in raw_spec_dirs)
+
+    unique_spec_dirs: list[Path] = []
+    seen: set[Path] = set()
+    for spec_dir in spec_dirs:
+        if spec_dir in seen:
+            continue
+        seen.add(spec_dir)
+        unique_spec_dirs.append(spec_dir)
+
+    if all_specs:
+        return sorted(unique_spec_dirs, key=spec_packet_sort_key)
+    return unique_spec_dirs
+
+
 def validate_task_plan(path: Path, issue_number: str | None) -> list[str]:
     errors: list[str] = []
     text = read_text(path)
@@ -220,6 +270,11 @@ def main() -> int:
         default=[],
         help="Optional specs/GH<number> directory to validate",
     )
+    parser.add_argument(
+        "--all-specs",
+        action="store_true",
+        help="Validate every specs/GH<number> directory under the repo",
+    )
     args = parser.parse_args()
 
     repo = Path(args.repo).resolve()
@@ -234,8 +289,12 @@ def main() -> int:
         errors.extend(validate_action_policy(config))
         errors.extend(validate_skills_lock(repo))
         errors.extend(validate_template_parity(repo))
-        for raw_spec_dir in args.spec_dir:
-            errors.extend(validate_spec_packet((repo / raw_spec_dir).resolve()))
+        for spec_dir in select_spec_packet_dirs(
+            repo,
+            args.spec_dir,
+            all_specs=args.all_specs,
+        ):
+            errors.extend(validate_spec_packet(spec_dir))
     except SpecRailError as exc:
         errors.append(str(exc))
 

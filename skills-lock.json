@@ -35,7 +35,7 @@
     {
       "name": "specrail-review-pr",
       "path": "skills/specrail-review-pr/SKILL.md",
-      "computedHash": "sha256:36cbef71ced0dea6af65e5cd87aa53483f6589403899f36e54a3dfd1c7adb944"
+      "computedHash": "sha256:b61471aa1804ab0f0e39bad3cab1c7bbe6ccdaa3b8eb9915bf940ef9e636ebe5"
     },
     {
       "name": "specrail-triage-issue",

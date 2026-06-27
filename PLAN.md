@@ -88,9 +88,11 @@ and human merge authorization. A later GitHub adapter can collect that evidence,
 but the policy decision should stay in the evaluator.
 
 The first issue evidence adapter is `checks/github_issue_evidence.py`. It uses
-`gh issue view` to collect issue state, labels, title, URL, and default artifact
-paths, then prints JSON that `checks/route_gate.py` can evaluate. It does not
-write labels, comments, issues, PRs, or branches.
+`gh issue view` to collect issue state, labels, title, URL, default artifact
+paths, and state trust metadata, then prints JSON that `checks/route_gate.py`
+can evaluate. It does not write labels, comments, issues, PRs, or branches.
+States inferred from requester-editable body hints remain untrusted and cannot
+replace maintainer readiness labels for human-gated routes.
 
 The first PR evidence adapter is `checks/github_pr_evidence.py`. It uses `gh pr
 view` and `gh api graphql` to collect PR merge-readiness evidence and prints
@@ -99,7 +101,8 @@ reviews, thread state, branches, or merges.
 
 The first review artifact gate is `checks/review_json_gate.py`. It validates
 advisory review JSON against a unified diff and blocks invalid paths, lines,
-severity values, spec drift, and final-approval or merge-authority language.
+multi-line ranges, suggestion blocks, body contract gaps, severity values, spec
+drift, and final-approval or merge-authority language.
 
 ### Phase 4: Agent Installation
 

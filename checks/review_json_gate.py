@@ -32,6 +32,13 @@ HUNK_RE = re.compile(
     r"^@@ -(?P<old_start>[0-9]+)(?:,[0-9]+)? "
     r"\+(?P<new_start>[0-9]+)(?:,[0-9]+)? @@"
 )
+SUGGESTION_FENCE_RE = re.compile(
+    r"(?:^|\n)```suggestion[^\n]*\n(?P<content>.*?)\n```",
+    re.DOTALL,
+)
+SUGGESTION_OPEN_RE = re.compile(r"(?:^|\n)```suggestion[^\n]*\n")
+SUMMARY_HEADING_RE = re.compile(r"^## Summary\s*$", re.MULTILINE)
+VERDICT_HEADING_RE = re.compile(r"^## Verdict\s*$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -163,8 +170,17 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
     else:
         missing.append("verdict")
 
-    if _non_empty_string(review.get("body")):
+    body = review.get("body")
+    if _non_empty_string(body):
         satisfied.append("body present")
+        if SUMMARY_HEADING_RE.search(body):
+            satisfied.append("body includes ## Summary")
+        else:
+            reasons.append("body must include ## Summary heading")
+        if VERDICT_HEADING_RE.search(body):
+            satisfied.append("body includes ## Verdict")
+        else:
+            reasons.append("body must include ## Verdict heading")
     elif "body" in review:
         reasons.append("body must be a non-empty string")
     else:
@@ -218,7 +234,16 @@ def _validate_comment_shape(comment: Any, index: int) -> tuple[dict[str, Any] | 
     if not isinstance(comment, dict):
         return None, missing, [f"comment #{index} must be an object"]
 
-    allowed_keys = {"path", "line", "side", "severity", "body"}
+    allowed_keys = {
+        "path",
+        "line",
+        "side",
+        "severity",
+        "body",
+        "start_line",
+        "start_side",
+        "suggestion",
+    }
     for key in sorted(set(comment) - allowed_keys):
         reasons.append(f"comment #{index} has unknown field: {key}")
 
@@ -240,6 +265,19 @@ def _validate_comment_shape(comment: Any, index: int) -> tuple[dict[str, Any] | 
     if "side" in comment and side not in SIDES:
         reasons.append(f"comment #{index} side must be RIGHT or LEFT; got {side!r}")
 
+    has_start_line = "start_line" in comment
+    has_start_side = "start_side" in comment
+    if has_start_line != has_start_side:
+        reasons.append(f"comment #{index} start_line and start_side must appear together")
+
+    start_line = comment.get("start_line")
+    if has_start_line and not _positive_int(start_line):
+        reasons.append(f"comment #{index} start_line must be a positive integer")
+
+    start_side = comment.get("start_side")
+    if has_start_side and start_side not in SIDES:
+        reasons.append(f"comment #{index} start_side must be RIGHT or LEFT; got {start_side!r}")
+
     severity = comment.get("severity")
     if "severity" in comment and severity not in SEVERITIES:
         reasons.append(
@@ -249,24 +287,130 @@ def _validate_comment_shape(comment: Any, index: int) -> tuple[dict[str, Any] | 
     if "body" in comment and not _non_empty_string(comment.get("body")):
         reasons.append(f"comment #{index} body must be a non-empty string")
 
+    if "suggestion" in comment and not _non_empty_string(comment.get("suggestion")):
+        reasons.append(f"comment #{index} suggestion must be a non-empty string")
+
     return comment, missing, reasons
 
 
 def _check_diff_location(
     comment: dict[str, Any], index: int, diff_index: DiffIndex
 ) -> str | None:
-    path = comment.get("path")
-    line = comment.get("line")
-    side = comment.get("side")
+    return _check_diff_line(
+        comment.get("path"),
+        comment.get("line"),
+        comment.get("side"),
+        index,
+        diff_index,
+    )
+
+
+def _line_set_for_side(diff_index: DiffIndex, side: str) -> dict[str, set[int]]:
+    return diff_index.right if side == "RIGHT" else diff_index.left
+
+
+def _check_diff_line(
+    path: Any, line: Any, side: Any, index: int, diff_index: DiffIndex, label: str = ""
+) -> str | None:
     if not (_non_empty_string(path) and _positive_int(line) and side in SIDES):
         return None
 
-    side_lines = diff_index.right if side == "RIGHT" else diff_index.left
+    side_lines = _line_set_for_side(diff_index, side)
     if str(path) not in side_lines:
         return f"comment #{index} {side} {path} is not present in the diff"
     if int(line) in side_lines[str(path)]:
         return None
-    return f"comment #{index} {side} {path}:{line} is not present in the diff"
+    label_suffix = f" {label}" if label else ""
+    return f"comment #{index} {side} {path}:{line}{label_suffix} is not present in the diff"
+
+
+def _check_diff_range(
+    comment: dict[str, Any], index: int, diff_index: DiffIndex
+) -> list[str]:
+    if "start_line" not in comment and "start_side" not in comment:
+        return []
+    if "start_line" not in comment or "start_side" not in comment:
+        return []
+
+    path = comment.get("path")
+    start_line = comment.get("start_line")
+    start_side = comment.get("start_side")
+    line = comment.get("line")
+    side = comment.get("side")
+    if not (
+        _non_empty_string(path)
+        and _positive_int(start_line)
+        and start_side in SIDES
+        and _positive_int(line)
+        and side in SIDES
+    ):
+        return []
+
+    reasons: list[str] = []
+    start_reason = _check_diff_line(
+        path, start_line, start_side, index, diff_index, "range start"
+    )
+    if start_reason:
+        reasons.append(start_reason)
+
+    if start_side != side:
+        reasons.append(f"comment #{index} start_side must match side for a range")
+        return reasons
+
+    if int(start_line) > int(line):
+        reasons.append(f"comment #{index} start_line must be <= line for a {side} range")
+        return reasons
+
+    side_lines = _line_set_for_side(diff_index, side)
+    path_lines = side_lines.get(str(path), set())
+    missing = [
+        candidate
+        for candidate in range(int(start_line), int(line) + 1)
+        if candidate not in path_lines
+    ]
+    if missing:
+        preview = ", ".join(str(candidate) for candidate in missing[:5])
+        if len(missing) > 5:
+            preview = f"{preview}, ..."
+        reasons.append(
+            f"comment #{index} {side} {path}:{start_line}-{line} includes "
+            f"lines not present in the diff: {preview}"
+        )
+    return reasons
+
+
+def _suggestion_blocks(body: Any) -> list[str]:
+    if not isinstance(body, str):
+        return []
+    return [match.group("content") for match in SUGGESTION_FENCE_RE.finditer(body)]
+
+
+def _unterminated_suggestion_count(body: Any) -> int:
+    if not isinstance(body, str):
+        return 0
+    return len(SUGGESTION_OPEN_RE.findall(body)) - len(SUGGESTION_FENCE_RE.findall(body))
+
+
+def _validate_suggestions(comment: dict[str, Any], index: int) -> list[str]:
+    reasons: list[str] = []
+    has_suggestion = "suggestion" in comment
+    blocks = _suggestion_blocks(comment.get("body"))
+    unterminated_count = _unterminated_suggestion_count(comment.get("body"))
+
+    for block_index, content in enumerate(blocks, start=1):
+        if not content.strip():
+            reasons.append(f"comment #{index} suggestion block #{block_index} must be non-empty")
+    if unterminated_count > 0:
+        reasons.append(f"comment #{index} has unterminated suggestion block")
+
+    if not has_suggestion and not blocks and unterminated_count == 0:
+        return reasons
+
+    if comment.get("side") != "RIGHT" or (
+        "start_side" in comment and comment.get("start_side") != "RIGHT"
+    ):
+        reasons.append(f"comment #{index} suggestions are only allowed on RIGHT-side comments")
+    return reasons
 
 
 def _iter_review_strings(review: dict[str, Any]) -> list[tuple[str, str]]:
@@ -327,6 +471,8 @@ def evaluate_review_gate(review: dict[str, Any], diff_text: str) -> dict[str, An
             location_reason = _check_diff_location(shaped, index, diff_index)
             if location_reason:
                 reasons.append(location_reason)
+            reasons.extend(_check_diff_range(shaped, index, diff_index))
+            reasons.extend(_validate_suggestions(shaped, index))
 
     decision = "blocked" if reasons or missing else "allowed"
     return {

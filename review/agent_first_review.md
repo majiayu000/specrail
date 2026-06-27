@@ -37,6 +37,13 @@ python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-num
 Inline comments must reference real diff `path`, `line`, and `side` values.
 Severity must be `critical`, `important`, `suggestion`, or `nit`.
 
+Top-level `body` must include `## Summary` and `## Verdict` headings. A
+multi-line inline comment may add `start_line` and `start_side`, but those fields
+must appear together and every line in the inclusive range must exist in the
+diff. Suggested changes may use a non-empty `suggestion` field, a non-empty
+fenced `suggestion` block in `body`, or both; suggestions are only valid on
+RIGHT-side comments.
+
 ## Boundary
 
 Do not approve, merge, close issues, or mark security findings public.

@@ -21,14 +21,19 @@ python3 checks/route_gate.py --repo . --route review_pr --issue <issue-number> -
 4. Inspect for behavioral regressions, missing acceptance coverage, test gaps,
    silent degradation, security risk, and human-gate bypasses.
 5. Lead with findings ordered by severity and cite exact files or lines.
-6. When producing a review artifact, validate it against the diff when the gate
-   exists:
+6. When producing a review artifact, use a top-level body with `## Summary` and
+   `## Verdict`, keep inline comments bound to real diff `path` / `line` /
+   `side` values, and only add `start_line` / `start_side` together for an
+   inclusive diff range. Suggested changes must be non-empty and appear only on
+   RIGHT-side comments, either through a `suggestion` field, a fenced
+   `suggestion` block, or both.
+7. Validate review artifacts against the diff when the gate exists:
 
 ```sh
 python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-number>.json --diff <patch> --json
 ```
 
-7. If merge readiness is requested, route to
+8. If merge readiness is requested, route to
    `skills/specrail-pr-gate/SKILL.md`.
 
 ## Boundaries

@@ -7,3 +7,9 @@ index 5f58c91..b1a7832 100644
 -    return title.strip()
 +    cleaned = title.strip()
 +    return cleaned
+@@ -10,3 +11,4 @@
+ def render_subtitle(subtitle):
+-    return subtitle.strip().lower()
++    cleaned = subtitle.strip()
++    return cleaned.lower()
+     # stable footer
