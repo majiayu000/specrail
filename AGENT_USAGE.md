@@ -17,6 +17,12 @@ creating issues, specs, PRs, or reviews:
 6. `skills/specrail-workflow/SKILL.md` when available
 7. `skills-lock.json` when the repository carries repo-distributed skills
 
+If the consumer repository has no `AGENTS.md`, ask the maintainer to add a short
+entrypoint or proceed from `AGENT_USAGE.md` only for the current task while
+reporting that the repo is missing its agent entrypoint. Do not treat a missing
+`AGENTS.md` as permission to skip `workflow.yaml`, `states.yaml`, `labels.yaml`,
+or the relevant templates.
+
 The skill is an execution guide. The YAML files and templates are the workflow
 contract. The agent should not treat the skill as final authority when it
 conflicts with repository policy or human instructions.
