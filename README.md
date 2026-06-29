@@ -140,7 +140,8 @@ Gate benchmark fixtures live in `examples/fixtures/`. They are deterministic
 test inputs for route, PR, and review gates, not claims about current GitHub
 state or adoption level.
 
-Use the pack as a repository workflow contract:
+Use the pack as a repository workflow contract. For a normal repository, copy
+the pack files into the target repo and keep that repo's product docs intact:
 
 ```sh
 cp -R templates schemas review policies checks skills examples docs .github /path/to/your-repo/
@@ -150,6 +151,21 @@ cp skills-lock.json /path/to/your-repo/
 
 Keep the consumer repository's own `README.md` and `LICENSE` unless the
 maintainer explicitly wants to replace them.
+
+If the consumer repository does not already have an `AGENTS.md`, add a short
+entrypoint that points agents at the copied SpecRail contract:
+
+```md
+# AGENTS.md
+
+Read `AGENT_USAGE.md`, `workflow.yaml`, `states.yaml`, `labels.yaml`, and
+`skills/specrail-workflow/SKILL.md` before creating issues, specs, PRs, reviews,
+or handoffs. Keep automation in dry-run/advisory mode unless a maintainer
+explicitly authorizes otherwise.
+```
+
+If the consumer repository already has an `AGENTS.md`, merge the SpecRail
+entrypoint into the existing instructions instead of replacing local policy.
 
 Then ask your agent to read:
 
@@ -166,11 +182,16 @@ skills-lock.json
 ## Adoption Path
 
 1. Read [`AGENT_USAGE.md`](AGENT_USAGE.md) to understand how an agent should consume the pack.
-2. Copy this pack into a repository or install it as a submodule/package.
-3. Run `python3 checks/check_workflow.py --repo .`.
-4. Add the GitHub Action from `.github/workflows/workflow-check.yml`.
-5. Start with dry-run checks only.
-6. Add label/comment automation only after maintainers trust the signal.
+2. Choose an adoption mode:
+   - copy files into the repo when you want the simplest local contract
+   - use a submodule when you want to track SpecRail separately
+   - use a package or generated overlay only after the copied workflow is stable
+3. Add or merge the `AGENTS.md` entrypoint above.
+4. Run `python3 checks/check_workflow.py --repo .`.
+5. Run `python3 checks/check_workflow.py --repo . --all-specs` after adding spec packets.
+6. Add the GitHub Action from `.github/workflows/workflow-check.yml`.
+7. Start with dry-run checks only.
+8. Add label/comment automation only after maintainers trust the signal.
 
 ## Plan
 
