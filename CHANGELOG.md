@@ -13,6 +13,8 @@
 - Stronger product and tech spec templates based on behavior invariants,
   codebase context, and product-to-test mapping.
 - Focused SpecRail route skills pinned by `skills-lock.json`.
+- SpecRail implementation queue skill for approved-spec issue queues with
+  optional threads orchestration.
 - Deterministic gate fixture corpus under `examples/fixtures/`.
 
 ## v0.2.1 - 2026-06-26
