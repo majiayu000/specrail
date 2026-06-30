@@ -78,6 +78,54 @@ specrail_threads_handoff:
 The block is a handoff artifact, not a schema-stable API. A future evaluator can
 turn it into a validated artifact after repeated real use.
 
+## Approved-Spec Implementation Queue
+
+When the route is `implement` and several approved specs are ready, use
+`skills/specrail-implement-queue/SKILL.md` before dispatching threads.
+
+The queue skill owns the SpecRail side of the plan:
+
+- issue to spec mapping
+- existing PR detection
+- partial versus final PR closing semantics
+- acceptance criteria coverage
+- required deterministic checks
+- human gates and merge authorization
+
+Threads owns the orchestration side:
+
+- native subagent availability
+- queue ledger
+- lane map and writable ownership
+- read-only planner and reviewer lanes
+- CI polling and review-thread checks
+- closure audit after PR or issue state changes
+
+Record this queue handoff when both systems are active:
+
+```yaml
+specrail_implementation_queue:
+  issues:
+    - issue:
+      spec_dir:
+      existing_prs:
+      planned_prs:
+      completion_mode: partial | final
+      acceptance_evidence:
+  orchestration:
+    threads_mode:
+    lanes:
+    fallback_reason:
+  gates:
+    route_gate:
+    pr_gate:
+    review_threads:
+    merge_authorization:
+```
+
+This handoff must not grant approval or merge authority. It only preserves the
+evidence each system needs.
+
 ## Field Mapping
 
 | SpecRail field | Threads field | Notes |
