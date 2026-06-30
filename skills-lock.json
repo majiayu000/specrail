@@ -13,6 +13,11 @@
       "computedHash": "sha256:43890744a43a5c4cde44da35551d9784092b741042267baadd4b7facc67f9169"
     },
     {
+      "name": "specrail-implement-queue",
+      "path": "skills/specrail-implement-queue/SKILL.md",
+      "computedHash": "sha256:70e84219f68acba573191f42901a9d6e332673186f181e6826e305bb75b8fb45"
+    },
+    {
       "name": "specrail-implement",
       "path": "skills/specrail-implement/SKILL.md",
       "computedHash": "sha256:b28e94156e56a3e496743705ce5ea31d255a9e493d3f0501ab1bf0c43a27a981"
@@ -45,7 +50,7 @@
     {
       "name": "specrail-workflow",
       "path": "skills/specrail-workflow/SKILL.md",
-      "computedHash": "sha256:7075962cb5021f0579707ab62e622720d7bb2399e2d1d7652528e9a4c2beb73e"
+      "computedHash": "sha256:daa51ec970d1c7db365add25fbeb489c7bfa84cab4b8c3422c47412e74d4afd5"
     },
     {
       "name": "specrail-write-product-spec",

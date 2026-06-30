@@ -42,6 +42,9 @@ python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issu
   `specs/GH<issue-number>/tasks.md`.
 - Use `skills/specrail-implement/SKILL.md` for code or workflow-asset changes
   after the implementation gate.
+- Use `skills/specrail-implement-queue/SKILL.md` when multiple approved specs or
+  open issues need coordinated implementation PRs, issue-to-PR mapping,
+  optional threads lanes, PR gates, and closure audit.
 - Use `skills/specrail-check-impl-against-spec/SKILL.md` to compare a diff or PR
   with the linked product spec, tech spec, and task plan.
 - Use `skills/specrail-review-pr/SKILL.md` for advisory PR review.
