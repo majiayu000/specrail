@@ -15,6 +15,7 @@
 - Focused SpecRail route skills pinned by `skills-lock.json`.
 - SpecRail implementation queue skill for approved-spec issue queues with
   optional threads orchestration.
+- `implx` shortcut skill for SpecRail-backed implementation queues.
 - Deterministic gate fixture corpus under `examples/fixtures/`.
 
 ## v0.2.1 - 2026-06-26

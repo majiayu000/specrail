@@ -45,6 +45,9 @@ python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issu
 - Use `skills/specrail-implement-queue/SKILL.md` when multiple approved specs or
   open issues need coordinated implementation PRs, issue-to-PR mapping,
   optional threads lanes, PR gates, and closure audit.
+- Use `skills/implx/SKILL.md` when the user explicitly asks for `implx`,
+  `use implx`, or `用 implx` as the shortcut for SpecRail implementation queue
+  work with optional threads orchestration and merge gates.
 - Use `skills/specrail-check-impl-against-spec/SKILL.md` to compare a diff or PR
   with the linked product spec, tech spec, and task plan.
 - Use `skills/specrail-review-pr/SKILL.md` for advisory PR review.

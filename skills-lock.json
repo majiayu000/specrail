@@ -3,6 +3,11 @@
   "algorithm": "sha256",
   "skills": [
     {
+      "name": "implx",
+      "path": "skills/implx/SKILL.md",
+      "computedHash": "sha256:8fe5070bc36d9eee61158c8d36fdd45b0c5d8cf71724ae879812b5dd8885715b"
+    },
+    {
       "name": "specrail-check-impl-against-spec",
       "path": "skills/specrail-check-impl-against-spec/SKILL.md",
       "computedHash": "sha256:bad3ab797477f0905c39f4487bc9b416620df094acbdfa230610f9e21ca5aa3f"
@@ -50,7 +55,7 @@
     {
       "name": "specrail-workflow",
       "path": "skills/specrail-workflow/SKILL.md",
-      "computedHash": "sha256:daa51ec970d1c7db365add25fbeb489c7bfa84cab4b8c3422c47412e74d4afd5"
+      "computedHash": "sha256:feb5317b2bd49c5a1c37bb66a02b2ad042f76b4d27bcb4fa92b9995216ff4e55"
     },
     {
       "name": "specrail-write-product-spec",
