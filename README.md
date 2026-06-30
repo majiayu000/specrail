@@ -45,6 +45,7 @@ locales/               # localized human-facing evaluator messages
 integrations/          # optional adapters to agent orchestration workflows
 skills/                # agent workflow entrypoints, including Codex-compatible skills
 skills-lock.json       # repo-distributed skill lockfile
+tools/                 # optional local installation helpers
 schemas/               # machine-readable artifact contracts
 examples/adoptions/    # machine-readable adoption evidence fixtures
 examples/fixtures/     # deterministic gate benchmark fixtures
@@ -140,11 +141,62 @@ Gate benchmark fixtures live in `examples/fixtures/`. They are deterministic
 test inputs for route, PR, and review gates, not claims about current GitHub
 state or adoption level.
 
+## Autonomous SpecRail Mode
+
+An agent should switch complex work into SpecRail mode before broad
+implementation, even if the repository has not adopted the full pack. Typical
+triggers are product-facing changes, architecture changes, cross-module work,
+public API changes, workflow-policy changes, PR merge-readiness checks, CI
+diagnosis with unclear ownership, or ambiguous requests whose done-when is not
+yet testable.
+
+SpecRail mode means the work uses the actual SpecRail structure: search first,
+choose a route, produce or request durable product/tech/task artifacts, preserve
+human gates, and run deterministic verification. If the repository has not
+adopted the pack, use its existing specs/plan/docs location to carry that
+structure. Do not silently copy this pack into a repository, install local
+skills, create remote issues or PRs, add labels, approve, merge, or bypass
+maintainers. Those actions require an explicit user request.
+
+## Agent-First Setup
+
+For setup, installation, update, verification, or adoption, ask the agent to use
+`skills/specrail-install/SKILL.md`. The skill is the agent-facing entrypoint and
+decides whether to run a doctor check, install local Codex skills, update global
+guidance, or plan repository adoption. The CLI commands below are deterministic
+helpers used by the skill, not the primary interface humans need to memorize.
+
+## Optional Local Codex Skill Install
+
+Local installation is optional. It is only for users who explicitly want this
+checkout's SpecRail skills available from the local Codex skill directory. It is
+not required for adopting SpecRail in a repository.
+
+Preview the install plan without writing files:
+
+```sh
+python3 tools/install_codex_skills.py --repo .
+```
+
+Apply the install after reviewing the plan:
+
+```sh
+python3 tools/install_codex_skills.py --repo . --apply
+```
+
+The installer validates `skills-lock.json`, syncs only the locked skill
+directories, writes to `$CODEX_HOME/skills` when `CODEX_HOME` is set or
+`~/.codex/skills` otherwise, and refuses unsafe targets that would overwrite the
+source skills. A new Codex session may be needed before newly installed skills
+are visible.
+
+## Repository Adoption
+
 Use the pack as a repository workflow contract. For a normal repository, copy
 the pack files into the target repo and keep that repo's product docs intact:
 
 ```sh
-cp -R templates schemas review policies checks skills examples docs .github /path/to/your-repo/
+cp -R templates schemas review policies checks skills tools examples docs .github /path/to/your-repo/
 cp AGENT_USAGE.md SPEC.md CHANGELOG.md workflow.yaml states.yaml labels.yaml /path/to/your-repo/
 cp skills-lock.json /path/to/your-repo/
 ```

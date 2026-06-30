@@ -35,6 +35,9 @@ handoff. SpecRail is still a reusable contract that needs repeated real use.
 7. Automation starts in dry-run or advisory mode.
 8. Spec-first is the default for ambiguous, architecture, product-facing,
    public API, cross-module, and workflow-policy changes.
+9. Complex work should move into SpecRail mode, using route/spec/task/gate
+   artifacts as the working structure; adoption, installation, remote writes,
+   approval, and merge still require explicit human authorization.
 
 ## Why The Skill Exists
 
@@ -109,7 +112,10 @@ drift, and final-approval or merge-authority language.
 Make SpecRail easy to give to agents:
 
 - copy pack into a repo
-- install or reference `skills/specrail-workflow`
+- use `skills/specrail-install/SKILL.md` as the agent-facing setup entrypoint
+- reference `skills/specrail-workflow` from the repo
+- optionally run `tools/install_codex_skills.py` for explicit local Codex skill
+  installation
 - keep repo-distributed route skills pinned in `skills-lock.json`
 - optionally set `presentation.default_locale: zh-CN`
 - run deterministic checks before and after agent work
