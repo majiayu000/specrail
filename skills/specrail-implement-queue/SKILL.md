@@ -52,7 +52,18 @@ specrail_implementation_queue:
     pr_gate:
     review_threads:
     merge_authorization:
+  context_budget:
+    soft_stop_ratio: 0.50
+    hard_stop_ratio: 0.65
+    critical_stop_ratio: 0.75
+  checkpoint:
+    path:
+    runtime_gate:
 ```
+
+For broad queues, treat the queue as a bounded tranche. If the user asks for
+all issues or all PRs and gives no explicit long-run budget, choose the smallest
+mergeable tranche and leave the rest in the checkpoint.
 
 ## Orchestration
 
@@ -69,6 +80,73 @@ Keep ownership boundaries explicit:
 - worker lanes own disjoint files or modules
 - shared verification belongs to one coordinator
 - dependent specs run serially
+
+## Context Budget
+
+For long queues, record a parent context budget before spawning lanes:
+
+- default soft stop: 50% of the active context window
+- default hard stop: 65% of the active context window
+- default critical stop: 75% of the active context window
+
+These are defaults, not universal limits. If the runtime exposes a different
+budget or the user provides one, record the override.
+
+At soft stop, do not spawn new lanes or broaden scope. At hard stop, finish the
+current critical step, write the runtime checkpoint, and hand off to a fresh
+parent thread. At critical stop, only write checkpoint and resume instructions.
+
+Do not read raw `~/.codex/sessions` logs, old parent transcripts, or broad
+session JSONL as queue state. Use the checkpoint, repo-local run logs, and fresh
+remote truth.
+
+## Output Firewall
+
+Large output commands are allowed only when raw stdout and stderr go to artifact
+files. The coordinator may read exit code, a short tail, targeted grep output,
+and the artifact path.
+
+Default rules:
+
+- no raw `gh run view --log` output in parent context
+- no raw full `cargo test` or full workspace test output in parent context
+- no broad `rg` or `git grep` across `.codex`, `.claude`, `target`,
+  `node_modules`, session JSONL, or log files
+- parent stdout tail target: 150 lines or less
+- subagent final output target: 150 lines or less
+
+Prefer artifact paths such as `artifacts/logs/<tranche>/cargo-test.log` and
+summaries such as `artifacts/logs/<tranche>/ci-summary.md`.
+
+## Runtime Checkpoint
+
+For long queues, create or update an optional local runtime checkpoint before:
+
+- spawning writable lanes
+- pushing or opening PRs
+- waiting on CI or long local tests
+- requesting merge review
+- compacting, handing off, or closing the parent thread
+
+Use `templates/tranche_checkpoint.md` as the shape and validate concrete JSON
+checkpoints with:
+
+```bash
+python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.json
+```
+
+The runtime checkpoint is a local handoff layer only. GitHub issues, PRs,
+labels, reviews, branches, and SpecRail spec packets remain the durable workflow
+truth.
+
+## Goal Use
+
+Codex Goal can control the current tranche only when the user explicitly asks
+for goal-controlled work, gives a token or time budget, or explicitly frames the
+run as long-running goal work. Otherwise record a `goal_candidate` in the
+checkpoint but do not silently create a goal.
+
+Goal never replaces the runtime checkpoint, GitHub truth, or SpecRail gates.
 
 ## Implementation
 

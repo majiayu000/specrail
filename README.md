@@ -55,6 +55,7 @@ checks/route_gate.py
 checks/github_issue_evidence.py
 checks/github_pr_evidence.py
 checks/review_json_gate.py
+checks/runtime_ledger_gate.py
 .github/workflows/workflow-check.yml
 ```
 
@@ -110,6 +111,16 @@ python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 `checks/github_pr_evidence.py` is a read-only collector for GitHub CLI output.
 `checks/pr_gate.py` owns the offline merge-readiness decision.
 
+Validate an optional local runtime checkpoint for long agent runs:
+
+```sh
+python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.json --json
+```
+
+Runtime checkpoints are handoff aids for bounded agent tranches. They do not
+replace GitHub issues, pull requests, labels, reviews, branches, or SpecRail
+spec packets as durable workflow state.
+
 Validate an advisory review artifact against a unified diff:
 
 ```sh
@@ -135,6 +146,11 @@ The matrix currently records `rclean`, `litellm-rs`, and
 `Claude-Code-Monitor` / `claude-hub` as pilot evidence at different maturity
 levels. `evaluate.py` validates the required matrix records and local
 SpecRail evidence paths.
+
+For long issue or PR queues, agents may also keep an optional local runtime
+checkpoint based on [`templates/tranche_checkpoint.md`](templates/tranche_checkpoint.md).
+The checkpoint is for context-budget and handoff control only; the canonical
+workflow truth remains the repository and GitHub artifacts above.
 
 Gate benchmark fixtures live in `examples/fixtures/`. They are deterministic
 test inputs for route, PR, and review gates, not claims about current GitHub

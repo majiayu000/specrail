@@ -12,6 +12,7 @@ review gates, or closure audits.
 - SpecRail checks run before thread dispatch and again before completion.
 - Missing thread support falls back to the normal single-agent SpecRail flow.
 - Stable machine-facing IDs stay unchanged across integrations and locales.
+- Large logs and raw tool output are artifacts, not parent-thread state.
 
 ## When To Use Threads
 
@@ -44,6 +45,8 @@ any task where all writable files overlap.
    - Planners and reviewers are read-only.
    - Workers own explicit writable paths.
    - The coordinator owns shared verification and final synthesis.
+   - Large command output goes to artifact files; parent context receives only
+     exit code, short tail, targeted grep, and artifact paths.
 5. Run SpecRail verification.
    - Validate the pack.
    - Validate the spec packet when a spec changed.
@@ -73,6 +76,11 @@ specrail_threads_handoff:
     lanes:
     merge_policy:
     stop_conditions:
+    context_budget:
+    output_firewall:
+  checkpoint:
+    path:
+    runtime_gate:
 ```
 
 The block is a handoff artifact, not a schema-stable API. A future evaluator can
@@ -100,6 +108,7 @@ Threads owns the orchestration side:
 - read-only planner and reviewer lanes
 - CI polling and review-thread checks
 - closure audit after PR or issue state changes
+- parent context budget and output firewall enforcement
 
 Record this queue handoff when both systems are active:
 
@@ -116,6 +125,11 @@ specrail_implementation_queue:
     threads_mode:
     lanes:
     fallback_reason:
+    context_budget:
+    output_firewall:
+  checkpoint:
+    path:
+    runtime_gate:
   gates:
     route_gate:
     pr_gate:
@@ -135,6 +149,34 @@ evidence each system needs.
 | `human_gates` | `merge_policy`, `stop_conditions` | Threads must not bypass SpecRail gates. |
 | `verification_commands` | `verification_owner` | One owner runs shared checks for a tranche. |
 | `selected_locale` | final report language | Human-facing reports follow SpecRail locale rules. |
+| runtime checkpoint | `queue_ledger`, `threads_run_log` | Checkpoints are local handoff artifacts; run logs are observational. |
+
+## Long-Run Guardrails
+
+For long queues, use these defaults unless the user or runtime provides a
+stricter budget:
+
+- soft stop at 50% of the active context window
+- hard stop at 65%
+- critical stop at 75%
+
+At hard stop, write or update the runtime checkpoint and hand off to a fresh
+parent thread. At critical stop, do not spawn lanes or read large outputs; write
+checkpoint and resume instructions only.
+
+Do not load raw Codex session JSONL or old parent transcripts as live queue
+state. Use SpecRail artifacts, runtime checkpoints, repo-local compact run logs,
+and fresh GitHub truth.
+
+Large output commands must use an artifact-first pattern:
+
+```bash
+cargo test --all-features --locked > artifacts/logs/<tranche>/cargo-test.log 2>&1
+tail -n 150 artifacts/logs/<tranche>/cargo-test.log
+```
+
+Avoid broad searches under `.codex`, `.claude`, `target`, `node_modules`,
+session JSONL, or log files.
 
 ## Fallback
 

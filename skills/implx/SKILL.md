@@ -18,6 +18,9 @@ focused SpecRail skills; it routes to them in the right order.
    - identify human gates and route-gate requirements
 2. Fetch current remote state before mapping a GitHub queue.
 3. List open issues, open PRs, current branch, dirty files, and worktrees.
+4. For broad queues, record whether the run has explicit goal or budget
+   authorization. If not, write a `goal_candidate` only; do not silently create
+   a Codex goal.
 
 ## Route
 
@@ -28,6 +31,10 @@ when present.
 
 If approved specs are missing, stop at the appropriate SpecRail spec or task
 planning route instead of implementing from assumptions.
+
+For approved-spec queues, route to `skills/specrail-implement-queue/SKILL.md`
+and follow its context budget, output firewall, runtime checkpoint, and goal-use
+rules.
 
 ## Threads
 
@@ -44,6 +51,10 @@ Keep ownership boundaries explicit:
 - workers own disjoint files or modules
 - shared verification belongs to one coordinator
 - dependent specs run serially
+
+Keep the parent thin. Do not use old Codex session logs as queue state. Large
+command output must be written to artifacts first; the parent reads only exit
+codes, short tails, targeted grep results, and artifact paths.
 
 ## Implementation
 
@@ -100,6 +111,17 @@ implx_handoff:
     mode:
     lanes:
     fallback_reason:
+  goal:
+    enabled:
+    objective:
+    stop_reason:
+  context_budget:
+    soft_stop_ratio:
+    hard_stop_ratio:
+    critical_stop_ratio:
+  checkpoint:
+    path:
+    runtime_gate:
   gates:
     route_gate:
     pr_gate:

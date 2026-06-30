@@ -84,6 +84,18 @@ offline. GitHub or `threads` may collect evidence such as PR head SHA, CI
 status, review threads, merge state, and linked issue references. The gate only
 evaluates that evidence and never merges or writes remote state.
 
+For long agent runs, maintain an optional local runtime checkpoint before
+handoff or compaction:
+
+```sh
+python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.json --json
+```
+
+Use the checkpoint to preserve tranche scope, context budget, output-firewall
+settings, verification evidence paths, blockers, and resume prompts. Do not use
+it as a replacement for GitHub issues, PRs, labels, reviews, branches, or
+SpecRail spec packets.
+
 Issue evidence includes `state_source` and `state_trusted`. Label-derived state
 is trusted readiness evidence. Body-hint state is useful context, but it is not
 a maintainer readiness label and human-gated routes must not treat it as direct
@@ -114,6 +126,10 @@ requires review-thread, CI, merge-gate, or closure-audit handling, load
 `integrations/threads.md` after SpecRail preflight. SpecRail still owns policy,
 locale, required artifacts, and human gates. Threads owns lane orchestration,
 remote queue truth, and closure audit.
+
+For long queues, keep the parent thread thin: write raw logs to artifacts, read
+only short summaries or tails, and checkpoint before continuing in a fresh
+parent thread.
 
 If no threads skill or native subagent capability is available, continue with
 the normal single-agent SpecRail flow and report that no native threads were
@@ -164,6 +180,7 @@ SpecRail currently provides:
 - a read-only GitHub issue evidence adapter
 - a read-only GitHub PR evidence adapter
 - an advisory review JSON gate
+- an optional runtime checkpoint gate for long agent-run handoffs
 - a local evaluator that returns `allowed`, `warn`, `needs_human`, or `blocked`
 - an adoption matrix and fixture for real repo pilot evidence:
   `docs/ADOPTION_MATRIX.md` and `examples/adoptions/matrix.json`
