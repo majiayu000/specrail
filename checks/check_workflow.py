@@ -66,6 +66,7 @@ REQUIRED_FILES = [
     "templates/zh-CN/tech_spec.md",
     "templates/zh-CN/tasks.md",
     "templates/zh-CN/pull_request.md",
+    "templates/zh-CN/tranche_checkpoint.md",
     "review/agent_first_review.md",
     "review/human_final_review.md",
     "policies/security_disclosure.md",
@@ -79,7 +80,10 @@ REQUIRED_FILES = [
     "schemas/task_plan.schema.json",
     "schemas/pr_review_gate.schema.json",
     "schemas/review_result.schema.json",
+    "schemas/runtime_checkpoint.schema.json",
     "schemas/workflow_run.schema.json",
+    "checks/runtime_ledger_gate.py",
+    "templates/tranche_checkpoint.md",
 ]
 
 REQUIRED_TOKENS = {

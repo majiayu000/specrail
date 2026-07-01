@@ -1,6 +1,6 @@
 ---
 name: implx
-description: Use when the user says "implx", "use implx", "用 implx", or asks for the short SpecRail queue shortcut to process a repository's approved-spec issue/PR queue with SpecRail implementation queue planning, optional threads orchestration, per-issue implementation PRs, review-thread and CI gates, merge authorization, and closure audit.
+description: Use when the user says "implx", "use implx", "用 implx", "implx drain full queue", "implx resume full queue", or asks for the short SpecRail queue shortcut to process or drain a repository's approved-spec issue/PR queue with SpecRail implementation queue planning, optional threads orchestration, per-issue implementation PRs, review-thread and CI gates, merge authorization, and closure audit.
 ---
 
 # Implx
@@ -18,6 +18,39 @@ focused SpecRail skills; it routes to them in the right order.
    - identify human gates and route-gate requirements
 2. Fetch current remote state before mapping a GitHub queue.
 3. List open issues, open PRs, current branch, dirty files, and worktrees.
+4. For broad queues, record whether the run has explicit queue-drain, goal, or
+   budget authorization. `implx drain full queue`, `implx resume full queue`,
+   and equivalent "finish all actionable issues/PRs" wording count as explicit
+   queue-drain authorization, but do not silently create a Codex goal.
+
+## Queue-Drain Shortcuts
+
+Treat these short prompts as full queue-drain requests:
+
+- `implx drain full queue`
+- `implx resume full queue`
+- `用 implx 完成所有 actionable issues 和 PRs`
+- `用 implx 做完整队列`
+
+For these prompts, set:
+
+```yaml
+overall_objective: drain_all_actionable_issues_and_prs
+queue_mode: full_queue_drain
+tranche_policy: bounded_loop
+stop_policy: queue_drained_or_only_blockers
+```
+
+This means the current tranche stays bounded, but the objective is not narrowed
+to one issue, one PR, or one tranche. After each tranche, refresh remote truth,
+update the checkpoint, then choose the next actionable tranche until the queue
+is drained or every remaining item is explicitly blocked, deferred, waiting on
+CI, or needs human input.
+
+If the parent reaches the context hard stop, write the checkpoint and resume
+prompt instead of ending the full-queue objective. The next parent must resume
+from `.specrail/runtime/current.json`, repo-local run logs, and fresh GitHub
+truth, not old Codex session transcripts.
 
 ## Route
 
@@ -26,8 +59,29 @@ issues need coordinated implementation PRs. For each candidate issue, require
 the matching `specs/GH<issue-number>/product.md`, `tech.md`, and `tasks.md`
 when present.
 
-If approved specs are missing, stop at the appropriate SpecRail spec or task
-planning route instead of implementing from assumptions.
+Before selecting an implementation tranche, build a spec coverage map for every
+open issue and linked PR:
+
+- `complete`: `product.md`, `tech.md`, and `tasks.md` all exist for
+  `specs/GH<issue-number>/`
+- `needs_tasks`: product and tech specs exist, but `tasks.md` is missing
+- `needs_spec`: product or tech spec is missing
+- `umbrella_covered`: another complete GH spec explicitly lists this issue in
+  scope, acceptance criteria, tasks, or linked work
+- `exception_allowed`: the item is a dependency bump, focused CI fix, docs-only
+  correction, or another explicitly justified small change
+
+If specs or tasks are missing, route that issue to the appropriate SpecRail
+`write_spec` or `plan_tasks` step instead of implementing from assumptions.
+For `queue_mode: full_queue_drain`, missing specs do not finish the queue:
+choose a spec-writing tranche when no implementation-ready tranche is available.
+Only treat missing specs as blockers when the user constrained the run to
+implementation-only work or the issue evidence is insufficient to draft a spec.
+
+For approved-spec queues, route to `skills/specrail-implement-queue/SKILL.md`
+and follow its context budget, output firewall, runtime checkpoint, and goal-use
+rules. Pass through `queue_mode: full_queue_drain` when a queue-drain shortcut
+was used.
 
 ## Threads
 
@@ -44,6 +98,10 @@ Keep ownership boundaries explicit:
 - workers own disjoint files or modules
 - shared verification belongs to one coordinator
 - dependent specs run serially
+
+Keep the parent thin. Do not use old Codex session logs as queue state. Large
+command output must be written to artifacts first; the parent reads only exit
+codes, short tails, targeted grep results, and artifact paths.
 
 ## Implementation
 
@@ -94,12 +152,33 @@ Report a compact handoff when `implx` is active:
 ```yaml
 implx_handoff:
   route: implement_queue
+  overall_objective:
+  queue_mode:
   issue_to_pr_map:
+  spec_coverage:
+    complete:
+    needs_tasks:
+    needs_spec:
+    umbrella_covered:
+    exception_allowed:
   approved_specs:
+  current_tranche:
+  remaining_queue:
   threads:
     mode:
     lanes:
     fallback_reason:
+  goal:
+    enabled:
+    objective:
+    stop_reason:
+  context_budget:
+    soft_stop_ratio:
+    hard_stop_ratio:
+    critical_stop_ratio:
+  checkpoint:
+    path:
+    runtime_gate:
   gates:
     route_gate:
     pr_gate:
