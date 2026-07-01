@@ -21,6 +21,7 @@ PENDING_STATUSES = {"pending", "running", "in_progress", "queued"}
 REVIEW_THREAD_CLEAN_STATUSES = {"clean", "resolved", "none", "passed"}
 PR_GATE_PASSED_STATUSES = {"passed", "allowed", "clean", "success", "green"}
 MERGE_STATE_CLEAN_STATUSES = {"clean", "mergeable"}
+CHECKPOINT_STATUSES = {"planning", "running", "blocked", "handoff", "complete"}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -123,6 +124,18 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
 
     if data.get("checkpoint_version") != 1:
         errors.append("checkpoint_version must be 1")
+
+    for key in ["tranche_id", "repo", "scope", "resume_prompt"]:
+        if key in data:
+            _require_nonempty_string(data, key, "checkpoint", errors)
+
+    if "status" in data:
+        status = data.get("status")
+        if not isinstance(status, str) or not status.strip():
+            errors.append("checkpoint.status must be a non-empty string")
+        elif status not in CHECKPOINT_STATUSES:
+            allowed = ", ".join(sorted(CHECKPOINT_STATUSES))
+            errors.append(f"checkpoint.status must be one of: {allowed}")
 
     _validate_goal_candidate(data, errors)
 

@@ -151,6 +151,24 @@ def test_runtime_ledger_gate_blocks_invalid_goal_candidate() -> None:
     assert any("goal_candidate.done_when" in error for error in result["errors"])
 
 
+def test_runtime_ledger_gate_blocks_invalid_top_level_contract() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint["tranche_id"] = ""
+    checkpoint["repo"] = ""
+    checkpoint["scope"] = ""
+    checkpoint["status"] = "not-a-status"
+    checkpoint["resume_prompt"] = ""
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("checkpoint.tranche_id" in error for error in result["errors"])
+    assert any("checkpoint.repo" in error for error in result["errors"])
+    assert any("checkpoint.scope" in error for error in result["errors"])
+    assert any("checkpoint.status" in error for error in result["errors"])
+    assert any("checkpoint.resume_prompt" in error for error in result["errors"])
+
+
 def test_runtime_ledger_gate_blocks_missing_review_threads_evidence() -> None:
     checkpoint = clean_checkpoint()
     item = checkpoint["items"][0]  # type: ignore[index]
