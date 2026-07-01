@@ -23,6 +23,20 @@ small, explicit, and verifiable.
   consumer overlays.
 - Preserve the dry-run default for all GitHub automation.
 
+## Long Queue Guardrails
+
+- For approved-spec issue/PR queues, route through `skills/implx/SKILL.md` and
+  `skills/specrail-implement-queue/SKILL.md`; use `integrations/threads.md`
+  when native threads, reviewer lanes, CI waits, or closure audit are needed.
+- Keep long runs bounded to a named tranche. For handoff or compaction, write a
+  runtime checkpoint and validate it with `checks/runtime_ledger_gate.py`.
+- Large command output belongs in artifacts, not parent context. Parent-visible
+  evidence should be command status, short summaries, bounded tails, and paths.
+- Do not read raw Codex session JSONL or old parent transcripts as live queue
+  state unless the user explicitly asks for forensic analysis.
+- Codex Goal may bound the current thread, but it does not replace SpecRail
+  artifacts, GitHub truth, or runtime checkpoints.
+
 ## Validation
 
 Run before completion after changing workflow assets:
