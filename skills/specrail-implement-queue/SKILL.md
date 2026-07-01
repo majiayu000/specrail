@@ -1,6 +1,6 @@
 ---
 name: specrail-implement-queue
-description: Use when implementing a GitHub issue queue in a SpecRail-governed repository where approved specs already exist, such as multiple numbered specs/GH packets that need one or more implementation PRs per issue. Maps issues to specs and existing PRs, selects single-agent or optional threads orchestration, preserves partial versus final closing semantics, and requires SpecRail verification plus PR gates before merge-readiness claims.
+description: Use when implementing or draining a GitHub issue/PR queue in a SpecRail-governed repository where approved specs already exist, such as multiple numbered specs/GH packets that need one or more implementation PRs per issue. Maps issues to specs and existing PRs, supports full-queue drain requests from implx, selects single-agent or optional threads orchestration, preserves partial versus final closing semantics, and requires SpecRail verification plus PR gates before merge-readiness claims.
 ---
 
 # SpecRail Implement Queue
@@ -39,6 +39,10 @@ Record the plan as:
 
 ```yaml
 specrail_implementation_queue:
+  overall_objective:
+  queue_mode: bounded_tranche | full_queue_drain
+  current_tranche:
+  remaining_queue:
   issues:
     - issue:
       spec_dir:
@@ -59,11 +63,20 @@ specrail_implementation_queue:
   checkpoint:
     path:
     runtime_gate:
+  stop_policy:
 ```
 
-For broad queues, treat the queue as a bounded tranche. If the user asks for
-all issues or all PRs and gives no explicit long-run budget, choose the smallest
-mergeable tranche and leave the rest in the checkpoint.
+For broad queues, always execute as bounded tranches. If the user or calling
+skill says `implx drain full queue`, `implx resume full queue`, or otherwise
+explicitly asks to finish all actionable issues/PRs, set
+`queue_mode: full_queue_drain`. In that mode, choose the smallest mergeable
+current tranche, checkpoint it, then continue selecting new tranches until the
+queue is drained or every remaining item is explicitly blocked, deferred,
+waiting on CI, or needs human input.
+
+If the user only asks for a broad queue without explicit full-queue drain
+authorization, choose the smallest mergeable tranche and leave the rest in the
+checkpoint.
 
 ## Orchestration
 
@@ -95,6 +108,9 @@ budget or the user provides one, record the override.
 At soft stop, do not spawn new lanes or broaden scope. At hard stop, finish the
 current critical step, write the runtime checkpoint, and hand off to a fresh
 parent thread. At critical stop, only write checkpoint and resume instructions.
+For `queue_mode: full_queue_drain`, a hard-stop handoff preserves the full queue
+objective and records the next actionable tranche; it does not redefine success
+as completing only the current tranche.
 
 Do not read raw `~/.codex/sessions` logs, old parent transcripts, or broad
 session JSONL as queue state. Use the checkpoint, repo-local run logs, and fresh
@@ -127,6 +143,7 @@ For long queues, create or update an optional local runtime checkpoint before:
 - waiting on CI or long local tests
 - requesting merge review
 - compacting, handing off, or closing the parent thread
+- selecting the next tranche in a full-queue drain loop
 
 Use `templates/tranche_checkpoint.md` as the shape and validate concrete JSON
 checkpoints with:
@@ -138,6 +155,11 @@ python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.jso
 The runtime checkpoint is a local handoff layer only. GitHub issues, PRs,
 labels, reviews, branches, and SpecRail spec packets remain the durable workflow
 truth.
+
+For `queue_mode: full_queue_drain`, the checkpoint must record the overall
+objective, current tranche, completed items, remaining queue, explicit blockers,
+and next resume action. Resume from the checkpoint plus fresh remote truth; do
+not recover queue state from old parent transcripts.
 
 ## Goal Use
 
@@ -198,6 +220,7 @@ For GitHub PRs, current evidence must include:
 
 Report:
 
+- overall objective, queue mode, current tranche, and remaining queue
 - issue-to-PR mapping
 - PR links, head SHAs, and merge commits when merged
 - acceptance criteria covered or remaining

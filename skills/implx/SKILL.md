@@ -1,6 +1,6 @@
 ---
 name: implx
-description: Use when the user says "implx", "use implx", "用 implx", or asks for the short SpecRail queue shortcut to process a repository's approved-spec issue/PR queue with SpecRail implementation queue planning, optional threads orchestration, per-issue implementation PRs, review-thread and CI gates, merge authorization, and closure audit.
+description: Use when the user says "implx", "use implx", "用 implx", "implx drain full queue", "implx resume full queue", or asks for the short SpecRail queue shortcut to process or drain a repository's approved-spec issue/PR queue with SpecRail implementation queue planning, optional threads orchestration, per-issue implementation PRs, review-thread and CI gates, merge authorization, and closure audit.
 ---
 
 # Implx
@@ -18,9 +18,39 @@ focused SpecRail skills; it routes to them in the right order.
    - identify human gates and route-gate requirements
 2. Fetch current remote state before mapping a GitHub queue.
 3. List open issues, open PRs, current branch, dirty files, and worktrees.
-4. For broad queues, record whether the run has explicit goal or budget
-   authorization. If not, write a `goal_candidate` only; do not silently create
-   a Codex goal.
+4. For broad queues, record whether the run has explicit queue-drain, goal, or
+   budget authorization. `implx drain full queue`, `implx resume full queue`,
+   and equivalent "finish all actionable issues/PRs" wording count as explicit
+   queue-drain authorization, but do not silently create a Codex goal.
+
+## Queue-Drain Shortcuts
+
+Treat these short prompts as full queue-drain requests:
+
+- `implx drain full queue`
+- `implx resume full queue`
+- `用 implx 完成所有 actionable issues 和 PRs`
+- `用 implx 做完整队列`
+
+For these prompts, set:
+
+```yaml
+overall_objective: drain_all_actionable_issues_and_prs
+queue_mode: full_queue_drain
+tranche_policy: bounded_loop
+stop_policy: queue_drained_or_only_blockers
+```
+
+This means the current tranche stays bounded, but the objective is not narrowed
+to one issue, one PR, or one tranche. After each tranche, refresh remote truth,
+update the checkpoint, then choose the next actionable tranche until the queue
+is drained or every remaining item is explicitly blocked, deferred, waiting on
+CI, or needs human input.
+
+If the parent reaches the context hard stop, write the checkpoint and resume
+prompt instead of ending the full-queue objective. The next parent must resume
+from `.specrail/runtime/current.json`, repo-local run logs, and fresh GitHub
+truth, not old Codex session transcripts.
 
 ## Route
 
@@ -34,7 +64,8 @@ planning route instead of implementing from assumptions.
 
 For approved-spec queues, route to `skills/specrail-implement-queue/SKILL.md`
 and follow its context budget, output firewall, runtime checkpoint, and goal-use
-rules.
+rules. Pass through `queue_mode: full_queue_drain` when a queue-drain shortcut
+was used.
 
 ## Threads
 
@@ -105,8 +136,12 @@ Report a compact handoff when `implx` is active:
 ```yaml
 implx_handoff:
   route: implement_queue
+  overall_objective:
+  queue_mode:
   issue_to_pr_map:
   approved_specs:
+  current_tranche:
+  remaining_queue:
   threads:
     mode:
     lanes:
