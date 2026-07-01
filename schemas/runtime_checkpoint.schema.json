@@ -34,6 +34,36 @@
     "status": {
       "enum": ["planning", "running", "blocked", "handoff", "complete"]
     },
+    "overall_objective": {
+      "type": "string"
+    },
+    "queue_mode": {
+      "enum": ["bounded_tranche", "full_queue_drain", null]
+    },
+    "spec_coverage": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "checked_at": {
+          "type": ["string", "null"]
+        },
+        "complete": {
+          "type": "array"
+        },
+        "needs_tasks": {
+          "type": "array"
+        },
+        "needs_spec": {
+          "type": "array"
+        },
+        "umbrella_covered": {
+          "type": "array"
+        },
+        "exception_allowed": {
+          "type": "array"
+        }
+      }
+    },
     "goal": {
       "type": ["object", "null"],
       "additionalProperties": true,
@@ -165,6 +195,19 @@
             "type": "string",
             "minLength": 1
           },
+          "spec_status": {
+            "enum": [
+              "complete",
+              "needs_tasks",
+              "needs_spec",
+              "umbrella_covered",
+              "exception_allowed",
+              null
+            ]
+          },
+          "spec_status_reason": {
+            "type": ["string", "null"]
+          },
           "branch": {
             "type": ["string", "null"]
           },
@@ -205,6 +248,48 @@
           },
           "merge_state": {
             "type": ["string", "null"]
+          }
+        }
+      }
+    },
+    "remaining_queue": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["state", "next_action"],
+        "additionalProperties": true,
+        "properties": {
+          "issue": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "pr": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "state": {
+            "type": "string",
+            "minLength": 1
+          },
+          "spec_status": {
+            "enum": [
+              "complete",
+              "needs_tasks",
+              "needs_spec",
+              "umbrella_covered",
+              "exception_allowed",
+              null
+            ]
+          },
+          "spec_status_reason": {
+            "type": ["string", "null"]
+          },
+          "blocker": {
+            "type": ["string", "null"]
+          },
+          "next_action": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }

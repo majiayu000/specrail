@@ -22,6 +22,32 @@ REVIEW_THREAD_CLEAN_STATUSES = {"clean", "resolved", "none", "passed"}
 PR_GATE_PASSED_STATUSES = {"passed", "allowed", "clean", "success", "green"}
 MERGE_STATE_CLEAN_STATUSES = {"clean", "mergeable"}
 CHECKPOINT_STATUSES = {"planning", "running", "blocked", "handoff", "complete"}
+SPEC_STATUSES = {
+    "complete",
+    "needs_tasks",
+    "needs_spec",
+    "umbrella_covered",
+    "exception_allowed",
+}
+FULL_QUEUE_NON_DRAINED_STATES = {
+    "needs_spec",
+    "needs_tasks",
+    "eligible_impl",
+    "waiting_ci",
+    "needs_ci",
+    "needs_review",
+    "review_required",
+    "open",
+    "planning",
+    "running",
+}
+FULL_QUEUE_TERMINAL_REMAINDER_STATES = {
+    "blocked",
+    "deferred",
+    "needs_human",
+    "closed",
+    "merged",
+}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -103,6 +129,85 @@ def _validate_goal_candidate(data: dict[str, Any], errors: list[str]) -> None:
             errors.append("goal_candidate.constraints entries must be non-empty strings")
 
 
+def _validate_spec_status(
+    value: Any,
+    label: str,
+    errors: list[str],
+    *,
+    required: bool,
+) -> str:
+    if value is None:
+        if required:
+            errors.append(f"{label}: spec_status is required")
+        return ""
+    if not isinstance(value, str) or value not in SPEC_STATUSES:
+        errors.append(f"{label}: spec_status must be one of {sorted(SPEC_STATUSES)}")
+        return ""
+    return value
+
+
+def _validate_full_queue_checkpoint(
+    data: dict[str, Any],
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    queue_mode = data.get("queue_mode")
+    if queue_mode != "full_queue_drain":
+        return
+
+    _require_nonempty_string(data, "overall_objective", "checkpoint", errors)
+
+    spec_coverage = data.get("spec_coverage")
+    if not isinstance(spec_coverage, dict):
+        errors.append("full_queue_drain requires spec_coverage object")
+    else:
+        for key in [
+            "complete",
+            "needs_tasks",
+            "needs_spec",
+            "umbrella_covered",
+            "exception_allowed",
+        ]:
+            value = spec_coverage.get(key)
+            if not isinstance(value, list):
+                errors.append(f"spec_coverage.{key} must be a list")
+
+    remaining_queue = data.get("remaining_queue")
+    if not isinstance(remaining_queue, list):
+        errors.append("full_queue_drain requires remaining_queue list")
+        return
+
+    checkpoint_status = str(data.get("status") or "").lower()
+    for index, raw_item in enumerate(remaining_queue, start=1):
+        if not isinstance(raw_item, dict):
+            errors.append(f"remaining_queue item #{index} must be an object")
+            continue
+        label = _item_label(raw_item, index).replace("item", "remaining_queue item", 1)
+        state = str(raw_item.get("state") or "").lower()
+        if not state:
+            errors.append(f"{label}: state is required")
+        if not raw_item.get("next_action"):
+            errors.append(f"{label}: next_action is required")
+        spec_status = _validate_spec_status(
+            raw_item.get("spec_status"),
+            label,
+            errors,
+            required=True,
+        )
+        if spec_status == "exception_allowed" and not raw_item.get("spec_status_reason"):
+            warnings.append(f"{label}: exception_allowed should record spec_status_reason")
+
+        if checkpoint_status == "complete":
+            if state in FULL_QUEUE_NON_DRAINED_STATES:
+                errors.append(
+                    f"{label}: state {state!r} means full_queue_drain is not complete"
+                )
+            elif state not in FULL_QUEUE_TERMINAL_REMAINDER_STATES:
+                warnings.append(
+                    f"{label}: state {state!r} is not a standard terminal remainder state"
+                )
+
+
 def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -138,6 +243,8 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             errors.append(f"checkpoint.status must be one of: {allowed}")
 
     _validate_goal_candidate(data, errors)
+    _validate_full_queue_checkpoint(data, errors, warnings)
+    queue_mode = data.get("queue_mode")
 
     context_budget = _require_mapping(data, "context_budget", errors)
     _require_positive_int(context_budget, "window_tokens", "context_budget", errors)
@@ -186,6 +293,22 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             errors.append(f"{label}: state is required")
         if not raw_item.get("next_action"):
             errors.append(f"{label}: next_action is required")
+        if queue_mode == "full_queue_drain" and (raw_item.get("issue") or raw_item.get("pr")):
+            spec_status = _validate_spec_status(
+                raw_item.get("spec_status"),
+                label,
+                errors,
+                required=True,
+            )
+            if spec_status == "exception_allowed" and not raw_item.get("spec_status_reason"):
+                warnings.append(f"{label}: exception_allowed should record spec_status_reason")
+            if state in {"complete", "merge_ready", "merged"} and spec_status in {
+                "needs_spec",
+                "needs_tasks",
+            }:
+                errors.append(
+                    f"{label}: terminal state {state!r} cannot use spec_status {spec_status!r}"
+                )
 
         local_verification = raw_item.get("local_verification", [])
         if not isinstance(local_verification, list):

@@ -21,8 +21,33 @@ route to `skills/specrail-implement/SKILL.md` instead.
    - the GitHub issue
    - `specs/GH<issue-number>/product.md`
    - `specs/GH<issue-number>/tech.md`
-   - `specs/GH<issue-number>/tasks.md` when present
+   - `specs/GH<issue-number>/tasks.md`
 5. Map existing PRs before creating replacement PRs.
+
+## Spec Coverage Gate
+
+Before planning implementation work, classify every open issue and linked PR:
+
+- `complete`: `product.md`, `tech.md`, and `tasks.md` all exist for the issue
+- `needs_tasks`: product and tech specs exist, but `tasks.md` is missing
+- `needs_spec`: product or tech spec is missing
+- `umbrella_covered`: another complete GH spec explicitly includes the issue in
+  scope, acceptance criteria, task plan, or linked work
+- `exception_allowed`: dependency bump, focused CI fix, docs-only correction, or
+  another explicitly justified small non-spec change
+
+Implementation candidates are only `complete`, `umbrella_covered`, or
+`exception_allowed`. For `needs_spec` and `needs_tasks`, route to the focused
+SpecRail spec-writing or task-planning skill first. Do not implement from only
+issue text, PR comments, or old chat context unless the user explicitly
+authorizes a non-spec exception and the checkpoint records the reason.
+
+For `queue_mode: full_queue_drain`, `needs_spec` and `needs_tasks` are
+actionable planning work, not completion. If no implementation-ready tranche is
+available, select the smallest spec-writing or task-planning tranche instead of
+ending the queue drain. Treat them as blockers only when the user limited the
+run to implementation-only work, the issue lacks enough evidence to draft a
+spec, or a human gate prevents spec creation.
 
 ## Queue Planning
 
@@ -41,11 +66,19 @@ Record the plan as:
 specrail_implementation_queue:
   overall_objective:
   queue_mode: bounded_tranche | full_queue_drain
+  spec_coverage:
+    complete:
+    needs_tasks:
+    needs_spec:
+    umbrella_covered:
+    exception_allowed:
   current_tranche:
   remaining_queue:
   issues:
     - issue:
       spec_dir:
+      spec_status: complete | needs_tasks | needs_spec | umbrella_covered | exception_allowed
+      spec_status_reason:
       acceptance_criteria:
       existing_prs:
       planned_prs:
@@ -70,9 +103,15 @@ For broad queues, always execute as bounded tranches. If the user or calling
 skill says `implx drain full queue`, `implx resume full queue`, or otherwise
 explicitly asks to finish all actionable issues/PRs, set
 `queue_mode: full_queue_drain`. In that mode, choose the smallest mergeable
-current tranche, checkpoint it, then continue selecting new tranches until the
-queue is drained or every remaining item is explicitly blocked, deferred,
-waiting on CI, or needs human input.
+current tranche, checkpoint it, then continue selecting new implementation,
+spec-writing, or task-planning tranches until the queue is drained or every
+remaining item is explicitly blocked, deferred, waiting on CI, or needs human
+input.
+
+A blocked or waiting current tranche does not stop full-queue drain. After
+checkpointing that tranche, refresh remote truth and look for an independent
+next tranche. Stop only when every remaining issue and PR is listed in
+`remaining_queue` with `spec_status`, `blocker`, and `next_action`.
 
 If the user only asks for a broad queue without explicit full-queue drain
 authorization, choose the smallest mergeable tranche and leave the rest in the
@@ -157,9 +196,12 @@ labels, reviews, branches, and SpecRail spec packets remain the durable workflow
 truth.
 
 For `queue_mode: full_queue_drain`, the checkpoint must record the overall
-objective, current tranche, completed items, remaining queue, explicit blockers,
-and next resume action. Resume from the checkpoint plus fresh remote truth; do
-not recover queue state from old parent transcripts.
+objective, spec coverage, current tranche, completed items, remaining queue,
+explicit blockers, and next resume action. `needs_spec`, `needs_tasks`,
+`eligible_impl`, `waiting_ci`, and `needs_review` do not count as drained while
+the checkpoint status is `complete`; they require a next action or a non-drain
+handoff status. Resume from the checkpoint plus fresh remote truth; do not
+recover queue state from old parent transcripts.
 
 ## Goal Use
 

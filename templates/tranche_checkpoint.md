@@ -11,6 +11,16 @@ spec artifacts as durable workflow state.
   "repo": "owner/repo or local/path",
   "scope": "one bounded tranche; name exclusions and non-goals",
   "status": "planning",
+  "overall_objective": "drain_all_actionable_issues_and_prs",
+  "queue_mode": "bounded_tranche",
+  "spec_coverage": {
+    "checked_at": null,
+    "complete": [],
+    "needs_tasks": [],
+    "needs_spec": [],
+    "umbrella_covered": [],
+    "exception_allowed": []
+  },
   "goal": {
     "enabled": false,
     "objective": "",
@@ -49,6 +59,8 @@ spec artifacts as durable workflow state.
       "issue": null,
       "pr": null,
       "state": "planning",
+      "spec_status": null,
+      "spec_status_reason": null,
       "branch": null,
       "worktree": null,
       "head_sha": null,
@@ -79,6 +91,17 @@ spec artifacts as durable workflow state.
       "blocker": null,
       "next_action": "refresh remote truth and write queue gate",
       "merge_state": "not_merge_ready"
+    }
+  ],
+  "remaining_queue": [
+    {
+      "issue": null,
+      "pr": null,
+      "spec_status": "needs_spec",
+      "spec_status_reason": "missing product.md or tech.md for the issue",
+      "state": "needs_spec",
+      "blocker": null,
+      "next_action": "write or update the SpecRail spec packet before implementation"
     }
   ],
   "resume_prompt": "Read this checkpoint, refresh remote truth, and continue only the named tranche. Do not read raw Codex session logs."

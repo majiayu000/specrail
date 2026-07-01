@@ -59,8 +59,24 @@ issues need coordinated implementation PRs. For each candidate issue, require
 the matching `specs/GH<issue-number>/product.md`, `tech.md`, and `tasks.md`
 when present.
 
-If approved specs are missing, stop at the appropriate SpecRail spec or task
-planning route instead of implementing from assumptions.
+Before selecting an implementation tranche, build a spec coverage map for every
+open issue and linked PR:
+
+- `complete`: `product.md`, `tech.md`, and `tasks.md` all exist for
+  `specs/GH<issue-number>/`
+- `needs_tasks`: product and tech specs exist, but `tasks.md` is missing
+- `needs_spec`: product or tech spec is missing
+- `umbrella_covered`: another complete GH spec explicitly lists this issue in
+  scope, acceptance criteria, tasks, or linked work
+- `exception_allowed`: the item is a dependency bump, focused CI fix, docs-only
+  correction, or another explicitly justified small change
+
+If specs or tasks are missing, route that issue to the appropriate SpecRail
+`write_spec` or `plan_tasks` step instead of implementing from assumptions.
+For `queue_mode: full_queue_drain`, missing specs do not finish the queue:
+choose a spec-writing tranche when no implementation-ready tranche is available.
+Only treat missing specs as blockers when the user constrained the run to
+implementation-only work or the issue evidence is insufficient to draft a spec.
 
 For approved-spec queues, route to `skills/specrail-implement-queue/SKILL.md`
 and follow its context budget, output firewall, runtime checkpoint, and goal-use
@@ -139,6 +155,12 @@ implx_handoff:
   overall_objective:
   queue_mode:
   issue_to_pr_map:
+  spec_coverage:
+    complete:
+    needs_tasks:
+    needs_spec:
+    umbrella_covered:
+    exception_allowed:
   approved_specs:
   current_tranche:
   remaining_queue:
