@@ -16,6 +16,10 @@
 - SpecRail implementation queue skill for approved-spec issue queues with
   optional threads orchestration.
 - `implx` shortcut skill for SpecRail-backed implementation queues.
+- Dry-run-first local Codex skill installer for explicitly requested installs.
+- Autonomous SpecRail mode guidance for complex unadopted repos.
+- Agent-facing `specrail-install` skill for setup, install, update, and adoption
+  routing.
 - Deterministic gate fixture corpus under `examples/fixtures/`.
 
 ## v0.2.1 - 2026-06-26

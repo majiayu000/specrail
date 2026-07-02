@@ -57,11 +57,24 @@ python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issu
 - Use `skills/specrail-release-note/SKILL.md` after merge when drafting release
   notes.
 
+For setup, installation, update, verification, or adoption requests, use
+`skills/specrail-install/SKILL.md` before selecting an issue/spec workflow
+route. Setup is not a `route_gate.py` action unless a repository explicitly
+adds that policy.
+
 Default to `write_spec` before `implement` for product-facing, architecture,
 cross-module, public API, workflow-policy, or ambiguous behavior changes.
 Choose direct `implement` only when the change is already covered by an
 approved spec, is a small mechanical fix, is a test-only/doc-only correction, is
 a focused CI fix, or the user explicitly asks to skip spec creation.
+
+If a repository has not adopted SpecRail but the current work is complex enough
+to need issue/spec/gate discipline, switch the work into SpecRail mode. Use the
+actual route/spec/task/gate structure in the repository's existing
+specs/plan/docs location instead of treating SpecRail as a loose checklist. Do
+not copy SpecRail files, install local skills, create remote issues or PRs, add
+labels, approve, merge, or bypass maintainers unless the user explicitly asks
+for that action.
 
 If `write_spec` is selected and no GitHub issue number is available, search for
 an existing issue first. If none exists and GitHub workflow is in scope, create
@@ -131,7 +144,9 @@ Agents must not:
 
 Do not install repo-distributed SpecRail skills into `$HOME` unless a human
 explicitly requests installation. Treat `skills-lock.json`, when present, as the
-declared repo skill set.
+declared repo skill set. If local Codex skill installation is explicitly
+requested, run `python3 tools/install_codex_skills.py --repo .` first and use
+`--apply` only for the requested write.
 
 ## Output
 
