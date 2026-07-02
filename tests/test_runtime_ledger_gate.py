@@ -94,6 +94,27 @@ def clean_checkpoint() -> dict[str, object]:
     }
 
 
+def full_queue_checkpoint() -> dict[str, object]:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["spec_status"] = "complete"
+    item["spec_status_reason"] = "specs/GH751 has product, tech, and tasks"
+    checkpoint["scope"] = "drain all actionable issues and PRs"
+    checkpoint["overall_objective"] = "drain_all_actionable_issues_and_prs"
+    checkpoint["queue_mode"] = "full_queue_drain"
+    checkpoint["spec_coverage"] = {
+        "checked_at": "2026-07-01T00:00:00Z",
+        "complete": [751],
+        "needs_tasks": [],
+        "needs_spec": [],
+        "umbrella_covered": [],
+        "exception_allowed": [],
+    }
+    checkpoint["remaining_queue"] = []
+    return checkpoint
+
+
 def test_runtime_ledger_gate_allows_complete_merge_ready_checkpoint() -> None:
     result = evaluate_checkpoint(clean_checkpoint())
 
@@ -241,3 +262,123 @@ def test_runtime_ledger_gate_cli_json_contract(tmp_path: Path) -> None:
         "warnings",
         "satisfied",
     } <= set(payload)
+
+
+def test_full_queue_blocks_implementation_without_spec() -> None:
+    checkpoint = full_queue_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["issue"] = 88
+    item["pr"] = 116
+    item["state"] = "running"
+    item["spec_status"] = "needs_spec"
+    item["spec_status_reason"] = "specs/GH88/product.md is missing"
+    checkpoint["spec_coverage"] = {
+        "checked_at": "2026-07-01T00:00:00Z",
+        "complete": [],
+        "needs_tasks": [],
+        "needs_spec": [88],
+        "umbrella_covered": [],
+        "exception_allowed": [],
+    }
+    checkpoint["remaining_queue"] = [
+        {
+            "issue": 88,
+            "state": "needs_spec",
+            "spec_status": "needs_spec",
+            "next_action": "write specs/GH88/product.md and tech.md",
+        }
+    ]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("must route to spec or task planning" in error for error in result["errors"])
+
+
+def test_full_queue_allows_umbrella_spec_coverage() -> None:
+    checkpoint = full_queue_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["issue"] = 119
+    item["pr"] = 125
+    item["spec_status"] = "umbrella_covered"
+    item["spec_status_reason"] = "specs/GH118 explicitly covers #119"
+    checkpoint["spec_coverage"] = {
+        "checked_at": "2026-07-01T00:00:00Z",
+        "complete": [118],
+        "needs_tasks": [],
+        "needs_spec": [],
+        "umbrella_covered": [119],
+        "exception_allowed": [],
+    }
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "allowed"
+    assert result["errors"] == []
+
+
+def test_full_queue_blocks_complete_when_pr_is_still_waiting_ci() -> None:
+    checkpoint = full_queue_checkpoint()
+    checkpoint["status"] = "complete"
+    checkpoint["remaining_queue"] = [
+        {
+            "issue": 116,
+            "pr": 116,
+            "state": "waiting_ci",
+            "spec_status": "complete",
+            "next_action": "refresh CI and PR gate for current head",
+        }
+    ]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("waiting_ci" in error for error in result["errors"])
+
+
+def test_full_queue_blocks_complete_with_remaining_needs_spec() -> None:
+    checkpoint = full_queue_checkpoint()
+    checkpoint["status"] = "complete"
+    checkpoint["spec_coverage"] = {
+        "checked_at": "2026-07-01T00:00:00Z",
+        "complete": [],
+        "needs_tasks": [],
+        "needs_spec": [88],
+        "umbrella_covered": [],
+        "exception_allowed": [],
+    }
+    checkpoint["remaining_queue"] = [
+        {
+            "issue": 88,
+            "state": "needs_spec",
+            "spec_status": "needs_spec",
+            "next_action": "write specs/GH88/product.md and tech.md",
+        }
+    ]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("needs_spec" in error for error in result["errors"])
+
+
+def test_full_queue_handoff_needs_spec_fixture_is_allowed() -> None:
+    fixture = ROOT / "examples" / "fixtures" / "runtime-full-queue-handoff-needs-spec.json"
+    checkpoint = json.loads(fixture.read_text(encoding="utf-8"))
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "allowed"
+    assert result["errors"] == []
+
+
+def test_full_queue_false_complete_needs_spec_fixture_is_blocked() -> None:
+    fixture = ROOT / "examples" / "fixtures" / "runtime-full-queue-false-complete-needs-spec.json"
+    checkpoint = json.loads(fixture.read_text(encoding="utf-8"))
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("needs_spec" in error for error in result["errors"])

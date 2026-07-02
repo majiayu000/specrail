@@ -48,6 +48,14 @@ FULL_QUEUE_TERMINAL_REMAINDER_STATES = {
     "closed",
     "merged",
 }
+SPEC_PLANNING_STATES = {
+    "planning",
+    "needs_spec",
+    "needs_tasks",
+    "blocked",
+    "deferred",
+    "needs_human",
+}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -308,6 +316,11 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             }:
                 errors.append(
                     f"{label}: terminal state {state!r} cannot use spec_status {spec_status!r}"
+                )
+            if spec_status in {"needs_spec", "needs_tasks"} and state not in SPEC_PLANNING_STATES:
+                errors.append(
+                    f"{label}: spec_status {spec_status!r} must route to spec or task "
+                    "planning before implementation"
                 )
 
         local_verification = raw_item.get("local_verification", [])
