@@ -67,9 +67,13 @@ def parse_scalar(value: str) -> Any:
 def _significant_lines(text: str) -> list[tuple[int, str]]:
     lines: list[tuple[int, str]] = []
     for raw in text.splitlines():
+        if "\t" in raw:
+            raise SpecRailError("tabs are not supported in SpecRail YAML")
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip(" "))
+        if indent % 2 != 0:
+            raise SpecRailError(f"indent must use multiples of two spaces near: {raw.strip()}")
         lines.append((indent, raw.strip()))
     return lines
 
@@ -103,6 +107,10 @@ def parse_yaml_subset(text: str) -> Any:
                     child, index = parse_block(index + 1, indent + 2)
                     container.append(child)
                 else:
+                    if re.match(r"[^'\"\s]+:\s+", item) and not (
+                        len(item) >= 2 and item[0] == item[-1] and item[0] in {"'", '"'}
+                    ):
+                        raise SpecRailError(f"unsupported list mapping near: {content}")
                     container.append(parse_scalar(item))
                     index += 1
                 continue
@@ -114,7 +122,11 @@ def parse_yaml_subset(text: str) -> Any:
                 raise SpecRailError(f"expected key/value near: {content}")
             key = key.strip()
             value = value.strip()
+            if key in container:
+                raise SpecRailError(f"duplicate key near: {content}")
             if value:
+                if value.startswith("{") and value.endswith("}"):
+                    raise SpecRailError(f"inline mappings are not supported near: {content}")
                 container[key] = parse_scalar(value)
                 index += 1
                 continue
