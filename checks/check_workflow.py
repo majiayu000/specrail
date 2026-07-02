@@ -31,23 +31,6 @@ REQUIRED_FILES = [
     "states.yaml",
     "labels.yaml",
     "examples/adoptions/matrix.json",
-    "examples/fixtures/issue-ready-to-implement.json",
-    "examples/fixtures/issue-ready-to-spec.json",
-    "examples/fixtures/issue-reserved-internal.json",
-    "examples/fixtures/issue-body-hint-ready-to-implement.json",
-    "examples/fixtures/pr-clean-authorized.json",
-    "examples/fixtures/pr-diff.patch",
-    "examples/fixtures/pr-missing-human-auth.json",
-    "examples/fixtures/pr-pending-ci.json",
-    "examples/fixtures/pr-unresolved-thread.json",
-    "examples/fixtures/review-invalid-body.json",
-    "examples/fixtures/review-invalid-empty-suggestion.json",
-    "examples/fixtures/review-invalid-line.json",
-    "examples/fixtures/review-invalid-range.json",
-    "examples/fixtures/review-invalid-severity.json",
-    "examples/fixtures/review-invalid-suggestion-side.json",
-    "examples/fixtures/review-spec-drift.json",
-    "examples/fixtures/review-valid.json",
     "checks/github_issue_evidence.py",
     "checks/github_pr_evidence.py",
     "checks/pr_gate.py",
@@ -71,19 +54,12 @@ REQUIRED_FILES = [
     "review/human_final_review.md",
     "policies/security_disclosure.md",
     "policies/maintainer_escalation.md",
-    "schemas/flow_manifest.schema.json",
-    "schemas/issue_triage.schema.json",
-    "schemas/issue_evidence.schema.json",
-    "schemas/evaluation_result.schema.json",
-    "schemas/adoption_matrix.schema.json",
-    "schemas/spec_packet.schema.json",
-    "schemas/task_plan.schema.json",
-    "schemas/pr_review_gate.schema.json",
-    "schemas/review_result.schema.json",
-    "schemas/runtime_checkpoint.schema.json",
-    "schemas/workflow_run.schema.json",
     "checks/runtime_ledger_gate.py",
     "templates/tranche_checkpoint.md",
+]
+REQUIRED_FILE_GLOBS = [
+    "examples/fixtures/*",
+    "schemas/*.schema.json",
 ]
 
 REQUIRED_TOKENS = {
@@ -137,6 +113,15 @@ def validate_required_files(repo: Path) -> list[str]:
         path = repo / rel
         if not path.is_file():
             errors.append(f"missing required file: {rel}")
+    return errors
+
+
+def validate_required_file_globs(repo: Path) -> list[str]:
+    errors: list[str] = []
+    for pattern in REQUIRED_FILE_GLOBS:
+        matches = sorted(path for path in repo.glob(pattern) if path.is_file())
+        if not matches:
+            errors.append(f"missing required files matching: {pattern}")
     return errors
 
 
@@ -287,6 +272,7 @@ def main() -> int:
     try:
         config = load_pack(repo)
         errors.extend(validate_required_files(repo))
+        errors.extend(validate_required_file_globs(repo))
         errors.extend(validate_tokens(repo))
         errors.extend(validate_json_schemas(repo))
         errors.extend(validate_state_graph(config))
