@@ -120,7 +120,9 @@ python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.jso
 
 Runtime checkpoints are handoff aids for bounded agent tranches. They do not
 replace GitHub issues, pull requests, labels, reviews, branches, or SpecRail
-spec packets as durable workflow state.
+spec packets as durable workflow state. For checkpoint contracts, the schema is
+the structure authority and `checks/runtime_ledger_gate.py` is the behavior
+authority; see [`SPEC.md`](SPEC.md#runtime-checkpoint-contract-authority).
 
 Validate an advisory review artifact against a unified diff:
 

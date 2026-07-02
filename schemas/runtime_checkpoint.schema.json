@@ -223,22 +223,92 @@
           },
           "ci": {
             "type": ["object", "null"],
-            "additionalProperties": true
+            "additionalProperties": true,
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "run_id": {
+                "type": ["integer", "null"],
+                "minimum": 1
+              },
+              "evidence": {
+                "type": ["string", "null"]
+              }
+            }
           },
           "local_verification": {
-            "type": "array"
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["command", "status"],
+              "additionalProperties": true,
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "status": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence": {
+                  "type": ["string", "null"]
+                }
+              }
+            }
           },
           "review": {
             "type": ["object", "null"],
-            "additionalProperties": true
+            "additionalProperties": true,
+            "properties": {
+              "reviewer_lane": {
+                "type": ["string", "null"]
+              },
+              "status": {
+                "type": "string"
+              },
+              "blocking_findings": {
+                "type": "array"
+              }
+            }
           },
           "review_threads": {
             "type": ["object", "null"],
-            "additionalProperties": true
+            "additionalProperties": true,
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "unresolved_count": {
+                "type": ["integer", "null"],
+                "minimum": 0
+              },
+              "evidence": {
+                "type": ["string", "null"]
+              },
+              "checked_at": {
+                "type": ["string", "null"]
+              }
+            }
           },
           "pr_gate": {
             "type": ["object", "null"],
-            "additionalProperties": true
+            "additionalProperties": true,
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "head_sha": {
+                "type": ["string", "null"]
+              },
+              "evidence": {
+                "type": ["string", "null"]
+              },
+              "checked_at": {
+                "type": ["string", "null"]
+              }
+            }
           },
           "blocker": {
             "type": ["string", "null"]
@@ -249,6 +319,24 @@
           },
           "merge_state": {
             "type": ["string", "null"]
+          },
+          "merge_authorization": {
+            "type": ["object", "null"],
+            "required": ["actor", "source"],
+            "additionalProperties": true,
+            "properties": {
+              "actor": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "minLength": 1
+              },
+              "summary": {
+                "type": "string"
+              }
+            }
           }
         }
       }
