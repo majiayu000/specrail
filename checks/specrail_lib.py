@@ -15,6 +15,15 @@ from typing import Any
 
 
 DECISIONS = {"allowed", "warn", "needs_human", "blocked"}
+SPEC_STATUSES = frozenset(
+    {
+        "complete",
+        "needs_tasks",
+        "needs_spec",
+        "umbrella_covered",
+        "exception_allowed",
+    }
+)
 TERMINAL_BLOCKING_STATES = {
     "abandoned",
     "duplicate",

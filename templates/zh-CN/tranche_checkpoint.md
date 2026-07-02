@@ -4,6 +4,9 @@
 pull request、label、review、branch，也不替代 SpecRail spec artifact 作为
 durable workflow state。
 
+规范 `spec_status` 取值定义在 `checks/specrail_lib.py` 的 `SPEC_STATUSES`；
+本模板只展示示例用法。
+
 ```json
 {
   "checkpoint_version": 1,

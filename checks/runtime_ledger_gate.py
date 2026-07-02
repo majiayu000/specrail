@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from specrail_lib import SPEC_STATUSES
+
 
 MERGE_READY_STATES = {"merge_ready", "ready_to_merge", "merged"}
 PASSED_STATUSES = {"passed", "success", "successful", "green"}
@@ -22,13 +24,6 @@ REVIEW_THREAD_CLEAN_STATUSES = {"clean", "resolved", "none", "passed"}
 PR_GATE_PASSED_STATUSES = {"passed", "allowed", "clean", "success", "green"}
 MERGE_STATE_CLEAN_STATUSES = {"clean", "mergeable"}
 CHECKPOINT_STATUSES = {"planning", "running", "blocked", "handoff", "complete"}
-SPEC_STATUSES = {
-    "complete",
-    "needs_tasks",
-    "needs_spec",
-    "umbrella_covered",
-    "exception_allowed",
-}
 FULL_QUEUE_NON_DRAINED_STATES = {
     "needs_spec",
     "needs_tasks",
@@ -169,13 +164,7 @@ def _validate_full_queue_checkpoint(
     if not isinstance(spec_coverage, dict):
         errors.append("full_queue_drain requires spec_coverage object")
     else:
-        for key in [
-            "complete",
-            "needs_tasks",
-            "needs_spec",
-            "umbrella_covered",
-            "exception_allowed",
-        ]:
+        for key in sorted(SPEC_STATUSES):
             value = spec_coverage.get(key)
             if not isinstance(value, list):
                 errors.append(f"spec_coverage.{key} must be a list")
