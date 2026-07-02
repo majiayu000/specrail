@@ -21,6 +21,8 @@
 - Agent-facing `specrail-install` skill for setup, install, update, and adoption
   routing.
 - Deterministic gate fixture corpus under `examples/fixtures/`.
+- Runtime checkpoint schema instance validation and a documented contract
+  authority split between schema structure and gate behavior.
 
 ## v0.2.1 - 2026-06-26
 
