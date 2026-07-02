@@ -11,6 +11,7 @@ CHECKS = ROOT / "checks"
 sys.path.insert(0, str(CHECKS))
 
 from runtime_ledger_gate import evaluate_checkpoint  # noqa: E402
+from specrail_lib import SPEC_STATUSES  # noqa: E402
 
 
 def clean_checkpoint() -> dict[str, object]:
@@ -113,6 +114,35 @@ def full_queue_checkpoint() -> dict[str, object]:
     }
     checkpoint["remaining_queue"] = []
     return checkpoint
+
+
+def _schema_spec_status_enums() -> list[list[object]]:
+    schema_path = ROOT / "schemas" / "runtime_checkpoint.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    enums: list[list[object]] = []
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            if value.get("properties") and "spec_status" in value["properties"]:
+                spec_status = value["properties"]["spec_status"]
+                assert isinstance(spec_status, dict), "spec_status schema must be an object"
+                enum = spec_status.get("enum")
+                assert isinstance(enum, list), "spec_status schema must define enum"
+                enums.append(enum)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(schema)
+    assert enums, "runtime checkpoint schema must define spec_status enum"
+    return enums
+
+
+def test_spec_status_schema_matches_shared_constant() -> None:
+    for enum in _schema_spec_status_enums():
+        assert {item for item in enum if item is not None} == set(SPEC_STATUSES)
 
 
 def test_runtime_ledger_gate_allows_complete_merge_ready_checkpoint() -> None:

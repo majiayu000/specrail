@@ -4,6 +4,9 @@ This is an optional local runtime checkpoint for long agent runs. It does not
 replace GitHub issues, pull requests, labels, reviews, branches, or SpecRail
 spec artifacts as durable workflow state.
 
+Canonical `spec_status` values are defined in `checks/specrail_lib.py` as
+`SPEC_STATUSES`; this template shows example usage only.
+
 ```json
 {
   "checkpoint_version": 1,

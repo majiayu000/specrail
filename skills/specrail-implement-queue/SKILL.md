@@ -27,6 +27,8 @@ route to `skills/specrail-implement/SKILL.md` instead.
 ## Spec Coverage Gate
 
 Before planning implementation work, classify every open issue and linked PR:
+use only the canonical `spec_status` values defined by
+`checks/specrail_lib.py` as `SPEC_STATUSES`.
 
 - `complete`: `product.md`, `tech.md`, and `tasks.md` all exist for the issue
 - `needs_tasks`: product and tech specs exist, but `tasks.md` is missing
