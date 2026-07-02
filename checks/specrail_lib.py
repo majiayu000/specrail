@@ -24,6 +24,28 @@ SPEC_STATUSES = frozenset(
         "exception_allowed",
     }
 )
+RUNTIME_ONLY_STATE = "runtime_only"
+RUNTIME_STATE_MAPPING = {
+    "blocked": RUNTIME_ONLY_STATE,
+    "closed": RUNTIME_ONLY_STATE,
+    "complete": RUNTIME_ONLY_STATE,
+    "deferred": RUNTIME_ONLY_STATE,
+    "eligible_impl": ("ready_to_implement",),
+    "handoff": RUNTIME_ONLY_STATE,
+    "merge_ready": ("merge_ready",),
+    "merged": ("merged",),
+    "needs_ci": ("human_review",),
+    "needs_human": RUNTIME_ONLY_STATE,
+    "needs_review": ("impl_pr_open", "agent_review"),
+    "needs_spec": ("ready_to_spec",),
+    "needs_tasks": ("spec_approved",),
+    "open": RUNTIME_ONLY_STATE,
+    "planning": RUNTIME_ONLY_STATE,
+    "ready_to_merge": ("merge_ready",),
+    "review_required": ("human_review",),
+    "running": RUNTIME_ONLY_STATE,
+    "waiting_ci": ("human_review", "ci_green"),
+}
 TERMINAL_BLOCKING_STATES = {
     "abandoned",
     "duplicate",
