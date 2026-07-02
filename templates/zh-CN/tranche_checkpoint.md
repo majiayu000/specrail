@@ -7,6 +7,10 @@ durable workflow state。
 规范 `spec_status` 取值定义在 `checks/specrail_lib.py` 的 `SPEC_STATUSES`；
 本模板只展示示例用法。
 
+runtime item 的 `state` 是由 `checks/specrail_lib.py` 中
+`RUNTIME_STATE_MAPPING` 映射的交接状态；它不替代 `states.yaml` 中的规范
+工作流状态机。
+
 ```json
 {
   "checkpoint_version": 1,

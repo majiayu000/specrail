@@ -10,8 +10,19 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
 sys.path.insert(0, str(CHECKS))
 
-from runtime_ledger_gate import evaluate_checkpoint  # noqa: E402
-from specrail_lib import SPEC_STATUSES  # noqa: E402
+from runtime_ledger_gate import (  # noqa: E402
+    CHECKPOINT_STATUSES,
+    FULL_QUEUE_NON_DRAINED_STATES,
+    FULL_QUEUE_TERMINAL_REMAINDER_STATES,
+    MERGE_READY_STATES,
+    evaluate_checkpoint,
+)
+from specrail_lib import (  # noqa: E402
+    RUNTIME_ONLY_STATE,
+    RUNTIME_STATE_MAPPING,
+    SPEC_STATUSES,
+    load_yaml_file,
+)
 
 
 def clean_checkpoint() -> dict[str, object]:
@@ -143,6 +154,26 @@ def _schema_spec_status_enums() -> list[list[object]]:
 def test_spec_status_schema_matches_shared_constant() -> None:
     for enum in _schema_spec_status_enums():
         assert {item for item in enum if item is not None} == set(SPEC_STATUSES)
+
+
+def test_runtime_state_mapping_covers_gate_state_sets() -> None:
+    gate_states = (
+        set(CHECKPOINT_STATUSES)
+        | set(FULL_QUEUE_NON_DRAINED_STATES)
+        | set(FULL_QUEUE_TERMINAL_REMAINDER_STATES)
+        | set(MERGE_READY_STATES)
+    )
+    assert set(RUNTIME_STATE_MAPPING) == gate_states
+
+    states = load_yaml_file(ROOT / "states.yaml")["states"]
+    assert isinstance(states, dict)
+    workflow_states = set(states)
+    for runtime_state, targets in RUNTIME_STATE_MAPPING.items():
+        if targets == RUNTIME_ONLY_STATE:
+            continue
+        assert isinstance(targets, tuple), f"{runtime_state} must map to a tuple"
+        assert targets, f"{runtime_state} mapping must not be empty"
+        assert set(targets) <= workflow_states
 
 
 def test_runtime_ledger_gate_allows_complete_merge_ready_checkpoint() -> None:

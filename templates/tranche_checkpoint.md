@@ -7,6 +7,10 @@ spec artifacts as durable workflow state.
 Canonical `spec_status` values are defined in `checks/specrail_lib.py` as
 `SPEC_STATUSES`; this template shows example usage only.
 
+Runtime item `state` values are handoff states mapped by
+`checks/specrail_lib.py` as `RUNTIME_STATE_MAPPING`; they do not replace the
+canonical workflow state machine in `states.yaml`.
+
 ```json
 {
   "checkpoint_version": 1,

@@ -193,7 +193,8 @@
           },
           "state": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Runtime checkpoint handoff state. This is not a second workflow state machine; mappings to states.yaml are declared in checks/specrail_lib.py as RUNTIME_STATE_MAPPING."
           },
           "spec_status": {
             "enum": [
@@ -269,7 +270,8 @@
           },
           "state": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Runtime checkpoint handoff state. This is not a second workflow state machine; mappings to states.yaml are declared in checks/specrail_lib.py as RUNTIME_STATE_MAPPING."
           },
           "spec_status": {
             "enum": [
