@@ -1,6 +1,6 @@
 ---
 name: implx
-description: Use when the user says "implx", "use implx", "用 implx", or asks for the one-line SpecRail queue shortcut. Plain implx means drain the full actionable issue/PR queue by default: run SpecRail preflight, create missing spec/task PR work before implementation, use threads for reviewer/merge-reviewer lanes when available, create per-issue implementation PRs, require CI/reviewThreads/pr_gate evidence, preserve human merge authorization, and perform closure audit.
+description: "Use when the user says \"implx\", \"use implx\", \"用 implx\", or asks for the one-line SpecRail queue shortcut. Plain implx means drain the full actionable issue/PR queue by default: run SpecRail preflight, create missing spec/task PR work before implementation, use threads for reviewer/merge-reviewer lanes when available, create per-issue implementation PRs, require CI/reviewThreads/pr_gate evidence, preserve human merge authorization, and perform closure audit."
 ---
 
 # Implx
