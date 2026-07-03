@@ -44,6 +44,36 @@ def clean_checkpoint() -> dict[str, object]:
             "max_subagent_final_lines": 150,
             "artifact_root": "artifacts/logs/t01",
         },
+        "thread_dispatch_gate": {
+            "explicit_thread_request": "yes",
+            "native_subagents": "available",
+            "spawn_requirement": "required",
+            "fallback_mode": "none",
+            "planned_native_threads": [
+                {
+                    "id": "merge-reviewer-1",
+                    "role": "merge_reviewer",
+                    "target": "PR #718",
+                    "write_scope": "read_only",
+                    "spawn_status": "spawned",
+                    "no_spawn_reason": None,
+                }
+            ],
+            "native_thread_evidence": {
+                "spawned_agents": [
+                    {
+                        "lane_id": "merge-reviewer-1",
+                        "spawn_tool": "multi_agent_v1.spawn_agent",
+                        "agent_id_or_thread_id": "agent-reviewer-1",
+                        "wait_evidence": "wait_agent completed",
+                        "close_evidence": "close_agent completed",
+                        "result_collected": "yes",
+                    }
+                ],
+                "fallback_reason": None,
+            },
+            "no_spawn_reason": None,
+        },
         "goal_candidate": {
             "objective": "Finish this bounded tranche only",
             "done_when": [
@@ -57,12 +87,12 @@ def clean_checkpoint() -> dict[str, object]:
         },
         "items": [
             {
-                "issue": 751,
-                "pr": 752,
+                "issue": 716,
+                "pr": 718,
                 "state": "merge_ready",
                 "branch": "fix/issue-751",
                 "worktree": "/tmp/example",
-                "head_sha": "1234567890abcdef",
+                "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
                 "truth_level": "A",
                 "ci": {
                     "status": "green",
@@ -76,8 +106,10 @@ def clean_checkpoint() -> dict[str, object]:
                     }
                 ],
                 "review": {
-                    "reviewer_lane": "reviewer-1",
+                    "reviewer_lane": "merge-reviewer-1",
+                    "native_thread_id": "agent-reviewer-1",
                     "status": "passed",
+                    "evidence": "artifacts/reviews/t01/merge-reviewer-1.json",
                     "blocking_findings": [],
                 },
                 "review_threads": {
@@ -88,8 +120,10 @@ def clean_checkpoint() -> dict[str, object]:
                 },
                 "pr_gate": {
                     "status": "passed",
-                    "head_sha": "1234567890abcdef",
-                    "evidence": "artifacts/reviews/t01/pr-gate.json",
+                    "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+                    "evidence": str(
+                        ROOT / "examples" / "fixtures" / "pr-clean-authorized.json"
+                    ),
                     "checked_at": "2026-06-30T12:01:00Z",
                 },
                 "blocker": None,
@@ -111,13 +145,13 @@ def full_queue_checkpoint() -> dict[str, object]:
     item = checkpoint["items"][0]  # type: ignore[index]
     assert isinstance(item, dict)
     item["spec_status"] = "complete"
-    item["spec_status_reason"] = "specs/GH751 has product, tech, and tasks"
+    item["spec_status_reason"] = "specs/GH716 has product, tech, and tasks"
     checkpoint["scope"] = "drain all actionable issues and PRs"
     checkpoint["overall_objective"] = "drain_all_actionable_issues_and_prs"
     checkpoint["queue_mode"] = "full_queue_drain"
     checkpoint["spec_coverage"] = {
         "checked_at": "2026-07-01T00:00:00Z",
-        "complete": [751],
+        "complete": [716],
         "needs_tasks": [],
         "needs_spec": [],
         "umbrella_covered": [],
@@ -193,6 +227,56 @@ def test_runtime_ledger_gate_blocks_merge_ready_without_authorization() -> None:
 
     assert result["decision"] == "blocked"
     assert any("merge_authorization" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_merge_ready_without_thread_dispatch_gate() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint.pop("thread_dispatch_gate")
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("thread_dispatch_gate" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_native_required_without_native_reviewer() -> None:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    review = item["review"]
+    assert isinstance(review, dict)
+    review.pop("native_thread_id")
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("native_thread_id" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_blocked_pr_gate_artifact(tmp_path: Path) -> None:
+    checkpoint = clean_checkpoint()
+    blocked_gate = tmp_path / "pr-gate.json"
+    blocked_gate.write_text(
+        json.dumps(
+            {
+                "decision": "blocked",
+                "pr": 718,
+                "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+                "reasons": ["invalid evidence JSON"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    pr_gate = item["pr_gate"]
+    assert isinstance(pr_gate, dict)
+    pr_gate["evidence"] = str(blocked_gate)
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("decision must be allowed" in error for error in result["errors"])
 
 
 def test_runtime_ledger_gate_blocks_missing_window_tokens() -> None:
@@ -362,7 +446,6 @@ def test_full_queue_allows_umbrella_spec_coverage() -> None:
     item = checkpoint["items"][0]  # type: ignore[index]
     assert isinstance(item, dict)
     item["issue"] = 119
-    item["pr"] = 125
     item["spec_status"] = "umbrella_covered"
     item["spec_status_reason"] = "specs/GH118 explicitly covers #119"
     checkpoint["spec_coverage"] = {

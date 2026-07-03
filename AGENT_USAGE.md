@@ -177,13 +177,18 @@ requires review-thread, CI, merge-gate, or closure-audit handling, load
 locale, required artifacts, and human gates. Threads owns lane orchestration,
 remote queue truth, and closure audit.
 
+For GitHub PR review or merge work, native reviewer or merge-reviewer dispatch
+is required when native subagent capability is available. Record
+`thread_dispatch_gate` and native thread evidence before claiming full threads
+execution or merge readiness.
+
 For long queues, keep the parent thread thin: write raw logs to artifacts, read
 only short summaries or tails, and checkpoint before continuing in a fresh
 parent thread.
 
 If no threads skill or native subagent capability is available, continue with
-the normal single-agent SpecRail flow and report that no native threads were
-launched.
+the normal single-agent SpecRail flow only after recording the fallback and
+reporting that no native threads were launched.
 
 ## Locale Behavior
 

@@ -117,6 +117,11 @@ requires review-thread, CI, merge-gate, or closure-audit handling, read
 `integrations/threads.md` after this startup flow and use an available threads
 skill for orchestration.
 
+For GitHub PR review or merge work, native reviewer or merge-reviewer dispatch
+is required when native subagent capability is available. Record
+`thread_dispatch_gate` and native thread evidence before claiming full threads
+execution or merge readiness.
+
 Keep the boundary clear:
 
 - SpecRail owns policy, locale, required artifacts, human gates, and
@@ -126,8 +131,8 @@ Keep the boundary clear:
 - Optional runtime checkpoints are local handoff artifacts only; they do not
   replace GitHub or SpecRail artifacts as workflow truth.
 - If no threads skill or native subagent capability is available, continue with
-  the single-agent SpecRail flow and report that no native threads were
-  launched.
+  the single-agent SpecRail flow only after recording the fallback and reporting
+  that no native threads were launched.
 
 ## Agent Boundaries
 
