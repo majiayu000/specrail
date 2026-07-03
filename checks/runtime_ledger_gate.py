@@ -19,6 +19,7 @@ from specrail_lib import SPEC_STATUSES
 
 
 MERGE_READY_STATES = {"complete", "merge_ready", "ready_to_merge", "merged"}
+PR_MERGE_STATES = {"merge_ready", "ready_to_merge", "merged"}
 PASSED_STATUSES = {"passed", "success", "successful", "green"}
 PENDING_STATUSES = {"pending", "running", "in_progress", "queued"}
 REVIEW_THREAD_CLEAN_STATUSES = {"clean", "resolved", "none", "passed"}
@@ -514,7 +515,9 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             if status in PASSED_STATUSES | {"failed"} and not evidence:
                 errors.append(f"{label}: verification {command!r} status {status} needs evidence")
 
-        merge_evidence_required = state in MERGE_READY_STATES and bool(raw_item.get("pr"))
+        merge_evidence_required = state in PR_MERGE_STATES or (
+            state == "complete" and bool(raw_item.get("pr"))
+        )
         if merge_evidence_required:
             if not thread_gate:
                 errors.append(f"{label}: merge-ready PR item requires thread_dispatch_gate")

@@ -239,6 +239,20 @@ def test_runtime_ledger_gate_blocks_merge_ready_without_thread_dispatch_gate() -
     assert any("thread_dispatch_gate" in error for error in result["errors"])
 
 
+def test_runtime_ledger_gate_blocks_pr_merge_states_without_pr_identifier() -> None:
+    for state in ["merge_ready", "ready_to_merge", "merged"]:
+        checkpoint = clean_checkpoint()
+        item = checkpoint["items"][0]  # type: ignore[index]
+        assert isinstance(item, dict)
+        item["state"] = state
+        item.pop("pr")
+
+        result = evaluate_checkpoint(checkpoint)
+
+        assert result["decision"] == "blocked"
+        assert any("requires pr" in error for error in result["errors"])
+
+
 def test_runtime_ledger_gate_blocks_native_required_without_native_reviewer() -> None:
     checkpoint = clean_checkpoint()
     item = checkpoint["items"][0]  # type: ignore[index]
