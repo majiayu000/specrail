@@ -61,6 +61,36 @@ canonical workflow state machine in `states.yaml`.
     "max_subagent_final_lines": 150,
     "artifact_root": "artifacts/logs/YYYY-MM-DD-repo-topic-t01"
   },
+  "thread_dispatch_gate": {
+    "explicit_thread_request": "yes",
+    "native_subagents": "available",
+    "spawn_requirement": "required",
+    "fallback_mode": "none",
+    "planned_native_threads": [
+      {
+        "id": "merge-reviewer-1",
+        "role": "merge_reviewer",
+        "target": "PR #0",
+        "write_scope": "read_only",
+        "spawn_status": "spawned",
+        "no_spawn_reason": null
+      }
+    ],
+    "native_thread_evidence": {
+      "spawned_agents": [
+        {
+          "lane_id": "merge-reviewer-1",
+          "spawn_tool": "multi_agent_v1.spawn_agent",
+          "agent_id_or_thread_id": "agent-or-thread-id",
+          "wait_evidence": "wait_agent completed",
+          "close_evidence": "close_agent completed",
+          "result_collected": "yes"
+        }
+      ],
+      "fallback_reason": null
+    },
+    "no_spawn_reason": null
+  },
   "items": [
     {
       "issue": null,
@@ -79,8 +109,10 @@ canonical workflow state machine in `states.yaml`.
       },
       "local_verification": [],
       "review": {
-        "reviewer_lane": null,
+        "reviewer_lane": "merge-reviewer-1",
+        "native_thread_id": "agent-or-thread-id",
         "status": "pending",
+        "evidence": "artifacts/reviews/YYYY-MM-DD-repo-topic-t01/merge-reviewer-1.json",
         "blocking_findings": []
       },
       "review_threads": {

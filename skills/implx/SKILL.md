@@ -1,6 +1,6 @@
 ---
 name: implx
-description: Use when the user says "implx", "use implx", "用 implx", "implx drain full queue", "implx resume full queue", or asks for the short SpecRail queue shortcut to process or drain a repository's approved-spec issue/PR queue with SpecRail implementation queue planning, optional threads orchestration, per-issue implementation PRs, review-thread and CI gates, merge authorization, and closure audit.
+description: Use when the user says "implx", "use implx", "用 implx", or asks for the one-line SpecRail queue shortcut. Plain implx means drain the full actionable issue/PR queue by default: run SpecRail preflight, create missing spec/task PR work before implementation, use threads for reviewer/merge-reviewer lanes when available, create per-issue implementation PRs, require CI/reviewThreads/pr_gate evidence, preserve human merge authorization, and perform closure audit.
 ---
 
 # Implx
@@ -25,19 +25,28 @@ orchestration, PR gate, and closure-audit rules live in
 2. Fetch current remote state before mapping a GitHub queue.
 3. List open issues, open PRs, current branch, dirty files, and worktrees.
 4. Map existing PRs before creating replacement PRs.
-5. Record whether the prompt authorizes a bounded tranche or a full queue drain.
+5. Record queue scope. Plain `implx`, `use implx`, or `用 implx` means full
+   actionable queue drain unless the prompt explicitly narrows the scope.
 
 ## Queue Mode
 
-Use `queue_mode: bounded_tranche` unless the user explicitly asks to drain or
-resume the full actionable queue.
+Use `queue_mode: full_queue_drain` for the plain shorthand:
 
-These prompts set `queue_mode: full_queue_drain`:
+- `implx`
+- `use implx`
+- `用 implx`
+
+These explicit forms are equivalent:
 
 - `implx drain full queue`
 - `implx resume full queue`
 - `用 implx 完成所有 actionable issues 和 PRs`
 - `用 implx 做完整队列`
+
+Use `queue_mode: bounded_tranche` only when the prompt explicitly limits scope,
+for example one issue, one PR, the current tranche, plan-only, status-only, or
+review-only work. Plain `implx` does not grant merge authorization; merge still
+requires explicit authorization in the current conversation.
 
 Pass the selected mode to `skills/specrail-implement-queue/SKILL.md`:
 
@@ -75,8 +84,15 @@ review-thread checks, merge gates, or closure audit, load
 `integrations/threads.md` and then follow the orchestration rules in
 `skills/specrail-implement-queue/SKILL.md`.
 
+For GitHub issue or PR queues, reviewer lanes, merge gates, and closure audit
+make native thread dispatch required whenever native subagent capability is
+available. Record `thread_dispatch_gate` before implementation, review, or
+merge work. A coordinator self-review is not a native thread and does not
+satisfy merge review.
+
 If no native threads capability is available, continue with the single-agent
-SpecRail flow and report that fallback.
+SpecRail flow only after recording the fallback and reporting that no native
+threads were launched.
 
 ## Boundaries
 
@@ -106,4 +122,8 @@ implx_handoff:
     current_branch:
     dirty_files:
   focused_handoff:
+  thread_dispatch_gate:
+    native_subagents:
+    spawn_requirement:
+    native_thread_evidence:
 ```

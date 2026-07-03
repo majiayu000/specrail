@@ -101,14 +101,14 @@ specrail_implementation_queue:
   stop_policy:
 ```
 
-For broad queues, always execute as bounded tranches. If the user or calling
-skill says `implx drain full queue`, `implx resume full queue`, or otherwise
-explicitly asks to finish all actionable issues/PRs, set
-`queue_mode: full_queue_drain`. In that mode, choose the smallest mergeable
-current tranche, checkpoint it, then continue selecting new implementation,
-spec-writing, or task-planning tranches until the queue is drained or every
-remaining item is explicitly blocked, deferred, waiting on CI, or needs human
-input.
+For broad queues, always execute as bounded tranches. If the calling skill is
+`implx`, or the user otherwise asks to finish actionable issues/PRs, set
+`queue_mode: full_queue_drain` unless the prompt explicitly limits scope to one
+issue, one PR, the current tranche, plan-only, status-only, or review-only work.
+In that mode, choose the smallest mergeable current tranche, checkpoint it, then
+continue selecting new implementation, spec-writing, or task-planning tranches
+until the queue is drained or every remaining item is explicitly blocked,
+deferred, waiting on CI, or needs human input.
 
 A blocked or waiting current tranche does not stop full-queue drain. After
 checkpointing that tranche, refresh remote truth and look for an independent
@@ -125,8 +125,31 @@ Use `integrations/threads.md` and an available threads skill when the queue need
 parallel lanes, disjoint writable ownership, review-thread checks, CI polling,
 merge gates, or closure audit.
 
+For GitHub issue or PR queues, merge gates, reviewer lanes, and closure audit,
+native thread dispatch is required whenever native subagent capability is
+available. Before implementation, review, push, comment, or merge work, record:
+
+```yaml
+thread_dispatch_gate:
+  explicit_thread_request:
+  native_subagents:
+  spawn_requirement:
+  fallback_mode:
+  planned_native_threads:
+  native_thread_evidence:
+    spawned_agents:
+  no_spawn_reason:
+```
+
+If native subagents are available and `spawn_requirement: required`, spawn the
+planned bounded native lanes before claiming threads were used. For PR merge
+work, at least one read-only `reviewer` or `merge_reviewer` lane must be a real
+native thread with recorded `agent_id_or_thread_id`, wait evidence, close
+evidence, and collected output. The coordinator lane is not a reviewer thread.
+
 If threads is unavailable, continue with the normal single-agent SpecRail flow
-and report that no native threads were launched.
+only after recording `fallback_mode: single_agent` and the reason; report that
+no native threads were launched.
 
 Keep ownership boundaries explicit:
 
@@ -244,10 +267,18 @@ For GitHub PRs, current evidence must include:
 - PR head SHA
 - CI/check rollup
 - review decision when available
+- independent reviewer or merge-reviewer lane evidence
+- native reviewer thread evidence when native subagents are available
 - GraphQL review-thread state
 - merge state
 - linked issue or closing reference intent
 - explicit human merge authorization before merge
+
+The runtime checkpoint must not mark a PR item `complete`, `merged`,
+`merge_ready`, or `ready_to_merge` unless `checks/runtime_ledger_gate.py` accepts
+the checkpoint. When the gate is evaluating a merged or merge-ready PR, local
+`pr_gate.evidence` must exist and either be an allowed PR gate result JSON or a
+raw PR evidence JSON that re-evaluates to `allowed`.
 
 ## Boundaries
 

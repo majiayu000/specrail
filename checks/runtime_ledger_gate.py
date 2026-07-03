@@ -14,10 +14,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pr_gate import evaluate_pr_gate
 from specrail_lib import SPEC_STATUSES
 
 
-MERGE_READY_STATES = {"merge_ready", "ready_to_merge", "merged"}
+MERGE_READY_STATES = {"complete", "merge_ready", "ready_to_merge", "merged"}
+PR_MERGE_STATES = {"merge_ready", "ready_to_merge", "merged"}
 PASSED_STATUSES = {"passed", "success", "successful", "green"}
 PENDING_STATUSES = {"pending", "running", "in_progress", "queued"}
 REVIEW_THREAD_CLEAN_STATUSES = {"clean", "resolved", "none", "passed"}
@@ -51,6 +53,9 @@ SPEC_PLANNING_STATES = {
     "deferred",
     "needs_human",
 }
+THREAD_YES_VALUES = {"yes", "true", "required", "available"}
+THREAD_REQUIRED_VALUES = {"required", "yes", "true"}
+THREAD_AVAILABLE_VALUES = {"available", "yes", "true"}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -103,6 +108,184 @@ def _require_nonempty_string(
         errors.append(f"{label}.{key} must be a non-empty string")
         return ""
     return value
+
+
+def _is_yes(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in THREAD_YES_VALUES
+    return False
+
+
+def _is_required(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in THREAD_REQUIRED_VALUES
+    return False
+
+
+def _is_available(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in THREAD_AVAILABLE_VALUES
+    return False
+
+
+def _is_url(value: str) -> bool:
+    return value.startswith("https://") or value.startswith("http://")
+
+
+def _resolve_local_evidence_path(reference: Any) -> Path | None:
+    if not isinstance(reference, str) or not reference.strip() or _is_url(reference.strip()):
+        return None
+    return Path(reference.strip()).expanduser()
+
+
+def _load_local_json(path: Path, label: str, errors: list[str]) -> dict[str, Any] | None:
+    if not path.is_file():
+        errors.append(f"{label}: evidence file does not exist: {path}")
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        errors.append(f"{label}: cannot read evidence file {path}: {exc}")
+        return None
+    except json.JSONDecodeError as exc:
+        errors.append(f"{label}: evidence file is not valid JSON {path}: {exc.msg}")
+        return None
+    if not isinstance(payload, dict):
+        errors.append(f"{label}: evidence file JSON must be an object: {path}")
+        return None
+    return payload
+
+
+def _validate_pr_gate_artifact(
+    raw_item: dict[str, Any],
+    evidence: Any,
+    label: str,
+    errors: list[str],
+) -> None:
+    path = _resolve_local_evidence_path(evidence)
+    if path is None:
+        return
+    payload = _load_local_json(path, f"{label}: pr_gate", errors)
+    if payload is None:
+        return
+
+    if "decision" in payload:
+        result = payload
+    else:
+        result = evaluate_pr_gate(payload)
+
+    if result.get("decision") != "allowed":
+        reasons = result.get("reasons")
+        detail = f": {reasons}" if reasons else ""
+        errors.append(f"{label}: pr_gate evidence decision must be allowed{detail}")
+
+    item_pr = raw_item.get("pr")
+    if item_pr and result.get("pr") and result.get("pr") != item_pr:
+        errors.append(f"{label}: pr_gate evidence pr must match item pr")
+
+    item_head = raw_item.get("head_sha")
+    if item_head and result.get("head_sha") and result.get("head_sha") != item_head:
+        errors.append(f"{label}: pr_gate evidence head_sha must match item head_sha")
+
+
+def _thread_dispatch_gate(data: dict[str, Any]) -> dict[str, Any]:
+    gate = data.get("thread_dispatch_gate")
+    if isinstance(gate, dict):
+        return gate
+    return {}
+
+
+def _spawned_agents(gate: dict[str, Any]) -> list[dict[str, Any]]:
+    evidence = gate.get("native_thread_evidence")
+    if not isinstance(evidence, dict):
+        return []
+    agents = evidence.get("spawned_agents")
+    if not isinstance(agents, list):
+        return []
+    return [agent for agent in agents if isinstance(agent, dict)]
+
+
+def _native_threads_required(gate: dict[str, Any]) -> bool:
+    return (
+        _is_available(gate.get("native_subagents"))
+        and _is_required(gate.get("spawn_requirement"))
+    )
+
+
+def _validate_thread_dispatch_gate(
+    data: dict[str, Any],
+    errors: list[str],
+) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
+    gate = _thread_dispatch_gate(data)
+    if not gate:
+        return {}, [], False
+
+    spawned_agents = _spawned_agents(gate)
+    native_required = _native_threads_required(gate)
+    if native_required and not spawned_agents:
+        errors.append(
+            "thread_dispatch_gate: native subagents are available and required, "
+            "but native_thread_evidence.spawned_agents is empty"
+        )
+
+    fallback_mode = str(gate.get("fallback_mode") or "").lower()
+    if native_required and fallback_mode == "single_agent":
+        errors.append(
+            "thread_dispatch_gate: single_agent fallback is invalid when native "
+            "subagents are available and spawn_requirement is required"
+        )
+
+    if _is_yes(gate.get("explicit_thread_request")) and native_required:
+        for index, lane in enumerate(gate.get("planned_native_threads") or [], start=1):
+            if not isinstance(lane, dict):
+                errors.append(
+                    f"thread_dispatch_gate: planned_native_threads #{index} "
+                    "must be an object"
+                )
+                continue
+            if lane.get("spawn_status") == "skipped" and not lane.get("no_spawn_reason"):
+                errors.append(
+                    f"thread_dispatch_gate: planned_native_threads #{index} skipped "
+                    "without no_spawn_reason"
+                )
+
+    return gate, spawned_agents, native_required
+
+
+def _validate_native_review_evidence(
+    review: dict[str, Any],
+    spawned_agents: list[dict[str, Any]],
+    label: str,
+    errors: list[str],
+) -> None:
+    reviewer_lane = review.get("reviewer_lane")
+    native_thread_id = review.get("native_thread_id") or review.get(
+        "agent_id_or_thread_id"
+    )
+    if not isinstance(native_thread_id, str) or not native_thread_id.strip():
+        errors.append(f"{label}: native reviewer requires native_thread_id")
+        return
+
+    for agent in spawned_agents:
+        if (
+            agent.get("lane_id") == reviewer_lane
+            or agent.get("agent_id_or_thread_id") == native_thread_id
+        ):
+            if not agent.get("wait_evidence"):
+                errors.append(f"{label}: native reviewer thread missing wait_evidence")
+            if not agent.get("close_evidence"):
+                errors.append(f"{label}: native reviewer thread missing close_evidence")
+            if str(agent.get("result_collected") or "").lower() not in {"yes", "true"}:
+                errors.append(f"{label}: native reviewer thread result_collected must be yes")
+            return
+
+    errors.append(f"{label}: native reviewer thread is not listed in spawned_agents")
 
 
 def _validate_goal_candidate(data: dict[str, Any], errors: list[str]) -> None:
@@ -242,6 +425,7 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
     _validate_goal_candidate(data, errors)
     _validate_full_queue_checkpoint(data, errors, warnings)
     queue_mode = data.get("queue_mode")
+    thread_gate, spawned_agents, native_required = _validate_thread_dispatch_gate(data, errors)
 
     context_budget = _require_mapping(data, "context_budget", errors)
     _require_positive_int(context_budget, "window_tokens", "context_budget", errors)
@@ -331,7 +515,12 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             if status in PASSED_STATUSES | {"failed"} and not evidence:
                 errors.append(f"{label}: verification {command!r} status {status} needs evidence")
 
-        if state in MERGE_READY_STATES:
+        merge_evidence_required = state in PR_MERGE_STATES or (
+            state == "complete" and bool(raw_item.get("pr"))
+        )
+        if merge_evidence_required:
+            if not thread_gate:
+                errors.append(f"{label}: merge-ready PR item requires thread_dispatch_gate")
             if raw_item.get("truth_level") != "A":
                 errors.append(f"{label}: merge-ready state requires truth_level A")
             if not raw_item.get("pr"):
@@ -350,9 +539,15 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             review_status = str(review.get("status") or "").lower()
             if review_status not in {"passed", "approved", "clean"}:
                 errors.append(f"{label}: merge-ready state requires passed independent review")
+            if not review.get("reviewer_lane"):
+                errors.append(f"{label}: merge-ready state requires reviewer_lane")
+            if not review.get("evidence"):
+                errors.append(f"{label}: merge-ready state requires review evidence")
             blocking_findings = review.get("blocking_findings", [])
             if blocking_findings:
                 errors.append(f"{label}: merge-ready state has blocking review findings")
+            if native_required:
+                _validate_native_review_evidence(review, spawned_agents, label, errors)
 
             review_threads = (
                 raw_item.get("review_threads")
@@ -375,6 +570,8 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
                 errors.append(f"{label}: merge-ready state requires passed pr_gate status")
             if not pr_gate.get("evidence"):
                 errors.append(f"{label}: merge-ready state requires pr_gate evidence")
+            else:
+                _validate_pr_gate_artifact(raw_item, pr_gate.get("evidence"), label, errors)
             if not pr_gate.get("checked_at"):
                 errors.append(f"{label}: merge-ready state requires pr_gate checked_at")
             if pr_gate.get("head_sha") != head_sha:

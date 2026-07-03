@@ -10,7 +10,8 @@ review gates, or closure audits.
 - SpecRail is the policy and artifact layer.
 - Threads is the optional execution layer.
 - SpecRail checks run before thread dispatch and again before completion.
-- Missing thread support falls back to the normal single-agent SpecRail flow.
+- Missing thread support falls back to the normal single-agent SpecRail flow
+  only after the fallback and reason are recorded.
 - Stable machine-facing IDs stay unchanged across integrations and locales.
 - Large logs and raw tool output are artifacts, not parent-thread state.
 
@@ -38,6 +39,8 @@ any task where all writable files overlap.
 2. If the task needs queue or parallel orchestration, load the threads skill.
 3. Run the threads capability and queue gates.
    - Confirm whether native subagents are available.
+   - Record `thread_dispatch_gate` before implementation, review, push, or
+     merge work.
    - Fetch remote truth for GitHub queues.
    - Map issues to existing PRs before opening new work.
    - Build a lane map with disjoint writable files.
@@ -55,6 +58,12 @@ any task where all writable files overlap.
    - Re-check PR heads, CI, review threads, merge state, and issue closure.
    - Separate remote truth from local worktree state.
 
+For GitHub PR merge work, native thread dispatch is mandatory when native
+subagents are available. A PR must have at least one independent read-only
+`reviewer` or `merge_reviewer` native lane before merge readiness can be
+reported. The coordinator lane is not a native reviewer, even when it performs
+the final synthesis.
+
 ## Handoff Contract
 
 Agents should record this block when both systems are active:
@@ -71,6 +80,7 @@ specrail_threads_handoff:
   threads:
     mode:
     truth_level:
+    thread_dispatch_gate:
     queue_ledger:
     issue_to_pr_map:
     lanes:
@@ -106,6 +116,7 @@ Threads owns the orchestration side:
 - queue ledger
 - lane map and writable ownership
 - read-only planner and reviewer lanes
+- native reviewer or merge-reviewer evidence when merge work is in scope
 - CI polling and review-thread checks
 - closure audit after PR or issue state changes
 - parent context budget and output firewall enforcement
@@ -124,6 +135,8 @@ specrail_implementation_queue:
   orchestration:
     threads_mode:
     lanes:
+    thread_dispatch_gate:
+    native_thread_evidence:
     fallback_reason:
     context_budget:
     output_firewall:
@@ -184,6 +197,11 @@ If no threads skill or native subagent capability is available, the agent should
 continue with the normal SpecRail flow and say that no native threads were
 launched. If the user explicitly requested threads, the agent may provide a
 prompt pack and lane map instead of pretending parallel execution happened.
+
+If native subagents are available and the work includes PR review or merge, do
+not use single-agent fallback unless the user explicitly forbids spawning or the
+checkpoint records a concrete `no_spawn_reason` that makes native dispatch
+unsafe. Such a fallback cannot be reported as full threads execution.
 
 ## Non-Goals
 

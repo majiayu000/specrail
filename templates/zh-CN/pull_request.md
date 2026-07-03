@@ -24,6 +24,7 @@
 - [ ] 已记录 PR head SHA。
 - [ ] CI/check rollup 已完成且通过。
 - [ ] 已检查 review threads，未解决的 actionable threads 已处理。
+- [ ] native threads 可用时，已记录独立 reviewer 或 merge-reviewer lane evidence。
 - [ ] merge state 为 clean。
 - [ ] merge 前已记录 human merge authorization。
 - [ ] `python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --json > pr-evidence.json` 结果：
