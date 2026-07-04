@@ -25,6 +25,9 @@ PENDING_STATUSES = {"pending", "running", "in_progress", "queued"}
 REVIEW_THREAD_CLEAN_STATUSES = {"clean", "resolved", "none", "passed"}
 PR_GATE_PASSED_STATUSES = {"passed", "allowed", "clean", "success", "green"}
 MERGE_STATE_CLEAN_STATUSES = {"clean", "mergeable"}
+REVIEW_SOURCES = {"independent_lane", "self_review"}
+LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
+LANE_FAILURE_BLOCKED_REASON = "reviewer_lane_failure"
 CHECKPOINT_STATUSES = {"planning", "running", "blocked", "handoff", "complete"}
 FULL_QUEUE_NON_DRAINED_STATES = {
     "needs_spec",
@@ -297,38 +300,71 @@ def _validate_native_review_evidence(
     errors.append(f"{label}: native reviewer thread is not listed in spawned_agents")
 
 
+def _nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _item_review(raw_item: dict[str, Any]) -> dict[str, Any]:
+    review = raw_item.get("review")
+    return review if isinstance(review, dict) else {}
+
+
+def _item_review_source(raw_item: dict[str, Any]) -> str:
+    review = _item_review(raw_item)
+    for value in [review.get("review_source"), raw_item.get("review_source")]:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _validate_self_review_authorization(
+    raw_item: dict[str, Any],
+    label: str,
+    errors: list[str],
+) -> None:
+    value = raw_item.get("self_review_authorization")
+    if not isinstance(value, dict):
+        errors.append(f"{label}: self_review requires self_review_authorization")
+        return
+    for key in ["scope", "conversation_marker"]:
+        if not _nonempty_string(value.get(key)):
+            errors.append(f"{label}: self_review_authorization.{key} is required")
+
+
 def _validate_lane_failures(
     raw_item: dict[str, Any],
     label: str,
     errors: list[str],
 ) -> list[str]:
-    lane_failures = raw_item.get("lane_failures")
-    if lane_failures is None:
+    value = raw_item.get("lane_failures")
+    if value is None:
         return []
-    if not isinstance(lane_failures, list):
+    if not isinstance(value, list):
         errors.append(f"{label}: lane_failures must be a list")
         return []
 
     failed_lane_ids: list[str] = []
-    for index, failure in enumerate(lane_failures, start=1):
+    for index, failure in enumerate(value, start=1):
         if not isinstance(failure, dict):
-            errors.append(f"{label}: lane_failures #{index} must be an object")
+            errors.append(f"{label}: lane_failures[{index}] must be an object")
             continue
         lane_id = failure.get("lane_id")
         if not isinstance(lane_id, str) or not lane_id.strip():
-            errors.append(f"{label}: lane_failures #{index} requires lane_id")
+            errors.append(f"{label}: lane_failures[{index}].lane_id is required")
         else:
             failed_lane_ids.append(lane_id.strip())
         failure_kind = failure.get("failure_kind")
         if not isinstance(failure_kind, str) or failure_kind not in LANE_FAILURE_KINDS:
             allowed = ", ".join(sorted(LANE_FAILURE_KINDS))
             errors.append(
-                f"{label}: lane_failures #{index} failure_kind must be one of: {allowed}"
+                f"{label}: lane_failures[{index}].failure_kind must be one of: {allowed}"
             )
         elif failure_kind == "other" and not failure.get("detail"):
             errors.append(
-                f"{label}: lane_failures #{index} failure_kind other requires detail"
+                f"{label}: lane_failures[{index}].failure_kind other requires detail"
             )
+        if not _nonempty_string(failure.get("observed_marker")):
+            errors.append(f"{label}: lane_failures[{index}].observed_marker is required")
     return failed_lane_ids
 
 
@@ -349,6 +385,15 @@ def _has_successful_retry_lane(
     return reviewer_lane.strip() not in failed_lane_ids
 
 
+def _has_self_review_authorization(raw_item: dict[str, Any]) -> bool:
+    authorization = raw_item.get("self_review_authorization")
+    return (
+        isinstance(authorization, dict)
+        and _nonempty_string(authorization.get("scope"))
+        and _nonempty_string(authorization.get("conversation_marker"))
+    )
+
+
 def _validate_lane_failure_outcome(
     raw_item: dict[str, Any],
     state: str,
@@ -362,10 +407,14 @@ def _validate_lane_failure_outcome(
 
     state_key = state.lower()
     if state_key in LANE_FAILURE_DOWNGRADE_STATES:
-        if not raw_item.get("blocked_reason"):
+        if raw_item.get("blocked_reason") != LANE_FAILURE_BLOCKED_REASON:
             errors.append(
-                f"{label}: lane failure downgrade requires blocked_reason"
+                f"{label}: lane failure downgrade requires blocked_reason "
+                f"{LANE_FAILURE_BLOCKED_REASON}"
             )
+        return
+
+    if _item_review_source(raw_item) == "self_review" and _has_self_review_authorization(raw_item):
         return
 
     if not _has_successful_retry_lane(raw_item, failed_lane_ids):
@@ -373,26 +422,6 @@ def _validate_lane_failure_outcome(
             f"{label}: reviewer lane failure requires state downgrade to "
             "blocked/needs_human or a successful independent retry lane"
         )
-
-
-def _validate_self_review_authorization(
-    raw_item: dict[str, Any],
-    label: str,
-    errors: list[str],
-) -> None:
-    authorization = raw_item.get("self_review_authorization")
-    if not isinstance(authorization, dict):
-        errors.append(
-            f"{label}: review_source self_review requires "
-            "self_review_authorization with quoted scope and conversation marker"
-        )
-        return
-    for key in ["scope", "conversation_marker"]:
-        value = authorization.get(key)
-        if not isinstance(value, str) or not value.strip():
-            errors.append(
-                f"{label}: self_review_authorization.{key} must be a non-empty string"
-            )
 
 
 def _validate_budget(
@@ -838,12 +867,6 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
 
             review = raw_item.get("review") if isinstance(raw_item.get("review"), dict) else {}
             review_status = str(review.get("status") or "").lower()
-            if review_status not in {"passed", "approved", "clean"}:
-                errors.append(f"{label}: merge-ready state requires passed independent review")
-            if not review.get("reviewer_lane"):
-                errors.append(f"{label}: merge-ready state requires reviewer_lane")
-            if not review.get("evidence"):
-                errors.append(f"{label}: merge-ready state requires review evidence")
             blocking_findings = review.get("blocking_findings", [])
             if blocking_findings:
                 errors.append(f"{label}: merge-ready state has blocking review findings")
@@ -858,6 +881,15 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             elif review_source == "self_review":
                 _validate_self_review_authorization(raw_item, label, errors)
 
+            if review_status not in {"passed", "approved", "clean"}:
+                if review_source == "self_review":
+                    errors.append(f"{label}: self_review merge requires passed self-review evidence")
+                else:
+                    errors.append(f"{label}: merge-ready state requires passed independent review")
+            if not review.get("evidence"):
+                errors.append(f"{label}: merge-ready state requires review evidence")
+            if review_source != "self_review" and not review.get("reviewer_lane"):
+                errors.append(f"{label}: merge-ready state requires reviewer_lane")
             if native_required and review_source != "self_review":
                 _validate_native_review_evidence(review, spawned_agents, label, errors)
 

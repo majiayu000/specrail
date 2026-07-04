@@ -12,7 +12,7 @@ Use this skill before saying a PR is merge-ready.
 1. Collect current PR evidence. Prefer the read-only adapter when available:
 
 ```sh
-python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --json > <evidence.json>
+python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --review-source independent_lane --json > <evidence.json>
 ```
 
 2. Run the offline gate:
@@ -23,7 +23,8 @@ python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
 
 3. Confirm evidence includes linked issue, current PR head SHA, gate-query
    completion timestamp, gate-query head SHA, CI/check rollup, review decision,
-   review-thread resolution, merge state, and human merge authorization.
+   review source, lane failures, review-thread resolution, merge state, and human
+   merge authorization.
 4. Interpret decisions precisely:
    - `allowed`: evidence satisfies the local merge-readiness policy.
    - `needs_human`: deterministic evidence passed, but a human gate is missing.
@@ -41,8 +42,21 @@ Required evidence:
 
 - `gate_query_completed_at`: when the current gate query finished.
 - `gate_query_head_sha`: the head SHA observed by that gate query.
+- `review_source`: `independent_lane` for a real reviewer/merge-reviewer lane,
+  or `self_review` when a lane failure was reported and self-review was
+  explicitly authorized.
+- `lane_failures`: an array, empty when no reviewer lane failed.
 - `merge_dispatched_at` and `merge_head_sha` when auditing a merge record after
   dispatch.
+
+If `review_source` is `self_review`, evidence must include
+`self_review_authorization` with actor, source, and scope from the current
+conversation after the lane failure was reported. General queue-drain or merge
+authorization does not satisfy this self-review exception.
+
+GitHub exposes `resolvedBy` for review threads, but not the SpecRail lane role.
+When resolved threads exist, pass lane-roster evidence through
+`--resolver-role-map` so resolver logins can be mapped to `resolver_role`.
 
 If the PR head changes, new review activity appears, CI changes, or merge is
 deferred long enough that the evidence may be stale, collect fresh PR evidence

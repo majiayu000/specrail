@@ -1,6 +1,8 @@
 {
   "checkpoint_version": 1,
+  "tranche_id": "2026-07-04-self-review-merged-t01",
   "repo": "example/repo",
+  "scope": "orchestrator merged after reviewing its own diff without authorization",
   "status": "handoff",
   "context_budget": {
     "window_tokens": 258400,
@@ -14,9 +16,6 @@
     "max_subagent_final_lines": 150,
     "artifact_root": "artifacts/logs/lane-failure-example"
   },
-  "resume_prompt": "Read this checkpoint and refresh remote truth.",
-  "tranche_id": "2026-07-04-self-review-merged-t01",
-  "scope": "orchestrator merged after reviewing its own diff without authorization",
   "thread_dispatch_gate": {
     "explicit_thread_request": "yes",
     "native_subagents": "unavailable",
@@ -35,6 +34,13 @@
       "state": "merged",
       "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
       "truth_level": "A",
+      "lane_failures": [
+        {
+          "lane_id": "merge-reviewer-1",
+          "failure_kind": "usage_limit",
+          "observed_marker": "usage limit reached mid-review"
+        }
+      ],
       "ci": {
         "status": "green",
         "evidence": "artifacts/logs/t01/ci-summary.md"
@@ -66,5 +72,6 @@
       },
       "next_action": "closure audit"
     }
-  ]
+  ],
+  "resume_prompt": "Read this checkpoint and refresh remote truth."
 }

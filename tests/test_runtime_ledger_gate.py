@@ -94,6 +94,8 @@ def clean_checkpoint() -> dict[str, object]:
                 "worktree": "/tmp/example",
                 "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
                 "truth_level": "A",
+                "review_source": "independent_lane",
+                "lane_failures": [],
                 "ci": {
                     "status": "green",
                     "evidence": "artifacts/logs/t01/ci-summary.md",
@@ -216,6 +218,64 @@ def test_runtime_ledger_gate_allows_complete_merge_ready_checkpoint() -> None:
 
     assert result["decision"] == "allowed"
     assert result["errors"] == []
+
+
+def test_runtime_ledger_gate_allows_blocked_lane_failure_checkpoint() -> None:
+    fixture = ROOT / "examples" / "fixtures" / "runtime-lane-failure-blocked.json"
+    checkpoint = json.loads(fixture.read_text(encoding="utf-8"))
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "allowed"
+    assert result["errors"] == []
+
+
+def test_runtime_ledger_gate_allows_independent_retry_after_lane_failure() -> None:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["lane_failures"] = [
+        {
+            "lane_id": "merge-reviewer-0",
+            "failure_kind": "usage_limit",
+            "observed_marker": "You've hit your usage limit",
+        }
+    ]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "allowed"
+    assert result["errors"] == []
+
+
+def test_runtime_ledger_gate_blocks_self_review_merged_without_authorization() -> None:
+    fixture = ROOT / "examples" / "fixtures" / "runtime-self-review-merged-unauthorized.json"
+    checkpoint = json.loads(fixture.read_text(encoding="utf-8"))
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("self_review_authorization" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_lane_failure_without_downgrade_or_retry() -> None:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["state"] = "running"
+    item["review_source"] = "self_review"
+    item["lane_failures"] = [
+        {
+            "lane_id": "merge-reviewer-1",
+            "failure_kind": "usage_limit",
+            "observed_marker": "You've hit your usage limit",
+        }
+    ]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("reviewer lane failure requires" in error for error in result["errors"])
 
 
 def test_runtime_ledger_gate_blocks_merge_ready_without_authorization() -> None:

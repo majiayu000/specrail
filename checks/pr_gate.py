@@ -22,6 +22,8 @@ ALLOWED_RESOLVER_ROLES = {"reviewer_lane", "human"}
 INDEPENDENT_REVIEW_SOURCES = {"independent_lane"}
 KNOWN_REVIEW_SOURCES = {"independent_lane", "self_review"}
 BLOCKED_RESOLVER_ROLES = {"implementer", "orchestrator", "coordinator", "unknown"}
+REVIEW_SOURCES = {"independent_lane", "self_review"}
+LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
 
 
 def _as_bool(value: Any) -> bool:
@@ -188,6 +190,81 @@ def _authorization_item(evidence: dict[str, Any]) -> tuple[list[str], list[str]]
     return [f"human authorization from {authorization['actor']} via {authorization['source']}"], []
 
 
+def _self_review_authorization_item(evidence: dict[str, Any]) -> tuple[list[str], list[str]]:
+    authorization = evidence.get("self_review_authorization")
+    if not isinstance(authorization, dict):
+        return [], ["self_review_authorization"]
+    missing = []
+    for key in ["actor", "source", "scope"]:
+        if not _non_empty_string(authorization.get(key)):
+            missing.append(f"self_review_authorization.{key}")
+    if missing:
+        return [], missing
+    return [
+        "self-review authorization from "
+        f"{authorization['actor']} via {authorization['source']}"
+    ], []
+
+
+def _review_source_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    satisfied: list[str] = []
+    missing: list[str] = []
+    reasons: list[str] = []
+
+    source = evidence.get("review_source")
+    if not _non_empty_string(source):
+        missing.append("review_source")
+        reasons.append("review_source evidence is missing")
+        return satisfied, missing, reasons
+
+    normalized = str(source).strip()
+    if normalized not in REVIEW_SOURCES:
+        allowed = ", ".join(sorted(REVIEW_SOURCES))
+        reasons.append(f"review_source must be one of: {allowed}")
+        return satisfied, missing, reasons
+
+    if normalized == "independent_lane":
+        satisfied.append("review_source: independent_lane")
+        return satisfied, missing, reasons
+
+    auth_satisfied, auth_missing = _self_review_authorization_item(evidence)
+    satisfied.append("review_source: self_review")
+    satisfied.extend(auth_satisfied)
+    missing.extend(auth_missing)
+    if auth_missing:
+        reasons.append("self_review requires explicit self_review_authorization")
+    return satisfied, missing, reasons
+
+
+def _lane_failure_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    satisfied: list[str] = []
+    missing: list[str] = []
+    reasons: list[str] = []
+
+    failures = evidence.get("lane_failures")
+    if not isinstance(failures, list):
+        missing.append("lane_failures")
+        reasons.append("lane_failures must be a list")
+        return satisfied, missing, reasons
+
+    for index, failure in enumerate(failures, start=1):
+        if not isinstance(failure, dict):
+            reasons.append(f"lane_failures[{index}] must be an object")
+            continue
+        for key in ["lane_id", "failure_kind", "observed_marker"]:
+            if not _non_empty_string(failure.get(key)):
+                missing.append(f"lane_failures[{index}].{key}")
+        kind = str(failure.get("failure_kind") or "").strip()
+        if kind and kind not in LANE_FAILURE_KINDS:
+            reasons.append(f"lane_failures[{index}].failure_kind is unsupported: {kind}")
+
+    if failures:
+        satisfied.append(f"lane failures recorded: {len(failures)}")
+    else:
+        satisfied.append("no lane failures recorded")
+    return satisfied, missing, reasons
+
+
 def _ordering_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
     satisfied: list[str] = []
     missing: list[str] = []
@@ -301,6 +378,12 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
         missing.extend(checker_missing)
         reasons.extend(checker_reasons)
 
+    for checker in [_review_source_items, _lane_failure_items]:
+        checker_satisfied, checker_missing, checker_reasons = checker(evidence)
+        satisfied.extend(checker_satisfied)
+        missing.extend(checker_missing)
+        reasons.extend(checker_reasons)
+
     ordering_satisfied, ordering_missing, ordering_reasons = _ordering_items(evidence)
     satisfied.extend(ordering_satisfied)
     missing.extend(ordering_missing)
@@ -329,6 +412,7 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
         "pr": evidence.get("pr"),
         "linked_issue": evidence.get("linked_issue"),
         "head_sha": evidence.get("head_sha"),
+        "review_source": evidence.get("review_source"),
         "gate_query_completed_at": evidence.get("gate_query_completed_at"),
         "gate_query_head_sha": evidence.get("gate_query_head_sha"),
         "reasons": sorted(set(reasons)),
