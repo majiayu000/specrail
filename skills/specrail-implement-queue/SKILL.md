@@ -169,6 +169,15 @@ Keep ownership boundaries explicit:
 - shared verification belongs to one coordinator
 - dependent specs run serially
 
+Reviewer lane input is scoped: the diff (or diff since the previously
+reviewed head), the linked spec packet, and the prior-findings checklist.
+Never forward coordinator conversation history into a reviewer lane. For
+re-review after fixes, resume or message the existing reviewer lane first;
+if the runtime cannot resume, spawn a `diff_only` lane instead of a new
+full-history fork. Full reviews are capped at 2 rounds per PR unless a human
+explicitly requests another full pass (see Review Rounds And Modes in
+`skills/specrail-review-pr/SKILL.md`).
+
 ## Context Budget
 
 For long queues, record a parent context budget before spawning lanes:

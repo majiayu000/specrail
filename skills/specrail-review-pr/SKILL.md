@@ -36,6 +36,23 @@ python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-num
 8. If merge readiness is requested, route to
    `skills/specrail-pr-gate/SKILL.md`.
 
+## Review Rounds And Modes
+
+Record `review_round` and `review_mode` in the review result JSON:
+
+- `full`: the whole PR is reviewed. Allowed for rounds 1-2. A full review
+  past round 2 requires a quoted `human_full_review_request`; otherwise
+  `checks/review_json_gate.py` blocks it.
+- `resumed`: the same reviewer lane continues with its prior context and
+  re-checks its earlier findings.
+- `diff_only`: a fresh pass over only the changes since `base_head_sha`
+  (the head reviewed in the prior round; required field).
+
+`resumed` and `diff_only` rounds require `review_round >= 2` and a
+`prior_findings[]` checklist where every prior finding carries a status
+(`resolved` | `unresolved` | `obsolete`). Record `pr` and `head_sha` as the
+grouping key so rounds for the same PR can be ordered.
+
 ## Thread Resolution Ownership
 
 Reviewer lanes may resolve review threads only after re-checking that the
