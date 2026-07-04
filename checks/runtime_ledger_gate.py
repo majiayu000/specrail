@@ -565,8 +565,18 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             if merge_state not in MERGE_STATE_CLEAN_STATUSES:
                 errors.append(f"{label}: merge-ready state requires fresh clean merge_state")
 
-            if not raw_item.get("merge_authorization"):
+            merge_authorization = raw_item.get("merge_authorization")
+            if not merge_authorization:
                 errors.append(f"{label}: merge-ready state requires explicit merge_authorization")
+            elif not isinstance(merge_authorization, dict):
+                errors.append(f"{label}: merge_authorization must be an object")
+            else:
+                for key in ["actor", "source"]:
+                    value = merge_authorization.get(key)
+                    if not isinstance(value, str) or not value.strip():
+                        errors.append(
+                            f"{label}: merge_authorization.{key} must be a non-empty string"
+                        )
 
         blocker = raw_item.get("blocker")
         if blocker and state in {"complete", "merged"}:

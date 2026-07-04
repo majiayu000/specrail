@@ -150,3 +150,19 @@ def test_cli_uses_fake_gh_and_git_without_network(
     assert evidence["issue"] == 55
     assert evidence["open_prs"][0]["references_issue"] is True
     assert evidence["remote_branches"] == ["codex/gh55-existing"]
+
+
+def test_references_issue_matches_cross_repo_shorthand() -> None:
+    assert references_issue_text("duplicate of majiayu000/remem#664", 664)
+
+
+def test_references_issue_matches_copied_issue_url() -> None:
+    assert references_issue_text(
+        "see https://github.com/majiayu000/remem/issues/664 for context", 664
+    )
+
+
+def test_references_issue_url_does_not_match_prefix_number() -> None:
+    assert not references_issue_text(
+        "see https://github.com/majiayu000/remem/issues/6640", 664
+    )
