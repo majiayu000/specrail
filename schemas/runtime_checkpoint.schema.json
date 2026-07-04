@@ -368,8 +368,54 @@
               "native_thread_id": {
                 "type": ["string", "null"]
               },
+              "review_source": {
+                "enum": ["independent_lane", "self_review", null],
+                "description": "Where the passing review came from. self_review never satisfies the independent-review requirement without explicit self_review_authorization."
+              },
               "evidence": {
                 "type": ["string", "null"]
+              }
+            }
+          },
+          "lane_failures": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "object",
+              "required": ["lane_id", "failure_kind"],
+              "additionalProperties": true,
+              "properties": {
+                "lane_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "failure_kind": {
+                  "enum": ["usage_limit", "crash", "zero_output", "closed", "other"]
+                },
+                "observed_marker": {
+                  "type": ["string", "null"]
+                },
+                "detail": {
+                  "type": ["string", "null"]
+                }
+              }
+            }
+          },
+          "blocked_reason": {
+            "type": ["string", "null"],
+            "description": "Required when a lane failure downgrades the item to blocked/needs_human, e.g. reviewer_lane_failure."
+          },
+          "self_review_authorization": {
+            "type": ["object", "null"],
+            "required": ["scope", "conversation_marker"],
+            "additionalProperties": true,
+            "properties": {
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "conversation_marker": {
+                "type": "string",
+                "minLength": 1
               }
             }
           },

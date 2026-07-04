@@ -126,6 +126,10 @@
         }
       }
     },
+    "review_source": {
+      "enum": ["independent_lane", "self_review"],
+      "description": "Source of the merge review. Only independent_lane satisfies the independent-review requirement."
+    },
     "human_authorization": {
       "type": "object",
       "required": ["actor", "source"],
