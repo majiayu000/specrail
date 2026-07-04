@@ -20,7 +20,7 @@
     {
       "name": "specrail-implement-queue",
       "path": "skills/specrail-implement-queue/SKILL.md",
-      "computedHash": "sha256:cb2ecb9a0e3f614343ff31343b6c83362e45cc6b1a5ea8de2886374b9bf23ffb"
+      "computedHash": "sha256:36742e7c6259c1d1c475949260e8bcb631bf6806ff37330001d1a5f7d24ab37a"
     },
     {
       "name": "specrail-implement",
@@ -50,7 +50,7 @@
     {
       "name": "specrail-review-pr",
       "path": "skills/specrail-review-pr/SKILL.md",
-      "computedHash": "sha256:0e291277d10505ba5e68038dae8909abe7f27374e25357c9ebd9014c5f0cb758"
+      "computedHash": "sha256:a5e824cfe3dac541e70ae86032101a130c2c8604a4ed1a5adfa2f13f02e8e441"
     },
     {
       "name": "specrail-triage-issue",

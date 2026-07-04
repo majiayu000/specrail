@@ -4,6 +4,10 @@
 
 ### Added
 
+- Reviewer lane resume and re-review cap (GH-61): review results record
+  `review_round`/`review_mode`; full reviews past round 2 require a quoted
+  human request, `diff_only` requires the prior `base_head_sha`, and
+  resumed/diff-only rounds require a `prior_findings` checklist.
 - Bounded tranche hard stop (GH-60): checkpoint_version 2 drain checkpoints
   must declare a `budget` (compaction and/or item-cap basis); over-budget
   continuation without a recorded `budget_override` is blocked and

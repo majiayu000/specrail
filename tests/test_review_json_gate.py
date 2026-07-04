@@ -189,3 +189,85 @@ def test_review_json_gate_cli_json_contract() -> None:
         "blocked_actions",
         "verification_commands",
     } <= set(payload)
+
+
+def test_review_json_gate_allows_round_two_full_review() -> None:
+    result = evaluate_review_gate(load_review("review-round2-full.json"), load_diff())
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_review_json_gate_blocks_round_three_full_without_request() -> None:
+    result = evaluate_review_gate(
+        load_review("review-round3-full-no-request.json"), load_diff()
+    )
+
+    assert result["decision"] == "blocked"
+    assert any("exceeds the cap" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_allows_round_three_full_with_human_request() -> None:
+    result = evaluate_review_gate(
+        load_review("review-round3-full-with-request.json"), load_diff()
+    )
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_review_json_gate_allows_round_three_diff_only_with_checklist() -> None:
+    result = evaluate_review_gate(
+        load_review("review-round3-diff-only-checklist.json"), load_diff()
+    )
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_review_json_gate_blocks_resumed_round_without_checklist() -> None:
+    result = evaluate_review_gate(
+        load_review("review-resumed-no-checklist.json"), load_diff()
+    )
+
+    assert result["decision"] == "blocked"
+    assert any("prior_findings" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_blocks_diff_only_without_base_head_sha() -> None:
+    review = load_review("review-round3-diff-only-checklist.json")
+    del review["base_head_sha"]
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("base_head_sha" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_blocks_round_without_mode() -> None:
+    review = load_review("review-round2-full.json")
+    del review["review_mode"]
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("provided together" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_blocks_first_round_diff_only() -> None:
+    review = load_review("review-round3-diff-only-checklist.json")
+    review["review_round"] = 1
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("review_round >= 2" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_blocks_invalid_prior_finding_status() -> None:
+    review = load_review("review-round3-diff-only-checklist.json")
+    review["prior_findings"][0]["status"] = "handled"
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("status must be one of" in reason for reason in result["reasons"])
+
+
+def test_review_json_gate_legacy_reviews_without_round_fields_still_pass() -> None:
+    result = evaluate_review_gate(load_review("review-valid.json"), load_diff())
+
+    assert result["decision"] == "allowed", result["reasons"]
