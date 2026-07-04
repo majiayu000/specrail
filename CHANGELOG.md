@@ -23,6 +23,8 @@
 - Deterministic gate fixture corpus under `examples/fixtures/`.
 - Runtime checkpoint schema instance validation and a documented contract
   authority split between schema structure and gate behavior.
+- PR gate evidence now records serial gate-query completion/head SHA fields and
+  rejects stale or post-merge gate ordering evidence.
 
 ## v0.2.1 - 2026-06-26
 

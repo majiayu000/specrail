@@ -7,6 +7,8 @@
     "pr",
     "linked_issue",
     "head_sha",
+    "gate_query_completed_at",
+    "gate_query_head_sha",
     "readiness_label",
     "agent_review",
     "human_review",
@@ -27,6 +29,22 @@
       "minimum": 1
     },
     "head_sha": {
+      "type": "string",
+      "minLength": 7
+    },
+    "gate_query_completed_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gate_query_head_sha": {
+      "type": "string",
+      "minLength": 7
+    },
+    "merge_dispatched_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "merge_head_sha": {
       "type": "string",
       "minLength": 7
     },

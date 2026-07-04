@@ -103,6 +103,8 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
     )
 
     assert evidence["pr"] == 10
+    assert evidence["gate_query_head_sha"] == "e36d97517d8d0b27faca1abe5e5c63f9f88684d9"
+    assert evidence["gate_query_completed_at"].endswith("Z")
     assert evidence["linked_issue"] == 9
     assert evidence["checks"] == [
         {
@@ -140,6 +142,22 @@ def test_build_evidence_without_authorization_needs_human() -> None:
     result = evaluate_pr_gate(evidence)
     assert result["decision"] == "needs_human"
     assert "human_authorization" in result["missing"]
+
+
+def test_build_evidence_can_record_merge_dispatch_ordering() -> None:
+    evidence = build_evidence(
+        pr_payload(),
+        threads_payload(),
+        {
+            "actor": "user",
+            "source": "chat",
+        },
+        "2026-07-04T00:00:10Z",
+        "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+    )
+
+    assert evidence["merge_dispatched_at"] == "2026-07-04T00:00:10Z"
+    assert evidence["merge_head_sha"] == "e36d97517d8d0b27faca1abe5e5c63f9f88684d9"
 
 
 def test_authorization_flags_must_include_actor_and_source() -> None:
@@ -216,4 +234,5 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
         "source": "chat",
         "summary": "merge approved",
     }
+    assert evidence["gate_query_head_sha"] == evidence["head_sha"]
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"

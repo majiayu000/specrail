@@ -58,6 +58,34 @@ def test_pr_gate_blocks_unresolved_thread() -> None:
     assert any("unresolved review threads" in reason for reason in result["reasons"])
 
 
+def test_pr_gate_blocks_missing_gate_query_ordering_fields() -> None:
+    evidence = clean_evidence()
+    evidence.pop("gate_query_completed_at")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "gate_query_completed_at" in result["missing"]
+
+
+def test_pr_gate_blocks_gate_query_after_merge() -> None:
+    evidence = fixture("pr-query-after-merge.json")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "gate query must complete before merge dispatch" in result["reasons"]
+
+
+def test_pr_gate_blocks_gate_query_head_mismatch() -> None:
+    evidence = fixture("pr-gate-head-mismatch.json")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "gate_query_head_sha must match head_sha" in result["reasons"]
+
+
 def test_pr_gate_cli_json_contract(tmp_path: Path) -> None:
     evidence_path = tmp_path / "evidence.json"
     evidence_path.write_text(json.dumps(clean_evidence()), encoding="utf-8")
@@ -86,6 +114,8 @@ def test_pr_gate_cli_json_contract(tmp_path: Path) -> None:
         "pr",
         "linked_issue",
         "head_sha",
+        "gate_query_completed_at",
+        "gate_query_head_sha",
         "reasons",
         "satisfied",
         "missing",
