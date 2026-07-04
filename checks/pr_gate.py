@@ -8,6 +8,7 @@ evidence JSON, but this script only evaluates it and never writes remote state.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import sys
 from pathlib import Path
@@ -29,6 +30,14 @@ def _non_empty_string(value: Any) -> bool:
 
 def _positive_int(value: Any) -> bool:
     return isinstance(value, int) and value > 0
+
+
+def _parse_timestamp(value: str, field: str) -> datetime | None:
+    normalized = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -137,6 +146,68 @@ def _authorization_item(evidence: dict[str, Any]) -> tuple[list[str], list[str]]
     return [f"human authorization from {authorization['actor']} via {authorization['source']}"], []
 
 
+def _ordering_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    satisfied: list[str] = []
+    missing: list[str] = []
+    reasons: list[str] = []
+
+    completed_at = evidence.get("gate_query_completed_at")
+    gate_head_sha = evidence.get("gate_query_head_sha")
+    head_sha = evidence.get("head_sha")
+
+    if _non_empty_string(completed_at):
+        completed_time = _parse_timestamp(completed_at, "gate_query_completed_at")
+        if completed_time is None:
+            reasons.append("gate_query_completed_at must be an ISO-8601 timestamp")
+        else:
+            satisfied.append(f"gate query completed at {completed_at}")
+    else:
+        missing.append("gate_query_completed_at")
+
+    if _non_empty_string(gate_head_sha):
+        if gate_head_sha == head_sha:
+            satisfied.append("gate_query_head_sha matches head_sha")
+        else:
+            reasons.append("gate_query_head_sha must match head_sha")
+    else:
+        missing.append("gate_query_head_sha")
+
+    merge_dispatched_at = evidence.get("merge_dispatched_at")
+    merge_head_sha = evidence.get("merge_head_sha")
+    has_merge_time = merge_dispatched_at is not None
+    has_merge_head = merge_head_sha is not None
+    if has_merge_time != has_merge_head:
+        missing.append("merge_ordering_pair")
+        reasons.append("merge_dispatched_at and merge_head_sha must be provided together")
+        return satisfied, missing, reasons
+
+    if has_merge_time and has_merge_head:
+        if not _non_empty_string(merge_dispatched_at):
+            missing.append("merge_dispatched_at")
+            return satisfied, missing, reasons
+        if not _non_empty_string(merge_head_sha):
+            missing.append("merge_head_sha")
+            return satisfied, missing, reasons
+        merge_time = _parse_timestamp(merge_dispatched_at, "merge_dispatched_at")
+        completed_time = (
+            _parse_timestamp(completed_at, "gate_query_completed_at")
+            if _non_empty_string(completed_at)
+            else None
+        )
+        if merge_time is None:
+            reasons.append("merge_dispatched_at must be an ISO-8601 timestamp")
+        elif completed_time is not None and completed_time >= merge_time:
+            reasons.append("gate query must complete before merge dispatch")
+        else:
+            satisfied.append(f"merge dispatch ordered after gate query at {merge_dispatched_at}")
+        if merge_head_sha != gate_head_sha:
+            reasons.append("merge_head_sha must match gate_query_head_sha")
+        else:
+            satisfied.append("merge_head_sha matches gate_query_head_sha")
+
+    return satisfied, missing, reasons
+
+
 def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
     """Evaluate merge-readiness evidence and return a stable decision object."""
 
@@ -188,6 +259,11 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
         missing.extend(checker_missing)
         reasons.extend(checker_reasons)
 
+    ordering_satisfied, ordering_missing, ordering_reasons = _ordering_items(evidence)
+    satisfied.extend(ordering_satisfied)
+    missing.extend(ordering_missing)
+    reasons.extend(ordering_reasons)
+
     auth_satisfied, auth_missing = _authorization_item(evidence)
     satisfied.extend(auth_satisfied)
     missing.extend(auth_missing)
@@ -211,6 +287,8 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
         "pr": evidence.get("pr"),
         "linked_issue": evidence.get("linked_issue"),
         "head_sha": evidence.get("head_sha"),
+        "gate_query_completed_at": evidence.get("gate_query_completed_at"),
+        "gate_query_head_sha": evidence.get("gate_query_head_sha"),
         "reasons": sorted(set(reasons)),
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),

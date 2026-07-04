@@ -283,6 +283,8 @@ For GitHub PRs, current evidence must include:
 - independent reviewer or merge-reviewer lane evidence
 - native reviewer thread evidence when native subagents are available
 - GraphQL review-thread state
+- gate-query completion timestamp and gate-query head SHA from the serial
+  `pr_gate.py` run
 - merge state
 - linked issue or closing reference intent
 - explicit human merge authorization before merge
@@ -297,6 +299,8 @@ raw PR evidence JSON that re-evaluates to `allowed`.
 
 - Do not grant final approval.
 - Do not merge without explicit human authorization and current PR-gate evidence.
+- Do not dispatch review-thread/pr_gate queries and the merge command in the
+  same parallel tool batch or parallel lane; the gate query must complete first.
 - Do not treat green CI as merge readiness without review-thread and merge-state
   truth.
 - Do not close an issue from a partial implementation.
