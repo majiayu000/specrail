@@ -10,6 +10,7 @@ from pathlib import Path
 
 from specrail_lib import (
     SpecRailError,
+    artifact_templates,
     load_pack,
     read_text,
     validate_action_policy,
@@ -31,10 +32,13 @@ REQUIRED_FILES = [
     "states.yaml",
     "labels.yaml",
     "examples/adoptions/matrix.json",
+    "checks/duplicate_work_gate.py",
+    "checks/github_duplicate_evidence.py",
     "checks/github_issue_evidence.py",
     "checks/github_pr_evidence.py",
     "checks/pr_gate.py",
     "checks/review_json_gate.py",
+    "schemas/duplicate_work_evidence.schema.json",
     "tools/install_codex_skills.py",
     "skills-lock.json",
     "templates/issue_bug.md",
@@ -135,6 +139,20 @@ def validate_tokens(repo: Path) -> list[str]:
         for token in tokens:
             if token not in text:
                 errors.append(f"{rel}: missing token {token!r}")
+    return errors
+
+
+def validate_impl_branch_template(config: object) -> list[str]:
+    errors: list[str] = []
+    try:
+        artifacts = artifact_templates(config)  # type: ignore[arg-type]
+    except SpecRailError as exc:
+        return [str(exc)]
+    template = artifacts.get("impl_branch")
+    if not template:
+        return ["workflow.yaml: artifacts.impl_branch is required"]
+    if "{issue_number}" not in template:
+        errors.append("workflow.yaml: artifacts.impl_branch must contain {issue_number}")
     return errors
 
 
@@ -278,6 +296,7 @@ def main() -> int:
         errors.extend(validate_state_graph(config))
         errors.extend(validate_labels(config))
         errors.extend(validate_action_policy(config))
+        errors.extend(validate_impl_branch_template(config))
         errors.extend(validate_skills_lock(repo))
         errors.extend(validate_template_parity(repo))
         for spec_dir in select_spec_packet_dirs(

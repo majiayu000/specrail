@@ -9,11 +9,13 @@ CHECKS = ROOT / "checks"
 sys.path.insert(0, str(CHECKS))
 
 from check_workflow import REQUIRED_FILES, validate_required_file_globs  # noqa: E402
+from check_workflow import validate_impl_branch_template  # noqa: E402
 
 
-def test_required_files_do_not_enumerate_fixtures_or_schemas() -> None:
+def test_required_files_do_not_enumerate_fixtures_or_non_runtime_schemas() -> None:
     assert not any(path.startswith("examples/fixtures/") for path in REQUIRED_FILES)
-    assert not any(path.startswith("schemas/") for path in REQUIRED_FILES)
+    schema_paths = [path for path in REQUIRED_FILES if path.startswith("schemas/")]
+    assert schema_paths == ["schemas/duplicate_work_evidence.schema.json"]
 
 
 def test_required_file_globs_discover_existing_fixture_and_schema_files() -> None:
@@ -25,3 +27,25 @@ def test_required_file_globs_require_at_least_one_match(tmp_path: Path) -> None:
 
     assert "missing required files matching: examples/fixtures/*" in errors
     assert "missing required files matching: schemas/*.schema.json" in errors
+
+
+def test_required_files_include_duplicate_work_checks() -> None:
+    assert "checks/duplicate_work_gate.py" in REQUIRED_FILES
+    assert "checks/github_duplicate_evidence.py" in REQUIRED_FILES
+    assert "schemas/duplicate_work_evidence.schema.json" in REQUIRED_FILES
+
+
+def test_impl_branch_template_requires_issue_number_placeholder() -> None:
+    class Config:
+        workflow = {"artifacts": {"impl_branch": "{agent}/branch-{slug}"}}
+
+    assert validate_impl_branch_template(Config()) == [
+        "workflow.yaml: artifacts.impl_branch must contain {issue_number}"
+    ]
+
+
+def test_impl_branch_template_accepts_current_workflow() -> None:
+    class Config:
+        workflow = {"artifacts": {"impl_branch": "{agent}/gh{issue_number}-{slug}"}}
+
+    assert validate_impl_branch_template(Config()) == []
