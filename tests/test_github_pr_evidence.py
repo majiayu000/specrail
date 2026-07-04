@@ -17,6 +17,7 @@ from github_pr_evidence import (  # noqa: E402
     EvidenceError,
     build_evidence,
     build_human_authorization,
+    collect_evidence,
     parse_github_repo,
 )
 from pr_gate import evaluate_pr_gate  # noqa: E402
@@ -236,3 +237,22 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
     }
     assert evidence["gate_query_head_sha"] == evidence["head_sha"]
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
+
+
+def test_collect_evidence_rejects_head_change_during_gate_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = pr_payload()
+    second = dict(first)
+    second["headRefOid"] = "ffffffffffffffffffffffffffffffffffffffff"
+    calls = {"pr_view": 0}
+
+    def fake_collect_pr_view(_repo: str, _pr: int) -> dict[str, object]:
+        calls["pr_view"] += 1
+        return first if calls["pr_view"] == 1 else second
+
+    monkeypatch.setattr("github_pr_evidence.collect_pr_view", fake_collect_pr_view)
+    monkeypatch.setattr("github_pr_evidence.collect_review_threads", lambda _owner, _name, _pr: threads_payload())
+
+    with pytest.raises(EvidenceError, match="PR head changed"):
+        collect_evidence("majiayu000/specrail", 10, None)

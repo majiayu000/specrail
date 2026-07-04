@@ -361,9 +361,22 @@ def collect_evidence(
     merge_head_sha: str | None = None,
 ) -> dict[str, Any]:
     owner, name = parse_github_repo(github_repo)
-    pr_payload = collect_pr_view(github_repo, pr_number)
+    pr_payload_before = collect_pr_view(github_repo, pr_number)
+    head_sha_before = _require_string(pr_payload_before, "headRefOid")
     threads_payload = collect_review_threads(owner, name, pr_number)
-    return build_evidence(pr_payload, threads_payload, authorization, merge_dispatched_at, merge_head_sha)
+    pr_payload_after = collect_pr_view(github_repo, pr_number)
+    head_sha_after = _require_string(pr_payload_after, "headRefOid")
+    if head_sha_before != head_sha_after:
+        raise EvidenceError(
+            "PR head changed while collecting gate evidence; rerun PR evidence collection"
+        )
+    return build_evidence(
+        pr_payload_after,
+        threads_payload,
+        authorization,
+        merge_dispatched_at,
+        merge_head_sha,
+    )
 
 
 def main() -> int:

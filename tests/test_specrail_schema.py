@@ -21,6 +21,12 @@ def runtime_checkpoint_schema() -> dict[str, object]:
     )
 
 
+def pr_review_gate_schema() -> dict[str, object]:
+    return json.loads(
+        (ROOT / "schemas" / "pr_review_gate.schema.json").read_text(encoding="utf-8")
+    )
+
+
 def valid_checkpoint() -> dict[str, object]:
     return {
         "checkpoint_version": 1,
@@ -110,6 +116,12 @@ def test_validate_instance_reports_required_enum_additional_and_unsupported() ->
 def test_runtime_checkpoint_fixture_instances_validate_against_schema() -> None:
     schema = runtime_checkpoint_schema()
     for fixture in sorted((ROOT / "examples" / "fixtures").glob("runtime-*.json")):
+        validate_instance(schema, json.loads(fixture.read_text(encoding="utf-8")))
+
+
+def test_pr_gate_fixture_instances_validate_against_schema() -> None:
+    schema = pr_review_gate_schema()
+    for fixture in sorted((ROOT / "examples" / "fixtures").glob("pr-*.json")):
         validate_instance(schema, json.loads(fixture.read_text(encoding="utf-8")))
 
 
