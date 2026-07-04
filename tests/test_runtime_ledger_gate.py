@@ -637,6 +637,21 @@ def test_runtime_ledger_gate_allows_authorized_self_review_merge() -> None:
     assert result["decision"] in {"allowed", "warn"}, result["errors"]
 
 
+def test_runtime_ledger_gate_blocks_authorized_self_review_without_lane_failure() -> None:
+    checkpoint = _fixture_checkpoint("runtime-self-review-merged-unauthorized.json")
+    item = checkpoint["items"][0]  # type: ignore[index]
+    item["lane_failures"] = []
+    item["self_review_authorization"] = {
+        "scope": "merge PR #718 after self-review only",
+        "conversation_marker": "user message: reviewer lanes are down, self-review this one",
+    }
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("self_review requires recorded lane_failures" in error for error in result["errors"])
+
+
 def test_runtime_ledger_gate_allows_blocked_lane_failure_fixture() -> None:
     result = evaluate_checkpoint(_fixture_checkpoint("runtime-lane-failure-blocked.json"))
 

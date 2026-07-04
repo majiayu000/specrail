@@ -159,6 +159,21 @@ def test_pr_gate_allows_explicitly_authorized_self_review() -> None:
     assert any("self-review authorization" in item for item in result["satisfied"])
 
 
+def test_pr_gate_blocks_authorized_self_review_without_lane_failure() -> None:
+    evidence = fixture("pr-self-review-unauthorized.json")
+    evidence["lane_failures"] = []
+    evidence["self_review_authorization"] = {
+        "actor": "maintainer",
+        "source": "chat after reviewer lane failure",
+        "scope": "PR #718 after merge-reviewer-1 usage_limit",
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("self_review requires recorded lane_failures" in reason for reason in result["reasons"])
+
+
 def test_pr_gate_blocks_missing_thread_resolver_attribution() -> None:
     evidence = fixture("pr-missing-thread-resolver.json")
 
