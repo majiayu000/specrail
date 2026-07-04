@@ -4,6 +4,9 @@
 
 ### Added
 
+- Worktree-safe merge path (GH-63): merges run from a neutral cwd with an
+  API fallback for locally checked-out branches; merge records require
+  `merge_path` and remote confirmation before an outcome may be reported.
 - Spec/impl mix gate (GH-62): checkpoint items record `pr_kind`; more than 3
   consecutive spec-only PRs block without a quoted `spec_only_declaration`,
   and `tranche_mix` counters are cross-checked against item records.
