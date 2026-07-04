@@ -272,6 +272,10 @@ def _review_source_items(evidence: dict[str, Any]) -> tuple[list[str], list[str]
         satisfied.append("review_source: independent_lane")
         return satisfied, missing, reasons
 
+    failures = evidence.get("lane_failures")
+    if not isinstance(failures, list) or not failures:
+        reasons.append("self_review requires recorded lane_failures from a reported reviewer lane failure")
+
     auth_satisfied, auth_missing = _self_review_authorization_item(evidence)
     satisfied.append("review_source: self_review")
     satisfied.extend(auth_satisfied)
