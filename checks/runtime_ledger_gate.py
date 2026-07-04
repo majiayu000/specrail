@@ -60,6 +60,9 @@ REVIEW_SOURCES = {"independent_lane", "self_review"}
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
 LANE_FAILURE_DOWNGRADE_STATES = {"blocked", "needs_human"}
 CHECKPOINT_VERSIONS = {1, 2}
+PR_KINDS = {"spec", "impl", "mixed_impl"}
+IMPL_PR_KINDS = {"impl", "mixed_impl"}
+SPEC_ONLY_STREAK_CAP = 3
 BUDGET_BASES = {"compaction", "item_cap", "both"}
 BUDGET_STOP_REASONS = {"budget_exhausted", "queue_empty", "user_interrupt", "blocked"}
 
@@ -479,6 +482,108 @@ def _validate_budget(
         satisfied.append("budget-exhausted stop is a passing terminal with handoff")
 
 
+def _validate_declaration(
+    value: Any,
+    label: str,
+    errors: list[str],
+) -> bool:
+    if not isinstance(value, dict):
+        errors.append(f"{label} must be an object with scope and conversation_marker")
+        return False
+    valid = True
+    for key in ["scope", "conversation_marker"]:
+        entry = value.get(key)
+        if not isinstance(entry, str) or not entry.strip():
+            errors.append(f"{label}.{key} must be a non-empty string")
+            valid = False
+    return valid
+
+
+def _validate_tranche_mix(data: dict[str, Any], errors: list[str], satisfied: list[str]) -> None:
+    items = data.get("items")
+    item_list = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+    kinds: list[str | None] = []
+    has_kind_contract = "tranche_mix" in data and data.get("tranche_mix") is not None
+
+    for index, item in enumerate(item_list, start=1):
+        kind = item.get("pr_kind")
+        if kind is None:
+            kinds.append(None)
+            continue
+        has_kind_contract = True
+        if not isinstance(kind, str) or kind not in PR_KINDS:
+            allowed = ", ".join(sorted(PR_KINDS))
+            errors.append(f"item #{index}: pr_kind must be one of: {allowed}")
+            kinds.append(None)
+            continue
+        kinds.append(kind)
+
+    if not has_kind_contract:
+        return
+
+    declaration = data.get("spec_only_declaration")
+    if declaration is None and isinstance(data.get("tranche_mix"), dict):
+        declaration = data["tranche_mix"].get("spec_only_declaration")
+    declaration_valid = False
+    if declaration is not None:
+        declaration_valid = _validate_declaration(
+            declaration, "spec_only_declaration", errors
+        )
+
+    streak = 0
+    max_streak = 0
+    for kind in kinds:
+        if kind == "spec":
+            streak += 1
+            max_streak = max(max_streak, streak)
+        elif kind in IMPL_PR_KINDS:
+            streak = 0
+        # items without pr_kind (non-PR work, blocked items) keep the streak
+
+    if max_streak > SPEC_ONLY_STREAK_CAP:
+        if declaration_valid:
+            satisfied.append(
+                f"spec-only streak {max_streak} covered by spec_only_declaration"
+            )
+        else:
+            errors.append(
+                f"{max_streak} consecutive spec-only PRs exceed the cap of "
+                f"{SPEC_ONLY_STREAK_CAP} without a spec_only_declaration; "
+                "interleave implementation PRs or record the quoted user "
+                "confirmation"
+            )
+
+    tranche_mix = data.get("tranche_mix")
+    if tranche_mix is None:
+        return
+    if not isinstance(tranche_mix, dict):
+        errors.append("tranche_mix must be an object")
+        return
+
+    actual_spec = sum(1 for kind in kinds if kind == "spec")
+    actual_impl = sum(1 for kind in kinds if kind in IMPL_PR_KINDS)
+    checks = [
+        ("spec_pr_count", actual_spec),
+        ("impl_pr_count", actual_impl),
+        ("consecutive_spec_only", max_streak),
+    ]
+    for key, actual in checks:
+        declared = tranche_mix.get(key)
+        if declared is None:
+            errors.append(f"tranche_mix.{key} is required")
+            continue
+        if isinstance(declared, bool) or not isinstance(declared, int) or declared < 0:
+            errors.append(f"tranche_mix.{key} must be a non-negative integer")
+            continue
+        if declared != actual:
+            errors.append(
+                f"tranche_mix.{key} is {declared} but item records show {actual}; "
+                "counters must derive from item pr_kind records"
+            )
+    if not any(error.startswith("tranche_mix") for error in errors):
+        satisfied.append("tranche_mix counters match item records")
+
+
 def _validate_goal_candidate(data: dict[str, Any], errors: list[str]) -> None:
     if "goal_candidate" not in data or data.get("goal_candidate") is None:
         return
@@ -616,6 +721,7 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
 
     _validate_goal_candidate(data, errors)
     _validate_budget(data, errors, satisfied)
+    _validate_tranche_mix(data, errors, satisfied)
     _validate_full_queue_checkpoint(data, errors, warnings)
     queue_mode = data.get("queue_mode")
     thread_gate, spawned_agents, native_required = _validate_thread_dispatch_gate(data, errors)

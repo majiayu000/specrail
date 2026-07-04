@@ -28,6 +28,12 @@ canonical workflow state machine in `states.yaml`.
     "stop_reason": null,
     "budget_override": null
   },
+  "tranche_mix": {
+    "spec_pr_count": 0,
+    "impl_pr_count": 0,
+    "consecutive_spec_only": 0,
+    "spec_only_declaration": null
+  },
   "spec_coverage": {
     "checked_at": null,
     "complete": [],
