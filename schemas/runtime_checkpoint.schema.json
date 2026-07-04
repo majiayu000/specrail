@@ -40,6 +40,55 @@
     "queue_mode": {
       "enum": ["bounded_tranche", "full_queue_drain", null]
     },
+    "tranche_mix": {
+      "type": ["object", "null"],
+      "required": ["spec_pr_count", "impl_pr_count", "consecutive_spec_only"],
+      "additionalProperties": true,
+      "properties": {
+        "spec_pr_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "impl_pr_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "consecutive_spec_only": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "spec_only_declaration": {
+          "type": ["object", "null"],
+          "required": ["scope", "conversation_marker"],
+          "additionalProperties": true,
+          "properties": {
+            "scope": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversation_marker": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "spec_only_declaration": {
+      "type": ["object", "null"],
+      "required": ["scope", "conversation_marker"],
+      "additionalProperties": true,
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conversation_marker": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "budget": {
       "type": ["object", "null"],
       "required": ["basis"],
@@ -444,6 +493,10 @@
           "blocked_reason": {
             "type": ["string", "null"],
             "description": "Required when a lane failure downgrades the item to blocked/needs_human, e.g. reviewer_lane_failure."
+          },
+          "pr_kind": {
+            "enum": ["spec", "impl", "mixed_impl", null],
+            "description": "Classification of the PR this item produced. Production code present means impl/mixed_impl."
           },
           "self_review_authorization": {
             "type": ["object", "null"],

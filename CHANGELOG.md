@@ -4,6 +4,9 @@
 
 ### Added
 
+- Spec/impl mix gate (GH-62): checkpoint items record `pr_kind`; more than 3
+  consecutive spec-only PRs block without a quoted `spec_only_declaration`,
+  and `tranche_mix` counters are cross-checked against item records.
 - Reviewer lane resume and re-review cap (GH-61): review results record
   `review_round`/`review_mode`; full reviews past round 2 require a quoted
   human request, `diff_only` requires the prior `base_head_sha`, and

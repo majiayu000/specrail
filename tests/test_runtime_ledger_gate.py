@@ -717,3 +717,77 @@ def test_runtime_ledger_gate_blocks_item_cap_basis_without_cap() -> None:
 
     assert result["decision"] == "blocked"
     assert any("item_cap" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_undeclared_spec_only_streak() -> None:
+    result = evaluate_checkpoint(
+        _fixture_checkpoint("runtime-spec-streak-undeclared.json")
+    )
+
+    assert result["decision"] == "blocked"
+    assert any("consecutive spec-only" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_allows_declared_spec_only_tranche() -> None:
+    result = evaluate_checkpoint(_fixture_checkpoint("runtime-spec-only-declared.json"))
+
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]
+    assert any("spec_only_declaration" in item for item in result["satisfied"])
+
+
+def test_runtime_ledger_gate_blocks_tranche_mix_counter_mismatch() -> None:
+    result = evaluate_checkpoint(_fixture_checkpoint("runtime-tranche-mix-mismatch.json"))
+
+    assert result["decision"] == "blocked"
+    assert any("counters must derive" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_allows_interleaved_tranche() -> None:
+    result = evaluate_checkpoint(_fixture_checkpoint("runtime-tranche-interleaved.json"))
+
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]
+
+
+def test_runtime_ledger_gate_non_pr_items_keep_spec_streak() -> None:
+    checkpoint = _fixture_checkpoint("runtime-spec-streak-undeclared.json")
+    items = checkpoint["items"]
+    items.insert(2, {"issue": 999, "state": "blocked", "next_action": "wait"})
+    checkpoint["tranche_mix"]["consecutive_spec_only"] = 4  # unchanged by non-PR item
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("consecutive spec-only" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_invalid_pr_kind() -> None:
+    checkpoint = _fixture_checkpoint("runtime-tranche-interleaved.json")
+    checkpoint["items"][0]["pr_kind"] = "docs"
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("pr_kind must be one of" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_incomplete_spec_only_declaration() -> None:
+    checkpoint = _fixture_checkpoint("runtime-spec-only-declared.json")
+    del checkpoint["spec_only_declaration"]["conversation_marker"]
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "spec_only_declaration.conversation_marker" in error
+        for error in result["errors"]
+    )
+
+
+def test_runtime_ledger_gate_streak_resets_on_impl() -> None:
+    checkpoint = _fixture_checkpoint("runtime-spec-streak-undeclared.json")
+    checkpoint["items"][2]["pr_kind"] = "impl"
+    checkpoint["tranche_mix"] = {
+        "spec_pr_count": 3,
+        "impl_pr_count": 1,
+        "consecutive_spec_only": 2,
+    }
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]

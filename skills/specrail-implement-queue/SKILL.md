@@ -130,6 +130,28 @@ If the user only asks for a broad queue without explicit full-queue drain
 authorization, choose the smallest mergeable tranche and leave the rest in the
 checkpoint.
 
+## Spec/Impl Mix Gate
+
+Classify every PR the tranche creates as `pr_kind` on its checkpoint item:
+
+- `spec`: only spec packets, docs, or planning artifacts
+- `impl`: production code or tests
+- `mixed_impl`: any PR that contains production code, even alongside specs
+
+Rules:
+
+- More than 3 consecutive `spec` PRs is a blocking violation unless the user
+  explicitly confirmed a spec-only tranche; ask before exceeding the cap and
+  record the quoted confirmation as `spec_only_declaration` (scope +
+  conversation marker).
+- Items without a `pr_kind` (blocked items, non-PR work) do not reset the
+  streak; only `impl`/`mixed_impl` PRs do.
+- Maintain `tranche_mix` counters (`spec_pr_count`, `impl_pr_count`,
+  `consecutive_spec_only`) derived from the item records;
+  `checks/runtime_ledger_gate.py` cross-checks them and blocks self-reported
+  inflation.
+- Never present spec PR counts as implementation progress in reports.
+
 ## Orchestration
 
 Use `integrations/threads.md` and an available threads skill when the queue needs
