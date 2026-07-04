@@ -210,6 +210,27 @@ For `queue_mode: full_queue_drain`, a hard-stop handoff preserves the full queue
 objective and records the next actionable tranche; it does not redefine success
 as completing only the current tranche.
 
+### Bounded Tranche Hard Stop
+
+`full_queue_drain` never runs as one unbounded session. It is a sequence of
+bounded tranches, each with a hard budget declared at tranche start in the
+checkpoint `budget` object (checkpoint_version 2):
+
+- `basis`: `compaction` | `item_cap` | `both`. Compaction events are the
+  primary observable degradation signal; use `item_cap` where the runtime
+  does not expose compaction.
+- `compaction_budget` default 1: stop before the second compaction.
+- Record observed `compaction_count` as the session runs.
+
+On budget exhaustion this is a normal terminal, not a failure: write the
+checkpoint with `stop_reason: budget_exhausted` and a `resume_prompt`, then
+hand off to a fresh session. Continuing past the budget requires an explicit
+user `budget_override` recorded with quoted scope and a conversation marker;
+`checks/runtime_ledger_gate.py` blocks over-budget continuation without one
+and blocks version-2 drain checkpoints that declare no budget. Reviewer
+lanes stay bounded (the audited well-behaved lanes stayed under ~2M tokens);
+lanes do not inherit the parent budget.
+
 Do not read raw `~/.codex/sessions` logs, old parent transcripts, or broad
 session JSONL as queue state. Use the checkpoint, repo-local run logs, and fresh
 remote truth.

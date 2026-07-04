@@ -13,13 +13,21 @@ runtime item 的 `state` 是由 `checks/specrail_lib.py` 中
 
 ```json
 {
-  "checkpoint_version": 1,
+  "checkpoint_version": 2,
   "tranche_id": "YYYY-MM-DD-repo-topic-t01",
   "repo": "owner/repo or local/path",
   "scope": "one bounded tranche; name exclusions and non-goals",
   "status": "planning",
   "overall_objective": "drain_all_actionable_issues_and_prs",
   "queue_mode": "bounded_tranche",
+  "budget": {
+    "basis": "compaction",
+    "compaction_budget": 1,
+    "item_cap": null,
+    "compaction_count": 0,
+    "stop_reason": null,
+    "budget_override": null
+  },
   "spec_coverage": {
     "checked_at": null,
     "complete": [],
