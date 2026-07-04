@@ -11,17 +11,12 @@ GH-61
 
 ## Implementation Tasks
 
-- [ ] Add `review_round`, `review_mode`, `base_head_sha`,
-      `prior_findings[]`, `human_full_review_request` to
-      `schemas/review_result.schema.json`.
-- [ ] Implement round-sequence and mode-cap enforcement in
-      `checks/review_json_gate.py`.
-- [ ] Document modes + findings-checklist format in
-      `skills/specrail-review-pr/SKILL.md`.
-- [ ] Document lane input scope and resume-first preference in
-      `skills/specrail-implement-queue/SKILL.md`.
-- [ ] Add resume note to `integrations/threads.md`.
-- [ ] Add fixtures (2 pass, 2 fail) and unit tests; update CHANGELOG.
+- [ ] `SP61-T001` Owner: schema | Done when: `schemas/review_result.schema.json` includes `review_round`, `review_mode`, `base_head_sha`, `prior_findings`, and `human_full_review_request` fields | Verify: `python3 checks/check_workflow.py --repo . --spec-dir specs/GH61`
+- [ ] `SP61-T002` Owner: review_gate | Done when: `checks/review_json_gate.py` enforces review round sequence and full-review mode caps | Verify: `python3 -m pytest -q tests/`
+- [ ] `SP61-T003` Owner: review_skill | Done when: `skills/specrail-review-pr/SKILL.md` documents review modes and findings-checklist format | Verify: inspection and workflow validation pass
+- [ ] `SP61-T004` Owner: queue_skill | Done when: `skills/specrail-implement-queue/SKILL.md` documents bounded lane input scope and resume-first preference | Verify: `python3 checks/check_workflow.py --repo . --all-specs`
+- [ ] `SP61-T005` Owner: threads_doc | Done when: `integrations/threads.md` records the reviewer-lane resume note | Verify: inspection and workflow validation pass
+- [ ] `SP61-T006` Owner: tests_changelog | Done when: pass and fail fixtures, unit tests, and `CHANGELOG.md` cover resumed, diff-only, and over-cap full review modes | Verify: `python3 -m pytest -q tests/`
 
 ## Parallelization
 
@@ -32,9 +27,9 @@ Disjoint files; mode enum agreed first.
 
 ## Verification
 
-- [ ] `python3 -m pytest -q tests/`
-- [ ] `python3 checks/check_workflow.py --repo . --all-specs`
-- [ ] Round-3 full-review fixture demonstrably fails.
+- `python3 -m pytest -q tests/`
+- `python3 checks/check_workflow.py --repo . --all-specs`
+- Round-3 full-review fixture demonstrably fails.
 
 ## Handoff Notes
 
