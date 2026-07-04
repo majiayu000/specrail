@@ -322,6 +322,31 @@ the checkpoint. When the gate is evaluating a merged or merge-ready PR, local
 `pr_gate.evidence` must exist and either be an allowed PR gate result JSON or a
 raw PR evidence JSON that re-evaluates to `allowed`.
 
+### Reviewer-Lane Failure Protocol
+
+A reviewer or merge-reviewer lane that dies before returning a usable result —
+usage limit, crash, zero output, or closed early — is a blocking event, not a
+license to continue:
+
+1. Record the failure on the checkpoint item as `lane_failures[]` with
+   `lane_id`, `failure_kind` (`usage_limit` | `crash` | `zero_output` |
+   `closed` | `other` + `detail`), and the observed marker.
+2. Downgrade the item to `blocked` or `needs_human` with `blocked_reason`
+   (for example `reviewer_lane_failure`) and report it in the handoff, or
+3. Recover by spawning a new independent reviewer lane; the retry lane must be
+   a different lane than the failed one and its review recorded with
+   `review.review_source: independent_lane`.
+
+Silent self-review substitution is forbidden. `review.review_source:
+self_review` never satisfies the independent-review requirement on its own;
+merging on self-review requires explicit `self_review_authorization` on the
+item, recording the quoted user scope and a conversation marker. Declare the
+review source when collecting evidence
+(`python3 checks/github_pr_evidence.py ... --review-source independent_lane`);
+`pr_gate.py` blocks evidence without `review_source` and
+`runtime_ledger_gate.py` blocks unauthorized self-review merges and
+unreported lane failures.
+
 ## Boundaries
 
 - Do not grant final approval.

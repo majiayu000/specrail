@@ -19,6 +19,8 @@ CHECK_PASS_CONCLUSIONS = {"SUCCESS"}
 CLEAN_MERGE_STATES = {"CLEAN"}
 ACTIVE_CHANGE_REQUESTS = {"CHANGES_REQUESTED"}
 ALLOWED_RESOLVER_ROLES = {"reviewer_lane", "human"}
+INDEPENDENT_REVIEW_SOURCES = {"independent_lane"}
+KNOWN_REVIEW_SOURCES = {"independent_lane", "self_review"}
 BLOCKED_RESOLVER_ROLES = {"implementer", "orchestrator", "coordinator", "unknown"}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
@@ -196,7 +198,8 @@ def _review_source_items(evidence: dict[str, Any]) -> tuple[list[str], list[str]
 
     normalized = str(source).strip()
     if normalized not in REVIEW_SOURCES:
-        reasons.append(f"review_source is unsupported: {normalized}")
+        allowed = ", ".join(sorted(REVIEW_SOURCES))
+        reasons.append(f"review_source must be one of: {allowed}")
         return satisfied, missing, reasons
 
     if normalized == "independent_lane":
@@ -348,7 +351,7 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
     else:
         missing.append("merge_state")
 
-    for checker in [_check_items, _review_items, _thread_items]:
+    for checker in [_check_items, _review_items, _thread_items, _review_source_items]:
         checker_satisfied, checker_missing, checker_reasons = checker(evidence)
         satisfied.extend(checker_satisfied)
         missing.extend(checker_missing)

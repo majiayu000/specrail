@@ -4,6 +4,10 @@
 
 ### Added
 
+- Reviewer-lane failure gate (GH-59): checkpoint items record `lane_failures`
+  and must downgrade to blocked/needs_human or retry with a new independent
+  lane; `review_source` is required merge evidence and unauthorized
+  self-review merges are blocked.
 - Read-only GitHub issue evidence adapter for `route_gate.py`.
 - Advisory review JSON gate with diff-line validation.
 - All-spec packet validation via `checks/check_workflow.py --all-specs`.

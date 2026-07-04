@@ -6,10 +6,11 @@
       "status": "COMPLETED"
     }
   ],
-  "gate_query_completed_at": "2026-07-04T00:00:10Z",
-  "gate_query_head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
   "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
-  "review_source": "independent_lane",
+  "lane_failures": [],
+  "review_source": "self_review",
+  "gate_query_completed_at": "2026-07-04T00:00:00Z",
+  "gate_query_head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
   "human_authorization": {
     "actor": "maintainer",
     "source": "chat",
@@ -17,8 +18,6 @@
   },
   "is_draft": false,
   "linked_issue": 716,
-  "merge_dispatched_at": "2026-07-04T00:00:09Z",
-  "merge_head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
   "merge_state": "CLEAN",
   "pr": 718,
   "review_threads": [
@@ -27,11 +26,14 @@
       "is_resolved": true,
       "resolved_by": "reviewer-1",
       "resolver_role": "reviewer_lane",
-      "url": "https://example.invalid/resolved-thread"
+      "url": "https://github.com/majiayu000/litellm-rs/pull/718#discussion_r3473213282"
     }
   ],
-  "reviews": [],
-  "state": "OPEN",
-  "review_source": "independent_lane",
-  "lane_failures": []
+  "reviews": [
+    {
+      "author": "gemini-code-assist",
+      "state": "COMMENTED"
+    }
+  ],
+  "state": "OPEN"
 }

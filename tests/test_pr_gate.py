@@ -233,3 +233,29 @@ def test_pr_gate_cli_json_contract(tmp_path: Path) -> None:
         "blocked_actions",
         "verification_commands",
     } <= set(payload)
+
+
+def test_pr_gate_blocks_missing_review_source() -> None:
+    evidence = clean_evidence()
+    del evidence["review_source"]
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "review_source" in result["missing"]
+
+
+def test_pr_gate_blocks_self_review_source() -> None:
+    evidence = fixture("pr-self-review-source.json")
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("self_review" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_blocks_unknown_review_source() -> None:
+    evidence = clean_evidence()
+    evidence["review_source"] = "coordinator_summary"
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("review_source must be one of" in reason for reason in result["reasons"])

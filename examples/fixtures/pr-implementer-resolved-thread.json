@@ -9,6 +9,7 @@
   "gate_query_completed_at": "2026-07-04T00:00:00Z",
   "gate_query_head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
   "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "review_source": "independent_lane",
   "human_authorization": {
     "actor": "maintainer",
     "source": "chat",

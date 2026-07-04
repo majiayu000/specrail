@@ -1,8 +1,6 @@
 {
   "checkpoint_version": 1,
-  "tranche_id": "2026-07-04-self-review-merged-unauthorized",
   "repo": "example/repo",
-  "scope": "invalid merged self-review example",
   "status": "handoff",
   "context_budget": {
     "window_tokens": 258400,
@@ -14,83 +12,66 @@
     "raw_log_policy": "file_only",
     "max_parent_stdout_lines": 150,
     "max_subagent_final_lines": 150,
-    "artifact_root": "artifacts/logs/self-review-merged-unauthorized"
+    "artifact_root": "artifacts/logs/lane-failure-example"
   },
+  "resume_prompt": "Read this checkpoint and refresh remote truth.",
+  "tranche_id": "2026-07-04-self-review-merged-t01",
+  "scope": "orchestrator merged after reviewing its own diff without authorization",
   "thread_dispatch_gate": {
     "explicit_thread_request": "yes",
-    "native_subagents": "available",
-    "spawn_requirement": "required",
-    "fallback_mode": "none",
-    "planned_native_threads": [
-      {
-        "id": "merge-reviewer-1",
-        "role": "merge_reviewer",
-        "target": "PR #718",
-        "write_scope": "read_only",
-        "spawn_status": "spawned",
-        "no_spawn_reason": null
-      }
-    ],
+    "native_subagents": "unavailable",
+    "spawn_requirement": "not_required",
+    "fallback_mode": "single_agent",
+    "planned_native_threads": [],
     "native_thread_evidence": {
-      "spawned_agents": [
-        {
-          "lane_id": "merge-reviewer-1",
-          "spawn_tool": "multi_agent_v1.spawn_agent",
-          "agent_id_or_thread_id": "agent-reviewer-1",
-          "wait_evidence": "wait_agent returned usage limit",
-          "close_evidence": "close_agent completed",
-          "result_collected": "yes"
-        }
-      ],
-      "fallback_reason": null
-    },
-    "no_spawn_reason": null
+      "spawned_agents": [],
+      "fallback_reason": "no native threads available"
+    }
   },
   "items": [
     {
-      "issue": 59,
+      "issue": 91,
       "pr": 718,
       "state": "merged",
-      "branch": "codex/gh59-example",
       "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
       "truth_level": "A",
-      "review_source": "self_review",
       "lane_failures": [
         {
           "lane_id": "merge-reviewer-1",
           "failure_kind": "usage_limit",
-          "observed_marker": "You've hit your usage limit"
+          "observed_marker": "usage limit reached mid-review"
         }
       ],
       "ci": {
         "status": "green",
-        "evidence": "artifacts/logs/self-review-merged-unauthorized/ci-summary.md"
+        "evidence": "artifacts/logs/t01/ci-summary.md"
       },
       "review": {
+        "reviewer_lane": "self",
         "status": "passed",
-        "evidence": "artifacts/reviews/self-review-merged-unauthorized/self-review.md",
+        "review_source": "self_review",
+        "evidence": "artifacts/reviews/t01/self-review.md",
         "blocking_findings": []
       },
       "review_threads": {
         "status": "clean",
         "unresolved_count": 0,
-        "evidence": "artifacts/reviews/self-review-merged-unauthorized/review-threads.json",
-        "checked_at": "2026-07-04T00:00:00Z"
+        "evidence": "artifacts/reviews/t01/review-threads.json",
+        "checked_at": "2026-07-04T06:00:00Z"
       },
       "pr_gate": {
         "status": "passed",
         "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
-        "evidence": "examples/fixtures/pr-self-review-unauthorized.json",
-        "checked_at": "2026-07-04T00:01:00Z"
+        "evidence": "examples/fixtures/pr-clean-authorized.json",
+        "checked_at": "2026-07-04T06:01:00Z"
       },
-      "next_action": "flag closure audit violation",
       "merge_state": "clean",
       "merge_authorization": {
         "actor": "maintainer",
         "source": "chat",
-        "summary": "generic merge approved"
-      }
+        "summary": "you can merge"
+      },
+      "next_action": "closure audit"
     }
-  ],
-  "resume_prompt": "This fixture should be blocked because self-review lacks specific authorization."
+  ]
 }

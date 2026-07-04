@@ -1,7 +1,7 @@
 {
   "checkpoint_version": 1,
   "repo": "example/repo",
-  "status": "blocked",
+  "status": "running",
   "context_budget": {
     "window_tokens": 258400,
     "soft_stop_ratio": 0.5,
@@ -15,22 +15,28 @@
     "artifact_root": "artifacts/logs/lane-failure-example"
   },
   "resume_prompt": "Read this checkpoint and refresh remote truth.",
-  "tranche_id": "2026-07-04-lane-failure-blocked-t01",
-  "scope": "reviewer lane failed; item downgraded and waiting",
+  "tranche_id": "2026-07-04-lane-failure-retried-t01",
+  "scope": "reviewer lane failed; retried with a new independent lane",
   "items": [
     {
       "issue": 91,
       "pr": 92,
-      "state": "blocked",
-      "blocked_reason": "reviewer_lane_failure",
+      "state": "running",
       "lane_failures": [
         {
           "lane_id": "merge-reviewer-1",
-          "failure_kind": "usage_limit",
-          "observed_marker": "usage limit reached mid-review"
+          "failure_kind": "crash",
+          "observed_marker": "lane exited before returning a result"
         }
       ],
-      "next_action": "spawn a new independent reviewer lane and rerun review"
+      "review": {
+        "reviewer_lane": "merge-reviewer-2",
+        "status": "passed",
+        "review_source": "independent_lane",
+        "evidence": "artifacts/reviews/t01/merge-reviewer-2.json",
+        "blocking_findings": []
+      },
+      "next_action": "collect pr_gate evidence and continue toward merge"
     }
   ]
 }
