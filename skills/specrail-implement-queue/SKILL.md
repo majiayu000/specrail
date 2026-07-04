@@ -401,6 +401,33 @@ review source when collecting evidence
 `runtime_ledger_gate.py` blocks unauthorized self-review merges and
 unreported lane failures.
 
+### Safe Merge Path
+
+Merging must survive branches that are checked out in local worktrees and
+must never report an outcome without remote confirmation:
+
+1. Run the merge from a neutral cwd with an explicit repo target
+   (`gh pr merge <n> --repo OWNER/REPO ...`).
+2. On local ownership failures (for example `branch ... is checked out at
+   ...` or a worktree lock; the class is "local ownership failure", the
+   messages are examples), fall back to
+   `gh api -X PUT /repos/{owner}/{repo}/pulls/{n}/merge` using a merge
+   method the repo allows (query merge settings first). Do not delete or
+   move the offending worktree — it may belong to another live session.
+3. Always confirm the outcome with a remote query
+   (`gh pr view <n> --json merged,mergeCommit`) before recording success or
+   failure, and write the result into the gate evidence as `merge_record`
+   (`merge_path`: `gh_pr_merge` | `api_fallback` | `merged_by_other`,
+   `remote_confirmed`, `merge_commit_sha`). A PR merged by someone else is a
+   valid confirmed terminal (`merged_by_other`).
+4. Post-merge: delete the remote branch as a separate step and record
+   `branch_deletion_outcome`; run `git worktree prune` in each local
+   checkout the tranche used and list stale or removed worktrees in the
+   closure report.
+
+`checks/pr_gate.py` blocks merge records without `merge_path` or without
+`remote_confirmed: true`.
+
 ## Boundaries
 
 - Do not grant final approval.

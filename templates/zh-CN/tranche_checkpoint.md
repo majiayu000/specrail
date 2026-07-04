@@ -157,6 +157,10 @@ runtime item 的 `state` 是由 `checks/specrail_lib.py` 中
       "next_action": "write or update the SpecRail spec packet before implementation"
     }
   ],
+  "worktree_cleanup": {
+    "pruned_checkouts": [],
+    "stale_or_removed_worktrees": []
+  },
   "resume_prompt": "Read this checkpoint, refresh remote truth, and continue only the named tranche. Do not read raw Codex session logs."
 }
 ```

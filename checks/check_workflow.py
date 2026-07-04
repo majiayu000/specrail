@@ -59,6 +59,7 @@ REQUIRED_FILES = [
     "policies/security_disclosure.md",
     "policies/maintainer_escalation.md",
     "checks/runtime_ledger_gate.py",
+    "checks/runtime_gate_rules.py",
     "templates/tranche_checkpoint.md",
 ]
 REQUIRED_FILE_GLOBS = [

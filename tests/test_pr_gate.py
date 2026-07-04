@@ -259,3 +259,55 @@ def test_pr_gate_blocks_unknown_review_source() -> None:
 
     assert result["decision"] == "blocked"
     assert any("review_source must be one of" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_allows_confirmed_merge_record() -> None:
+    result = evaluate_pr_gate(fixture("pr-merge-confirmed.json"))
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_pr_gate_allows_confirmed_api_fallback_merge() -> None:
+    result = evaluate_pr_gate(fixture("pr-merge-api-fallback-confirmed.json"))
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_pr_gate_blocks_unconfirmed_merge_record() -> None:
+    result = evaluate_pr_gate(fixture("pr-merge-unconfirmed-local-failure.json"))
+
+    assert result["decision"] == "blocked"
+    assert any("remote_confirmed" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_blocks_merge_record_missing_path() -> None:
+    result = evaluate_pr_gate(fixture("pr-merge-missing-path.json"))
+
+    assert result["decision"] == "blocked"
+    assert "merge_record.merge_path" in result["missing"]
+
+
+def test_pr_gate_allows_merged_by_other_terminal() -> None:
+    evidence = fixture("pr-merge-confirmed.json")
+    evidence["merge_record"]["merge_path"] = "merged_by_other"
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_pr_gate_blocks_confirmed_merge_without_commit_sha() -> None:
+    evidence = fixture("pr-merge-confirmed.json")
+    evidence["merge_record"]["merge_commit_sha"] = None
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "merge_record.merge_commit_sha" in result["missing"]
+
+
+def test_pr_gate_blocks_unknown_merge_path() -> None:
+    evidence = fixture("pr-merge-confirmed.json")
+    evidence["merge_record"]["merge_path"] = "force_push"
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("merge_path must be one of" in reason for reason in result["reasons"])
