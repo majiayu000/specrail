@@ -48,6 +48,13 @@ for example one issue, one PR, the current tranche, plan-only, status-only, or
 review-only work. Plain `implx` does not grant merge authorization; merge still
 requires explicit authorization in the current conversation.
 
+`full_queue_drain` means the objective spans the whole actionable queue, not
+that one session runs unbounded. Execution is a sequence of bounded tranches:
+each session declares a hard budget (compaction count and/or item cap) in the
+runtime checkpoint at tranche start, stops when the budget is exhausted, and
+hands off to a fresh session via the checkpoint. See the Bounded Tranche Hard
+Stop rules in `skills/specrail-implement-queue/SKILL.md`.
+
 Pass the selected mode to `skills/specrail-implement-queue/SKILL.md`:
 
 ```yaml

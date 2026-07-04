@@ -59,6 +59,9 @@ THREAD_AVAILABLE_VALUES = {"available", "yes", "true"}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
 LANE_FAILURE_DOWNGRADE_STATES = {"blocked", "needs_human"}
+CHECKPOINT_VERSIONS = {1, 2}
+BUDGET_BASES = {"compaction", "item_cap", "both"}
+BUDGET_STOP_REASONS = {"budget_exhausted", "queue_empty", "user_interrupt", "blocked"}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -389,6 +392,93 @@ def _validate_self_review_authorization(
             )
 
 
+def _validate_budget(
+    data: dict[str, Any],
+    errors: list[str],
+    satisfied: list[str],
+) -> None:
+    budget = data.get("budget")
+    if budget is None:
+        if (
+            data.get("checkpoint_version") == 2
+            and data.get("queue_mode") == "full_queue_drain"
+        ):
+            errors.append(
+                "full_queue_drain checkpoint requires a declared budget "
+                "(basis, compaction_budget and/or item_cap)"
+            )
+        return
+    if not isinstance(budget, dict):
+        errors.append("budget must be an object")
+        return
+
+    basis = budget.get("basis")
+    if not isinstance(basis, str) or basis not in BUDGET_BASES:
+        allowed = ", ".join(sorted(BUDGET_BASES))
+        errors.append(f"budget.basis must be one of: {allowed}")
+        basis = ""
+
+    compaction_budget = budget.get("compaction_budget")
+    if basis in {"compaction", "both"}:
+        _require_positive_int(budget, "compaction_budget", "budget", errors)
+    if basis in {"item_cap", "both"}:
+        _require_positive_int(budget, "item_cap", "budget", errors)
+
+    compaction_count = budget.get("compaction_count")
+    if compaction_count is not None and (
+        isinstance(compaction_count, bool)
+        or not isinstance(compaction_count, int)
+        or compaction_count < 0
+    ):
+        errors.append("budget.compaction_count must be a non-negative integer")
+        compaction_count = None
+    if basis in {"compaction", "both"} and compaction_count is None:
+        errors.append(
+            "budget.compaction_count must record the observed compaction events"
+        )
+
+    stop_reason = budget.get("stop_reason")
+    if stop_reason is not None and (
+        not isinstance(stop_reason, str) or stop_reason not in BUDGET_STOP_REASONS
+    ):
+        allowed = ", ".join(sorted(BUDGET_STOP_REASONS))
+        errors.append(f"budget.stop_reason must be one of: {allowed}")
+
+    override = budget.get("budget_override")
+    override_valid = False
+    if override is not None:
+        if not isinstance(override, dict):
+            errors.append("budget.budget_override must be an object")
+        else:
+            override_valid = True
+            for key in ["scope", "conversation_marker"]:
+                value = override.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(
+                        f"budget.budget_override.{key} must be a non-empty string"
+                    )
+                    override_valid = False
+
+    if (
+        isinstance(compaction_count, int)
+        and isinstance(compaction_budget, int)
+        and not isinstance(compaction_budget, bool)
+        and compaction_count > compaction_budget
+    ):
+        if override_valid:
+            satisfied.append(
+                "compaction budget exceeded under a recorded budget_override"
+            )
+        else:
+            errors.append(
+                f"budget exceeded: compaction_count {compaction_count} > "
+                f"compaction_budget {compaction_budget} without a recorded "
+                "budget_override; stop and hand off via checkpoint instead"
+            )
+    elif stop_reason == "budget_exhausted":
+        satisfied.append("budget-exhausted stop is a passing terminal with handoff")
+
+
 def _validate_goal_candidate(data: dict[str, Any], errors: list[str]) -> None:
     if "goal_candidate" not in data or data.get("goal_candidate") is None:
         return
@@ -508,8 +598,9 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
         if key not in data:
             errors.append(f"missing required field: {key}")
 
-    if data.get("checkpoint_version") != 1:
-        errors.append("checkpoint_version must be 1")
+    if data.get("checkpoint_version") not in CHECKPOINT_VERSIONS:
+        allowed = ", ".join(str(v) for v in sorted(CHECKPOINT_VERSIONS))
+        errors.append(f"checkpoint_version must be one of: {allowed}")
 
     for key in ["tranche_id", "repo", "scope", "resume_prompt"]:
         if key in data:
@@ -524,6 +615,7 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             errors.append(f"checkpoint.status must be one of: {allowed}")
 
     _validate_goal_candidate(data, errors)
+    _validate_budget(data, errors, satisfied)
     _validate_full_queue_checkpoint(data, errors, warnings)
     queue_mode = data.get("queue_mode")
     thread_gate, spawned_agents, native_required = _validate_thread_dispatch_gate(data, errors)

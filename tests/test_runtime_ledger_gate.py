@@ -632,3 +632,88 @@ def test_runtime_ledger_gate_blocks_other_failure_kind_without_detail() -> None:
 
     assert result["decision"] == "blocked"
     assert any("requires detail" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_allows_budget_exhausted_handoff_fixture() -> None:
+    result = evaluate_checkpoint(
+        _fixture_checkpoint("runtime-budget-exhausted-handoff.json")
+    )
+
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]
+    assert any("passing terminal" in item for item in result["satisfied"])
+
+
+def test_runtime_ledger_gate_blocks_over_budget_continuation_fixture() -> None:
+    result = evaluate_checkpoint(
+        _fixture_checkpoint("runtime-budget-over-continuation.json")
+    )
+
+    assert result["decision"] == "blocked"
+    assert any("budget exceeded" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_drain_without_budget_fixture() -> None:
+    result = evaluate_checkpoint(_fixture_checkpoint("runtime-drain-missing-budget.json"))
+
+    assert result["decision"] == "blocked"
+    assert any("requires a declared budget" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_allows_recorded_budget_override_fixture() -> None:
+    result = evaluate_checkpoint(_fixture_checkpoint("runtime-budget-override.json"))
+
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]
+    assert any("budget_override" in item for item in result["satisfied"])
+
+
+def test_runtime_ledger_gate_version_one_drain_does_not_require_budget() -> None:
+    checkpoint = _fixture_checkpoint("runtime-full-queue-handoff-needs-spec.json")
+    assert checkpoint["checkpoint_version"] == 1
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]
+
+
+def test_runtime_ledger_gate_blocks_invalid_budget_shapes() -> None:
+    checkpoint = _fixture_checkpoint("runtime-budget-exhausted-handoff.json")
+    checkpoint["budget"] = {"basis": "vibes"}
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("budget.basis" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_compaction_basis_without_count() -> None:
+    checkpoint = _fixture_checkpoint("runtime-budget-exhausted-handoff.json")
+    del checkpoint["budget"]["compaction_count"]  # type: ignore[union-attr]
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("compaction_count" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_override_without_marker() -> None:
+    checkpoint = _fixture_checkpoint("runtime-budget-override.json")
+    del checkpoint["budget"]["budget_override"]["conversation_marker"]  # type: ignore[union-attr]
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("conversation_marker" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_unknown_checkpoint_version() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint["checkpoint_version"] = 3
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("checkpoint_version" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_item_cap_basis_without_cap() -> None:
+    checkpoint = _fixture_checkpoint("runtime-budget-exhausted-handoff.json")
+    checkpoint["budget"] = {"basis": "item_cap", "stop_reason": "budget_exhausted"}
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("item_cap" in error for error in result["errors"])

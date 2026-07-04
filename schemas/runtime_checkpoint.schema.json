@@ -17,7 +17,7 @@
   "additionalProperties": true,
   "properties": {
     "checkpoint_version": {
-      "const": 1
+      "enum": [1, 2]
     },
     "tranche_id": {
       "type": "string",
@@ -39,6 +39,47 @@
     },
     "queue_mode": {
       "enum": ["bounded_tranche", "full_queue_drain", null]
+    },
+    "budget": {
+      "type": ["object", "null"],
+      "required": ["basis"],
+      "additionalProperties": true,
+      "properties": {
+        "basis": {
+          "enum": ["compaction", "item_cap", "both"],
+          "description": "What the session budget is measured in. compaction_budget defaults to 1: stop before the second compaction."
+        },
+        "compaction_budget": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "item_cap": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "compaction_count": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "stop_reason": {
+          "enum": ["budget_exhausted", "queue_empty", "user_interrupt", "blocked", null]
+        },
+        "budget_override": {
+          "type": ["object", "null"],
+          "required": ["scope", "conversation_marker"],
+          "additionalProperties": true,
+          "properties": {
+            "scope": {
+              "type": "string",
+              "minLength": 1
+            },
+            "conversation_marker": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
     },
     "spec_coverage": {
       "type": ["object", "null"],

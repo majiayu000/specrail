@@ -4,6 +4,10 @@
 
 ### Added
 
+- Bounded tranche hard stop (GH-60): checkpoint_version 2 drain checkpoints
+  must declare a `budget` (compaction and/or item-cap basis); over-budget
+  continuation without a recorded `budget_override` is blocked and
+  `stop_reason: budget_exhausted` with a resume prompt is a passing terminal.
 - Reviewer-lane failure gate (GH-59): checkpoint items record `lane_failures`
   and must downgrade to blocked/needs_human or retry with a new independent
   lane; `review_source` is required merge evidence and unauthorized
