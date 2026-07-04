@@ -150,6 +150,22 @@ def evaluate_duplicate_work_gate(
         }
     satisfied.append(f"no open PR references GH-{issue}")
 
+    if evidence.get("open_prs_complete") is not True:
+        limit = evidence.get("open_pr_limit")
+        reasons.append(
+            "open PR evidence may be incomplete"
+            + (f" at collection limit {limit}" if isinstance(limit, int) else "")
+        )
+        return {
+            "decision": "needs_human",
+            "issue": issue,
+            "reasons": reasons,
+            "satisfied": satisfied,
+            "missing": ["complete_open_pr_evidence"],
+            "blocked_actions": ["implement"],
+            "verification_commands": ["python3 checks/github_duplicate_evidence.py --github-repo OWNER/REPO --issue <issue> --pr-limit <larger-limit> --json"],
+        }
+
     token = impl_branch_token(config, issue)
     if token is None:
         return {

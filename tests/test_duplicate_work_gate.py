@@ -28,6 +28,8 @@ def duplicate_evidence(
     return {
         "issue": issue,
         "collected_at": "2026-07-04T00:00:00Z",
+        "open_prs_complete": True,
+        "open_pr_limit": 100,
         "open_prs": [] if open_prs is None else open_prs,
         "remote_branches": [] if remote_branches is None else remote_branches,
     }
@@ -97,6 +99,17 @@ def test_clean_evidence_allows_implementation() -> None:
 
     assert result["decision"] == "allowed"
     assert "duplicate work gate passed for GH-55" in result["reasons"]
+
+
+def test_incomplete_open_pr_evidence_needs_human() -> None:
+    evidence = duplicate_evidence()
+    evidence["open_prs_complete"] = False
+
+    result = evaluate_duplicate_work_gate(config(), 55, evidence)
+
+    assert result["decision"] == "needs_human"
+    assert result["missing"] == ["complete_open_pr_evidence"]
+    assert any("collection limit 100" in reason for reason in result["reasons"])
 
 
 def test_invalid_evidence_schema_blocks() -> None:

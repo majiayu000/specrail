@@ -135,9 +135,12 @@ def build_evidence(
     issue: int,
     open_pr_payload: list[Any],
     remote_branches: list[str],
+    pr_limit: int,
 ) -> dict[str, Any]:
     if issue <= 0:
         raise EvidenceError("issue number must be a positive integer")
+    if pr_limit <= 0:
+        raise EvidenceError("PR limit must be a positive integer")
     if not all(isinstance(branch, str) and branch.strip() for branch in remote_branches):
         raise EvidenceError("remote branch names must be non-empty strings")
     return {
@@ -146,6 +149,8 @@ def build_evidence(
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z"),
+        "open_prs_complete": len(open_pr_payload) < pr_limit,
+        "open_pr_limit": pr_limit,
         "open_prs": [normalize_open_pr(item, issue) for item in open_pr_payload],
         "remote_branches": sorted(branch.strip() for branch in remote_branches),
     }
@@ -160,7 +165,7 @@ def collect_duplicate_evidence(
     repo = parse_github_repo(github_repo)
     open_prs = collect_open_prs(repo, pr_limit)
     branches = collect_remote_branches(remote)
-    return build_evidence(issue, open_prs, branches)
+    return build_evidence(issue, open_prs, branches, pr_limit)
 
 
 def main() -> int:

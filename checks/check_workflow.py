@@ -38,6 +38,7 @@ REQUIRED_FILES = [
     "checks/github_pr_evidence.py",
     "checks/pr_gate.py",
     "checks/review_json_gate.py",
+    "schemas/duplicate_work_evidence.schema.json",
     "tools/install_codex_skills.py",
     "skills-lock.json",
     "templates/issue_bug.md",

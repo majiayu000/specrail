@@ -56,9 +56,11 @@ def test_references_issue_text_matches_stable_tokens_without_prefix_bleed() -> N
 
 
 def test_build_evidence_marks_prs_referencing_issue() -> None:
-    evidence = build_evidence(55, open_pr_payload(), ["codex/gh55-branch"])
+    evidence = build_evidence(55, open_pr_payload(), ["codex/gh55-branch"], 100)
 
     assert evidence["issue"] == 55
+    assert evidence["open_prs_complete"] is True
+    assert evidence["open_pr_limit"] == 100
     assert evidence["open_prs"] == [
         {
             "number": 10,
@@ -72,6 +74,13 @@ def test_build_evidence_marks_prs_referencing_issue() -> None:
         },
     ]
     assert evidence["remote_branches"] == ["codex/gh55-branch"]
+
+
+def test_build_evidence_marks_open_pr_collection_incomplete_at_limit() -> None:
+    evidence = build_evidence(55, open_pr_payload(), [], 2)
+
+    assert evidence["open_prs_complete"] is False
+    assert evidence["open_pr_limit"] == 2
 
 
 def test_cli_uses_fake_gh_and_git_without_network(

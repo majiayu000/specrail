@@ -6,6 +6,8 @@
   "required": [
     "issue",
     "collected_at",
+    "open_prs_complete",
+    "open_pr_limit",
     "open_prs",
     "remote_branches"
   ],
@@ -43,6 +45,13 @@
           }
         }
       }
+    },
+    "open_prs_complete": {
+      "type": "boolean"
+    },
+    "open_pr_limit": {
+      "type": "integer",
+      "minimum": 1
     },
     "remote_branches": {
       "type": "array",

@@ -291,6 +291,8 @@ def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence(
             {
                 "issue": 16,
                 "collected_at": "2026-07-04T00:00:00Z",
+                "open_prs_complete": True,
+                "open_pr_limit": 100,
                 "open_prs": [],
                 "remote_branches": [],
             }

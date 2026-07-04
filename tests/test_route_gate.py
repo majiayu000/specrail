@@ -41,6 +41,8 @@ def write_duplicate_evidence(
             {
                 "issue": issue,
                 "collected_at": "2026-07-04T00:00:00Z",
+                "open_prs_complete": True,
+                "open_pr_limit": 100,
                 "open_prs": [] if open_prs is None else open_prs,
                 "remote_branches": [] if remote_branches is None else remote_branches,
             }
