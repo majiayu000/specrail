@@ -191,6 +191,14 @@ tail -n 150 artifacts/logs/<tranche>/cargo-test.log
 Avoid broad searches under `.codex`, `.claude`, `target`, `node_modules`,
 session JSONL, or log files.
 
+For re-review after fixes, prefer messaging or resuming the existing reviewer
+lane over spawning a new fork: a fork replays the full lane history each round
+and multiplies token cost per round. When the runtime cannot resume a lane,
+spawn a fresh lane scoped to the diff since the previously reviewed head
+(`review_mode: diff_only`) plus the prior-findings checklist, instead of a new
+full-history review. See Review Rounds And Modes in
+`skills/specrail-review-pr/SKILL.md`.
+
 ## Fallback
 
 If no threads skill or native subagent capability is available, the agent should
