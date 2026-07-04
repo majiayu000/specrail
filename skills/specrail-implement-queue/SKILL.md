@@ -23,6 +23,17 @@ route to `skills/specrail-implement/SKILL.md` instead.
    - `specs/GH<issue-number>/tech.md`
    - `specs/GH<issue-number>/tasks.md`
 5. Map existing PRs before creating replacement PRs.
+6. Collect duplicate-work evidence before opening an implementation lane:
+
+```sh
+python3 checks/github_duplicate_evidence.py --github-repo <owner/repo> --issue <issue-number> --json > duplicate-work-evidence.json
+python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --duplicate-evidence duplicate-work-evidence.json --json
+```
+
+If duplicate evidence is missing, the implementation route needs human input.
+If it shows an open PR for the issue, the route is blocked. If it shows only a
+matching remote branch, stop for a human ownership decision before creating a
+competing branch or PR.
 
 ## Spec Coverage Gate
 
@@ -244,10 +255,12 @@ For each issue slice:
 1. Use `skills/specrail-implement/SKILL.md` for the scoped implementation.
 2. Search before adding files, public APIs, workflow assets, schemas, templates,
    or policies.
-3. Implement only acceptance criteria from the linked spec and task plan.
-4. Add or update tests that prove the changed behavior.
-5. Keep machine IDs, paths, commands, states, routes, and JSON keys in English.
-6. Keep human-facing text in the selected locale.
+3. Run duplicate-work evidence collection and the implementation route gate
+   before creating a new implementation PR.
+4. Implement only acceptance criteria from the linked spec and task plan.
+5. Add or update tests that prove the changed behavior.
+6. Keep machine IDs, paths, commands, states, routes, and JSON keys in English.
+7. Keep human-facing text in the selected locale.
 
 ## Review And Verification
 

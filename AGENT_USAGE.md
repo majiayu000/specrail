@@ -109,10 +109,16 @@ agent session may need to restart before the installed skills are discoverable.
 
 ```sh
 python3 checks/github_issue_evidence.py --github-repo OWNER/REPO --issue <issue-number> --json > issue-evidence.json
+python3 checks/github_duplicate_evidence.py --github-repo OWNER/REPO --issue <issue-number> --json > duplicate-work-evidence.json
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --evidence issue-evidence.json --json
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
-python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json
+python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --duplicate-evidence duplicate-work-evidence.json --json
 ```
+
+The duplicate-work adapter is read-only. It collects open PR and remote branch
+evidence; `checks/duplicate_work_gate.py` and `route_gate.py` evaluate that
+evidence offline so duplicate implementation work is blocked before a new PR is
+opened.
 
 8. Run deterministic checks before claiming completion:
 
@@ -235,6 +241,8 @@ SpecRail currently provides:
 - a deterministic pack validator
 - a read-only GitHub issue evidence adapter
 - a read-only GitHub PR evidence adapter
+- a read-only duplicate-work evidence adapter and offline implementation
+  duplicate-work gate
 - an advisory review JSON gate
 - an optional runtime checkpoint gate for long agent-run handoffs
 - a local evaluator that returns `allowed`, `warn`, `needs_human`, or `blocked`

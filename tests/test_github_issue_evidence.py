@@ -281,8 +281,22 @@ def test_route_gate_rejects_inconsistent_trust_metadata(tmp_path: Path) -> None:
     assert "trusted_state" in payload["missing"]
 
 
-def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence() -> None:
+def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence(
+    tmp_path: Path,
+) -> None:
     fixture = ROOT / "examples/fixtures/issue-body-hint-ready-to-implement.json"
+    duplicate_evidence = tmp_path / "duplicate-work-evidence.json"
+    duplicate_evidence.write_text(
+        json.dumps(
+            {
+                "issue": 16,
+                "collected_at": "2026-07-04T00:00:00Z",
+                "open_prs": [],
+                "remote_branches": [],
+            }
+        ),
+        encoding="utf-8",
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -297,6 +311,8 @@ def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence() ->
             "ready_to_implement",
             "--evidence",
             str(fixture),
+            "--duplicate-evidence",
+            str(duplicate_evidence),
             "--json",
         ],
         cwd=ROOT,
