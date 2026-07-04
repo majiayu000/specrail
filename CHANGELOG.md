@@ -27,6 +27,9 @@
   rejects stale or post-merge gate ordering evidence.
 - PR gate review-thread evidence now requires resolver attribution and rejects
   implementer/orchestrator-resolved reviewer threads.
+- PR and runtime gates now record review source and reviewer-lane failures,
+  blocking silent self-review substitution unless fresh scoped authorization is
+  present.
 
 ## v0.2.1 - 2026-06-26
 

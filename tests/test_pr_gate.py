@@ -30,6 +30,26 @@ def test_pr_gate_allows_clean_authorized_merge() -> None:
     assert result["reasons"] == []
 
 
+def test_pr_gate_blocks_missing_review_source() -> None:
+    evidence = clean_evidence()
+    evidence.pop("review_source")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "review_source" in result["missing"]
+
+
+def test_pr_gate_blocks_missing_lane_failures_evidence() -> None:
+    evidence = clean_evidence()
+    evidence.pop("lane_failures")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "lane_failures" in result["missing"]
+
+
 def test_pr_gate_allows_human_resolved_thread() -> None:
     evidence = clean_evidence()
     thread = evidence["review_threads"][0]
@@ -98,6 +118,45 @@ def test_pr_gate_blocks_unknown_resolved_thread() -> None:
 
     assert result["decision"] == "blocked"
     assert any("forbidden unknown" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_allows_independent_retry_after_lane_failure() -> None:
+    evidence = clean_evidence()
+    evidence["lane_failures"] = [
+        {
+            "lane_id": "merge-reviewer-1",
+            "failure_kind": "usage_limit",
+            "observed_marker": "You've hit your usage limit",
+        }
+    ]
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "allowed"
+    assert any("lane failures recorded: 1" in item for item in result["satisfied"])
+
+
+def test_pr_gate_blocks_self_review_without_specific_authorization() -> None:
+    evidence = fixture("pr-self-review-unauthorized.json")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "self_review_authorization" in result["missing"]
+
+
+def test_pr_gate_allows_explicitly_authorized_self_review() -> None:
+    evidence = fixture("pr-self-review-unauthorized.json")
+    evidence["self_review_authorization"] = {
+        "actor": "maintainer",
+        "source": "chat after reviewer lane failure",
+        "scope": "PR #718 after merge-reviewer-1 usage_limit",
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "allowed"
+    assert any("self-review authorization" in item for item in result["satisfied"])
 
 
 def test_pr_gate_blocks_missing_thread_resolver_attribution() -> None:

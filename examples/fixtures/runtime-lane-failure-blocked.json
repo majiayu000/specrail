@@ -1,0 +1,36 @@
+{
+  "checkpoint_version": 1,
+  "tranche_id": "2026-07-04-lane-failure-blocked",
+  "repo": "example/repo",
+  "scope": "blocked reviewer lane failure example",
+  "status": "blocked",
+  "context_budget": {
+    "window_tokens": 258400,
+    "soft_stop_ratio": 0.5,
+    "hard_stop_ratio": 0.65,
+    "critical_stop_ratio": 0.75
+  },
+  "output_firewall": {
+    "raw_log_policy": "file_only",
+    "max_parent_stdout_lines": 150,
+    "max_subagent_final_lines": 150,
+    "artifact_root": "artifacts/logs/lane-failure-blocked"
+  },
+  "items": [
+    {
+      "issue": 59,
+      "pr": 73,
+      "state": "blocked",
+      "blocked_reason": "reviewer_lane_failure",
+      "lane_failures": [
+        {
+          "lane_id": "merge-reviewer-1",
+          "failure_kind": "usage_limit",
+          "observed_marker": "You've hit your usage limit"
+        }
+      ],
+      "next_action": "report lane failure and wait for human input or retry with a new independent reviewer lane"
+    }
+  ],
+  "resume_prompt": "Report the reviewer lane failure before continuing."
+}

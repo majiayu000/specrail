@@ -1,0 +1,96 @@
+{
+  "checkpoint_version": 1,
+  "tranche_id": "2026-07-04-self-review-merged-unauthorized",
+  "repo": "example/repo",
+  "scope": "invalid merged self-review example",
+  "status": "handoff",
+  "context_budget": {
+    "window_tokens": 258400,
+    "soft_stop_ratio": 0.5,
+    "hard_stop_ratio": 0.65,
+    "critical_stop_ratio": 0.75
+  },
+  "output_firewall": {
+    "raw_log_policy": "file_only",
+    "max_parent_stdout_lines": 150,
+    "max_subagent_final_lines": 150,
+    "artifact_root": "artifacts/logs/self-review-merged-unauthorized"
+  },
+  "thread_dispatch_gate": {
+    "explicit_thread_request": "yes",
+    "native_subagents": "available",
+    "spawn_requirement": "required",
+    "fallback_mode": "none",
+    "planned_native_threads": [
+      {
+        "id": "merge-reviewer-1",
+        "role": "merge_reviewer",
+        "target": "PR #718",
+        "write_scope": "read_only",
+        "spawn_status": "spawned",
+        "no_spawn_reason": null
+      }
+    ],
+    "native_thread_evidence": {
+      "spawned_agents": [
+        {
+          "lane_id": "merge-reviewer-1",
+          "spawn_tool": "multi_agent_v1.spawn_agent",
+          "agent_id_or_thread_id": "agent-reviewer-1",
+          "wait_evidence": "wait_agent returned usage limit",
+          "close_evidence": "close_agent completed",
+          "result_collected": "yes"
+        }
+      ],
+      "fallback_reason": null
+    },
+    "no_spawn_reason": null
+  },
+  "items": [
+    {
+      "issue": 59,
+      "pr": 718,
+      "state": "merged",
+      "branch": "codex/gh59-example",
+      "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+      "truth_level": "A",
+      "review_source": "self_review",
+      "lane_failures": [
+        {
+          "lane_id": "merge-reviewer-1",
+          "failure_kind": "usage_limit",
+          "observed_marker": "You've hit your usage limit"
+        }
+      ],
+      "ci": {
+        "status": "green",
+        "evidence": "artifacts/logs/self-review-merged-unauthorized/ci-summary.md"
+      },
+      "review": {
+        "status": "passed",
+        "evidence": "artifacts/reviews/self-review-merged-unauthorized/self-review.md",
+        "blocking_findings": []
+      },
+      "review_threads": {
+        "status": "clean",
+        "unresolved_count": 0,
+        "evidence": "artifacts/reviews/self-review-merged-unauthorized/review-threads.json",
+        "checked_at": "2026-07-04T00:00:00Z"
+      },
+      "pr_gate": {
+        "status": "passed",
+        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "evidence": "examples/fixtures/pr-self-review-unauthorized.json",
+        "checked_at": "2026-07-04T00:01:00Z"
+      },
+      "next_action": "flag closure audit violation",
+      "merge_state": "clean",
+      "merge_authorization": {
+        "actor": "maintainer",
+        "source": "chat",
+        "summary": "generic merge approved"
+      }
+    }
+  ],
+  "resume_prompt": "This fixture should be blocked because self-review lacks specific authorization."
+}

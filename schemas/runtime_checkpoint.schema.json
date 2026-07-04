@@ -315,6 +315,58 @@
           "truth_level": {
             "enum": ["A", "B", "C", "D", null]
           },
+          "review_source": {
+            "enum": ["independent_lane", "self_review", null]
+          },
+          "lane_failures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["lane_id", "failure_kind", "observed_marker"],
+              "additionalProperties": true,
+              "properties": {
+                "lane_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "failure_kind": {
+                  "enum": ["usage_limit", "crash", "zero_output", "closed", "other"]
+                },
+                "observed_marker": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "detail": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "blocked_reason": {
+            "type": ["string", "null"]
+          },
+          "self_review_authorization": {
+            "type": ["object", "null"],
+            "required": ["actor", "source", "scope"],
+            "additionalProperties": true,
+            "properties": {
+              "actor": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "summary": {
+                "type": "string"
+              }
+            }
+          },
           "ci": {
             "type": ["object", "null"],
             "additionalProperties": true,
