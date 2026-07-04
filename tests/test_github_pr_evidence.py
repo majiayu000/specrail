@@ -109,6 +109,7 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
             "source": "chat",
             "summary": "merge approved",
         },
+        review_source="independent_lane",
     )
 
     assert evidence["pr"] == 10
@@ -147,7 +148,11 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
 
 
 def test_build_evidence_without_authorization_needs_human() -> None:
-    evidence = build_evidence(pr_payload(), threads_payload())
+    evidence = build_evidence(
+        pr_payload(),
+        threads_payload(),
+        review_source="independent_lane",
+    )
 
     assert "human_authorization" not in evidence
     result = evaluate_pr_gate(evidence)
@@ -228,6 +233,8 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
             "chat",
             "--authorization-summary",
             "merge approved",
+            "--review-source",
+            "independent_lane",
             "--json",
         ],
         cwd=ROOT,

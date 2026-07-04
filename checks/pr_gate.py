@@ -19,6 +19,8 @@ CHECK_PASS_CONCLUSIONS = {"SUCCESS"}
 CLEAN_MERGE_STATES = {"CLEAN"}
 ACTIVE_CHANGE_REQUESTS = {"CHANGES_REQUESTED"}
 ALLOWED_RESOLVER_ROLES = {"reviewer_lane", "human"}
+INDEPENDENT_REVIEW_SOURCES = {"independent_lane"}
+KNOWN_REVIEW_SOURCES = {"independent_lane", "self_review"}
 BLOCKED_RESOLVER_ROLES = {"implementer", "orchestrator", "coordinator", "unknown"}
 
 
@@ -152,6 +154,27 @@ def _thread_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[
     return satisfied, missing, reasons
 
 
+def _review_source_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    satisfied: list[str] = []
+    missing: list[str] = []
+    reasons: list[str] = []
+
+    review_source = evidence.get("review_source")
+    if not _non_empty_string(review_source):
+        missing.append("review_source")
+    elif review_source in INDEPENDENT_REVIEW_SOURCES:
+        satisfied.append(f"review_source: {review_source}")
+    elif review_source in KNOWN_REVIEW_SOURCES:
+        reasons.append(
+            "review_source self_review does not satisfy the independent-review requirement"
+        )
+    else:
+        allowed = ", ".join(sorted(KNOWN_REVIEW_SOURCES))
+        reasons.append(f"review_source must be one of: {allowed}")
+
+    return satisfied, missing, reasons
+
+
 def _authorization_item(evidence: dict[str, Any]) -> tuple[list[str], list[str]]:
     authorization = evidence.get("human_authorization")
     if not isinstance(authorization, dict):
@@ -272,7 +295,7 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
     else:
         missing.append("merge_state")
 
-    for checker in [_check_items, _review_items, _thread_items]:
+    for checker in [_check_items, _review_items, _thread_items, _review_source_items]:
         checker_satisfied, checker_missing, checker_reasons = checker(evidence)
         satisfied.extend(checker_satisfied)
         missing.extend(checker_missing)
