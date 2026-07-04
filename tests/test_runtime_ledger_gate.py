@@ -791,3 +791,21 @@ def test_runtime_ledger_gate_streak_resets_on_impl() -> None:
     result = evaluate_checkpoint(checkpoint)
 
     assert result["decision"] in {"allowed", "warn"}, result["errors"]
+
+
+def test_runtime_ledger_gate_blocks_merge_authorization_without_actor() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint["items"][0]["merge_authorization"] = {"actor": "", "source": "chat"}  # type: ignore[index]
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("merge_authorization.actor" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_non_object_merge_authorization() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint["items"][0]["merge_authorization"] = "yes"  # type: ignore[index]
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("merge_authorization must be an object" in error for error in result["errors"])

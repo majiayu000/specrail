@@ -40,9 +40,14 @@ def _positive_int(value: Any) -> bool:
 def _parse_timestamp(value: str, field: str) -> datetime | None:
     normalized = value.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(normalized)
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        # Naive timestamps cannot be safely compared with the timezone-aware
+        # values the evidence collector emits; treat them as unparseable.
+        return None
+    return parsed
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -240,7 +245,9 @@ def _ordering_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], lis
     if _non_empty_string(completed_at):
         completed_time = _parse_timestamp(completed_at, "gate_query_completed_at")
         if completed_time is None:
-            reasons.append("gate_query_completed_at must be an ISO-8601 timestamp")
+            reasons.append(
+                "gate_query_completed_at must be a timezone-aware ISO-8601 timestamp"
+            )
         else:
             satisfied.append(f"gate query completed at {completed_at}")
     else:
@@ -277,7 +284,9 @@ def _ordering_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], lis
             else None
         )
         if merge_time is None:
-            reasons.append("merge_dispatched_at must be an ISO-8601 timestamp")
+            reasons.append(
+                "merge_dispatched_at must be a timezone-aware ISO-8601 timestamp"
+            )
         elif completed_time is not None and completed_time >= merge_time:
             reasons.append("gate query must complete before merge dispatch")
         else:

@@ -252,3 +252,13 @@ def test_pr_gate_blocks_unknown_merge_path() -> None:
 
     assert result["decision"] == "blocked"
     assert any("merge_path must be one of" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_blocks_naive_merge_dispatch_timestamp() -> None:
+    evidence = fixture("pr-merge-confirmed.json")
+    evidence["merge_dispatched_at"] = "2026-07-04T07:01:00"
+    evidence["merge_head_sha"] = evidence["gate_query_head_sha"]
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("timezone-aware" in reason for reason in result["reasons"])
