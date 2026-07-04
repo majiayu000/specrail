@@ -1,6 +1,8 @@
 {
   "checkpoint_version": 1,
+  "tranche_id": "2026-07-04-lane-failure-blocked-t01",
   "repo": "example/repo",
+  "scope": "reviewer lane failed; item downgraded and waiting",
   "status": "blocked",
   "context_budget": {
     "window_tokens": 258400,
@@ -14,9 +16,6 @@
     "max_subagent_final_lines": 150,
     "artifact_root": "artifacts/logs/lane-failure-example"
   },
-  "resume_prompt": "Read this checkpoint and refresh remote truth.",
-  "tranche_id": "2026-07-04-lane-failure-blocked-t01",
-  "scope": "reviewer lane failed; item downgraded and waiting",
   "items": [
     {
       "issue": 91,
@@ -32,5 +31,6 @@
       ],
       "next_action": "spawn a new independent reviewer lane and rerun review"
     }
-  ]
+  ],
+  "resume_prompt": "Read this checkpoint and refresh remote truth."
 }

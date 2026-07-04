@@ -113,6 +113,8 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
     )
 
     assert evidence["pr"] == 10
+    assert evidence["review_source"] == "independent_lane"
+    assert evidence["lane_failures"] == []
     assert evidence["gate_query_head_sha"] == "e36d97517d8d0b27faca1abe5e5c63f9f88684d9"
     assert evidence["gate_query_completed_at"].endswith("Z")
     assert evidence["linked_issue"] == 9
@@ -147,6 +149,27 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
 
 
+def test_build_evidence_maps_resolver_role_from_lane_roster() -> None:
+    payload = threads_payload()
+    thread = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]  # type: ignore[index]
+    assert isinstance(thread, dict)
+    thread.pop("resolverRole")
+
+    evidence = build_evidence(
+        pr_payload(),
+        payload,
+        {
+            "actor": "user",
+            "source": "chat",
+        },
+        review_source="independent_lane",
+        resolver_roles={"reviewer": "reviewer_lane"},
+    )
+
+    assert evidence["review_threads"][0]["resolver_role"] == "reviewer_lane"
+    assert evaluate_pr_gate(evidence)["decision"] == "allowed"
+
+
 def test_build_evidence_without_authorization_needs_human() -> None:
     evidence = build_evidence(
         pr_payload(),
@@ -170,6 +193,7 @@ def test_build_evidence_can_record_merge_dispatch_ordering() -> None:
         },
         "2026-07-04T00:00:10Z",
         "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        review_source="independent_lane",
     )
 
     assert evidence["merge_dispatched_at"] == "2026-07-04T00:00:10Z"

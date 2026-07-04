@@ -191,6 +191,8 @@ Keep ownership boundaries explicit:
 - shared verification belongs to one coordinator
 - dependent specs run serially
 
+## Reviewer Lane Reuse
+
 Reviewer lane input is scoped: the diff (or diff since the previously
 reviewed head), the linked spec packet, and the prior-findings checklist.
 Never forward coordinator conversation history into a reviewer lane. For
@@ -199,6 +201,29 @@ if the runtime cannot resume, spawn a `diff_only` lane instead of a new
 full-history fork. Full reviews are capped at 2 rounds per PR unless a human
 explicitly requests another full pass (see Review Rounds And Modes in
 `skills/specrail-review-pr/SKILL.md`).
+
+## Reviewer Lane Failures
+
+A reviewer or merge-reviewer lane failure is a gate event, not an implementation
+detail to hide. Failures include usage limits, crashes, zero output, or a lane
+closed before it produced a complete review verdict.
+
+When a reviewer lane fails:
+
+- record `lane_failures[]` with lane id, failure kind, and observed marker
+- downgrade the affected item to `blocked` or `needs_human` with
+  `blocked_reason: reviewer_lane_failure`
+- report the failure in the handoff/checkpoint before any merge decision
+- recover only by launching a different independent reviewer lane, or by getting
+  fresh explicit self-review authorization after reporting the failure
+
+If recovery uses a new independent reviewer lane, record
+`review_source: independent_lane` and keep the lane failure history in evidence.
+If recovery uses self-review, record `review_source: self_review` and
+`self_review_authorization` with actor, source, and scope from the current
+conversation after the failure was reported. Prior queue-drain or generic merge
+authorization does not cover a later self-review substitution unless it
+explicitly scoped that failure path.
 
 ## Context Budget
 
@@ -334,6 +359,9 @@ For GitHub PRs, current evidence must include:
 - review decision when available
 - independent reviewer or merge-reviewer lane evidence
 - native reviewer thread evidence when native subagents are available
+- `review_source` (`independent_lane` or `self_review`)
+- `lane_failures[]`, empty when no reviewer lane failed
+- `self_review_authorization` when `review_source: self_review`
 - GraphQL review-thread state
 - per-thread resolver identity and resolver lane role
 - gate-query completion timestamp and gate-query head SHA from the serial
@@ -409,6 +437,9 @@ must never report an outcome without remote confirmation:
 - Do not let an implementation lane or orchestrator resolve reviewer-lane
   review threads. If the reviewer lane is unavailable, route through the GH-59
   reviewer-lane failure path or a human decision.
+- Do not silently replace a failed reviewer lane with coordinator self-review.
+  Self-review can proceed only after the failure is reported and fresh scoped
+  self-review authorization is recorded.
 - Do not treat green CI as merge readiness without review-thread and merge-state
   truth.
 - Do not close an issue from a partial implementation.

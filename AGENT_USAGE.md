@@ -131,14 +131,22 @@ python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue-number>
 9. Before reporting a PR as merge-ready, collect PR evidence and run:
 
 ```sh
-python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --json > pr-evidence.json
+python3 checks/github_pr_evidence.py \
+  --github-repo OWNER/REPO \
+  --pr <pr-number> \
+  --review-source independent_lane \
+  --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
 ```
 
 The GitHub adapter is read-only and only reshapes `gh` output. The PR gate is
 offline. GitHub or `threads` may collect evidence such as PR head SHA, CI
-status, review threads, merge state, and linked issue references. The gate only
-evaluates that evidence and never merges or writes remote state.
+status, review threads, review source, lane failures, merge state, and linked
+issue references. Resolver role mapping comes from explicit lane-roster evidence
+such as `--resolver-role-map`; the adapter must not infer it from GitHub alone.
+The gate only evaluates that evidence and never merges or writes remote state.
+Self-review evidence must use `--review-source self_review` plus
+self-review authorization fields recorded after the lane failure.
 
 For long agent runs, maintain an optional local runtime checkpoint before
 handoff or compaction:

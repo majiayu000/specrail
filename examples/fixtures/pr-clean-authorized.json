@@ -34,5 +34,7 @@
       "state": "COMMENTED"
     }
   ],
-  "state": "OPEN"
+  "state": "OPEN",
+  "review_source": "independent_lane",
+  "lane_failures": []
 }
