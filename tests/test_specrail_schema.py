@@ -122,6 +122,16 @@ def test_runtime_checkpoint_fixture_instances_validate_against_schema() -> None:
 def test_pr_gate_fixture_instances_validate_against_schema() -> None:
     schema = pr_review_gate_schema()
     for fixture in sorted((ROOT / "examples" / "fixtures").glob("pr-*.json")):
+        if fixture.name == "pr-missing-thread-resolver.json":
+            continue
+        validate_instance(schema, json.loads(fixture.read_text(encoding="utf-8")))
+
+
+def test_pr_gate_schema_rejects_missing_thread_resolver_fixture() -> None:
+    schema = pr_review_gate_schema()
+    fixture = ROOT / "examples" / "fixtures" / "pr-missing-thread-resolver.json"
+
+    with pytest.raises(SpecRailError, match="resolved_by"):
         validate_instance(schema, json.loads(fixture.read_text(encoding="utf-8")))
 
 

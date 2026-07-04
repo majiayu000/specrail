@@ -36,9 +36,22 @@ python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-num
 8. If merge readiness is requested, route to
    `skills/specrail-pr-gate/SKILL.md`.
 
+## Thread Resolution Ownership
+
+Reviewer lanes may resolve review threads only after re-checking that the
+finding is fixed or no longer applies. A reviewer lane may resolve its own
+thread, a successor reviewer lane may resolve after re-review, and a human
+maintainer may resolve directly.
+
+Implementation lanes and orchestrators must not call `resolveReviewThread` for
+reviewer-lane findings. They may reply with context and push fixes, but the
+resolution action stays with the reviewer or human.
+
 ## Boundaries
 
 - Treat the review as advisory.
 - Do not grant final approval.
 - Do not merge or mark human gates complete.
+- Do not resolve reviewer-lane threads from an implementation or coordinator
+  role.
 - Do not disclose private security details publicly.

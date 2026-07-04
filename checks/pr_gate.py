@@ -18,6 +18,8 @@ from typing import Any
 CHECK_PASS_CONCLUSIONS = {"SUCCESS"}
 CLEAN_MERGE_STATES = {"CLEAN"}
 ACTIVE_CHANGE_REQUESTS = {"CHANGES_REQUESTED"}
+ALLOWED_RESOLVER_ROLES = {"reviewer_lane", "human"}
+BLOCKED_RESOLVER_ROLES = {"implementer", "orchestrator", "coordinator", "unknown"}
 
 
 def _as_bool(value: Any) -> bool:
@@ -122,9 +124,26 @@ def _thread_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[
             unresolved.append(f"thread #{index}")
             continue
         is_resolved = _as_bool(thread.get("is_resolved"))
-        is_outdated = _as_bool(thread.get("is_outdated"))
-        if not is_resolved and not is_outdated:
-            unresolved.append(str(thread.get("url") or thread.get("id") or f"thread #{index}"))
+        identifier = str(thread.get("url") or thread.get("id") or f"thread #{index}")
+        if not is_resolved:
+            unresolved.append(identifier)
+            continue
+
+        resolved_by = thread.get("resolved_by")
+        resolver_role = thread.get("resolver_role")
+        if not _non_empty_string(resolved_by):
+            missing.append(f"review_threads[{index}].resolved_by")
+        if not _non_empty_string(resolver_role):
+            missing.append(f"review_threads[{index}].resolver_role")
+            continue
+
+        role = str(resolver_role).strip()
+        if role in ALLOWED_RESOLVER_ROLES:
+            satisfied.append(f"review thread resolved by {role}: {identifier}")
+        elif role in BLOCKED_RESOLVER_ROLES:
+            reasons.append(f"review thread resolved by forbidden {role}: {identifier}")
+        else:
+            reasons.append(f"review thread resolver_role is unsupported: {role}")
 
     if unresolved:
         reasons.append("unresolved review threads: " + ", ".join(unresolved))

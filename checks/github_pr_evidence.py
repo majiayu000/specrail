@@ -32,6 +32,9 @@ query SpecRailReviewThreads($owner: String!, $name: String!, $number: Int!) {
           id
           isResolved
           isOutdated
+          resolvedBy {
+            login
+          }
           comments(first: 5) {
             nodes {
               url
@@ -183,6 +186,24 @@ def _first_comment_url(thread: dict[str, Any]) -> str | None:
     return None
 
 
+def _resolver_login(thread: dict[str, Any]) -> str | None:
+    for key in ["resolvedBy", "resolved_by"]:
+        value = thread.get(key)
+        if isinstance(value, dict) and isinstance(value.get("login"), str) and value["login"].strip():
+            return value["login"].strip()
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _resolver_role(thread: dict[str, Any]) -> str | None:
+    for key in ["resolverRole", "resolver_role"]:
+        value = thread.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _author_login(value: Any, fallback: str) -> str:
     if isinstance(value, dict) and isinstance(value.get("login"), str) and value["login"].strip():
         return value["login"].strip()
@@ -280,6 +301,12 @@ def normalize_review_threads(graphql_payload: dict[str, Any]) -> list[dict[str, 
         url = _first_comment_url(item)
         if url:
             thread["url"] = url
+        resolver = _resolver_login(item)
+        if resolver:
+            thread["resolved_by"] = resolver
+        role = _resolver_role(item)
+        if role:
+            thread["resolver_role"] = role
         normalized.append(thread)
     return normalized
 

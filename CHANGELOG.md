@@ -25,6 +25,8 @@
   authority split between schema structure and gate behavior.
 - PR gate evidence now records serial gate-query completion/head SHA fields and
   rejects stale or post-merge gate ordering evidence.
+- PR gate review-thread evidence now requires resolver attribution and rejects
+  implementer/orchestrator-resolved reviewer threads.
 
 ## v0.2.1 - 2026-06-26
 

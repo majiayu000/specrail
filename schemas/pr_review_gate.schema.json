@@ -100,7 +100,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["is_resolved", "is_outdated"],
+        "required": ["is_resolved", "is_outdated", "resolved_by", "resolver_role"],
         "additionalProperties": true,
         "properties": {
           "id": {
@@ -115,6 +115,13 @@
           },
           "is_outdated": {
             "type": "boolean"
+          },
+          "resolved_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resolver_role": {
+            "enum": ["reviewer_lane", "human", "implementer", "orchestrator", "coordinator", "unknown"]
           }
         }
       }

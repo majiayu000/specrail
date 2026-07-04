@@ -15,6 +15,7 @@ sys.path.insert(0, str(CHECKS))
 
 from github_pr_evidence import (  # noqa: E402
     EvidenceError,
+    REVIEW_THREADS_QUERY,
     build_evidence,
     build_human_authorization,
     collect_evidence,
@@ -65,6 +66,8 @@ def threads_payload() -> dict[str, object]:
                                 "id": "PRRT_kwDOExample",
                                 "isResolved": True,
                                 "isOutdated": False,
+                                "resolvedBy": {"login": "reviewer"},
+                                "resolverRole": "reviewer_lane",
                                 "comments": {
                                     "nodes": [
                                         {
@@ -90,6 +93,11 @@ def test_parse_github_repo_requires_owner_repo() -> None:
 
     with pytest.raises(EvidenceError):
         parse_github_repo("../specrail")
+
+
+def test_review_threads_query_requests_resolver_identity() -> None:
+    assert "resolvedBy" in REVIEW_THREADS_QUERY
+    assert "login" in REVIEW_THREADS_QUERY
 
 
 def test_build_evidence_matches_pr_gate_contract() -> None:
@@ -131,6 +139,8 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
             "url": "https://github.com/example/specrail/pull/10#discussion_r1",
             "is_resolved": True,
             "is_outdated": False,
+            "resolved_by": "reviewer",
+            "resolver_role": "reviewer_lane",
         }
     ]
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
