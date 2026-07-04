@@ -58,6 +58,34 @@ def test_pr_gate_blocks_unresolved_thread() -> None:
     assert any("unresolved review threads" in reason for reason in result["reasons"])
 
 
+def test_pr_gate_blocks_outdated_unresolved_thread() -> None:
+    evidence = fixture("pr-outdated-unresolved-thread.json")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("outdated-unresolved-thread" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_blocks_implementer_resolved_thread() -> None:
+    evidence = fixture("pr-implementer-resolved-thread.json")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("forbidden implementer" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_blocks_missing_thread_resolver_attribution() -> None:
+    evidence = fixture("pr-missing-thread-resolver.json")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "review_threads[1].resolved_by" in result["missing"]
+    assert "review_threads[1].resolver_role" in result["missing"]
+
+
 def test_pr_gate_blocks_missing_gate_query_ordering_fields() -> None:
     evidence = clean_evidence()
     evidence.pop("gate_query_completed_at")

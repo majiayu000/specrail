@@ -65,6 +65,8 @@ def threads_payload() -> dict[str, object]:
                                 "id": "PRRT_kwDOExample",
                                 "isResolved": True,
                                 "isOutdated": False,
+                                "resolvedBy": {"login": "reviewer"},
+                                "resolverRole": "reviewer_lane",
                                 "comments": {
                                     "nodes": [
                                         {
@@ -131,6 +133,8 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
             "url": "https://github.com/example/specrail/pull/10#discussion_r1",
             "is_resolved": True,
             "is_outdated": False,
+            "resolved_by": "reviewer",
+            "resolver_role": "reviewer_lane",
         }
     ]
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
