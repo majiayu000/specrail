@@ -32,6 +32,9 @@ query SpecRailReviewThreads($owner: String!, $name: String!, $number: Int!) {
           id
           isResolved
           isOutdated
+          resolvedBy {
+            login
+          }
           comments(first: 5) {
             nodes {
               url

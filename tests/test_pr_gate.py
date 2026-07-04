@@ -30,6 +30,18 @@ def test_pr_gate_allows_clean_authorized_merge() -> None:
     assert result["reasons"] == []
 
 
+def test_pr_gate_allows_human_resolved_thread() -> None:
+    evidence = clean_evidence()
+    thread = evidence["review_threads"][0]
+    thread["resolved_by"] = "maintainer"
+    thread["resolver_role"] = "human"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "allowed"
+    assert any("resolved by human" in item for item in result["satisfied"])
+
+
 def test_pr_gate_needs_human_without_authorization() -> None:
     evidence = fixture("pr-missing-human-auth.json")
 
@@ -74,6 +86,18 @@ def test_pr_gate_blocks_implementer_resolved_thread() -> None:
 
     assert result["decision"] == "blocked"
     assert any("forbidden implementer" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_blocks_unknown_resolved_thread() -> None:
+    evidence = clean_evidence()
+    thread = evidence["review_threads"][0]
+    thread["resolved_by"] = "unknown-actor"
+    thread["resolver_role"] = "unknown"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("forbidden unknown" in reason for reason in result["reasons"])
 
 
 def test_pr_gate_blocks_missing_thread_resolver_attribution() -> None:
