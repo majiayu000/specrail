@@ -32,8 +32,10 @@ python3 checks/route_gate.py --repo . --route implement --issue <issue-number> -
 
 If duplicate evidence is missing, the implementation route needs human input.
 If it shows an open PR for the issue, the route is blocked. If it shows only a
-matching remote branch, stop for a human ownership decision before creating a
-competing branch or PR.
+matching remote branch, an ownership decision is needed before creating a
+competing branch or PR: in `auth_mode: review`, stop and ask; in
+`auth_mode: auto`, skip the issue, record it in `human_decisions`, and keep
+draining the rest of the queue.
 
 ## Spec Coverage Gate
 
@@ -54,6 +56,17 @@ Implementation candidates are only `complete`, `umbrella_covered`, or
 SpecRail spec-writing or task-planning skill first. Do not implement from only
 issue text, PR comments, or old chat context unless the user explicitly
 authorizes a non-spec exception and the checkpoint records the reason.
+
+Spec-drafting authorization depends on `auth_mode`:
+
+- `auth_mode: auto` (the implx default): drafting the missing spec or task
+  packet and then implementing from it is authorized by the invocation itself.
+  Draft, self-check with the spec-writing skill's own gates, and continue to
+  implementation in the same run, subject to the Spec/Impl Mix Gate. Escalate
+  to `human_decisions` only for architecture-level rewrites or specs the issue
+  lacks evidence to draft.
+- `auth_mode: review`: draft the spec, then wait for human confirmation
+  before implementing from it.
 
 For `queue_mode: full_queue_drain`, `needs_spec` and `needs_tasks` are
 actionable planning work, not completion. If no implementation-ready tranche is
@@ -79,6 +92,7 @@ Record the plan as:
 specrail_implementation_queue:
   overall_objective:
   queue_mode: bounded_tranche | full_queue_drain
+  auth_mode: auto | review
   spec_coverage:
     complete:
     needs_tasks:
@@ -368,7 +382,7 @@ For GitHub PRs, current evidence must include:
   `pr_gate.py` run
 - merge state
 - linked issue or closing reference intent
-- explicit human merge authorization before merge
+- merge authorization per `auth_mode` (see Merge Authorization)
 
 The runtime checkpoint must not mark a PR item `complete`, `merged`,
 `merge_ready`, or `ready_to_merge` unless `checks/runtime_ledger_gate.py` accepts
@@ -401,6 +415,32 @@ review source when collecting evidence
 `runtime_ledger_gate.py` blocks unauthorized self-review merges and
 unreported lane failures.
 
+### Merge Authorization
+
+`auth_mode: auto` (implx default):
+
+- The queue invocation is the standing merge authorization for the run. Do not
+  ask per-PR merge questions.
+- Merge when ALL current evidence is green: CI/check rollup passing, PR gate
+  passed, review threads resolved, reviewer-lane evidence present, merge state
+  clean. Any evidence gap means skip the PR, record the gap in
+  `remaining_queue`, and keep draining.
+- Use closing keywords on final slices; after merge, close issues whose
+  acceptance criteria are fully merged. Merged-but-open issues found during
+  closure audit are closed with a comment linking the merged PRs.
+- Human-gate items (duplicate-ownership conflicts, maintainer waivers, probe
+  or time-window gates, conflicting review feedback, destructive or
+  irreversible actions) never block the queue: skip, continue, and report them
+  once in a final `human_decisions` list with a recommended action each.
+- Auto mode does not weaken reviewer-lane requirements, the self-review
+  authorization rules, the Bounded Tranche Hard Stop, or the runtime ledger
+  gate. Standing merge authorization is not self-review authorization.
+
+`auth_mode: review`:
+
+- Do not merge without explicit human authorization in the current
+  conversation, per PR.
+
 ### Safe Merge Path
 
 Merging must survive branches that are checked out in local worktrees and
@@ -430,8 +470,10 @@ must never report an outcome without remote confirmation:
 
 ## Boundaries
 
-- Do not grant final approval.
-- Do not merge without explicit human authorization and current PR-gate evidence.
+- In `auth_mode: auto`, merge only on complete current evidence; evidence gaps
+  mean skip and report, not ask.
+- In `auth_mode: review`, do not merge without explicit human authorization and
+  current PR-gate evidence.
 - Do not dispatch review-thread/pr_gate queries and the merge command in the
   same parallel tool batch or parallel lane; the gate query must complete first.
 - Do not let an implementation lane or orchestrator resolve reviewer-lane
@@ -458,4 +500,7 @@ Report:
 - tests and deterministic checks run
 - review-thread, CI, merge-state, and PR-gate evidence
 - issues still open and why
+- `human_decisions`: the consolidated list of items needing a human choice,
+  each with a recommended action (auto mode reports this once at the end
+  instead of asking mid-run)
 - local dirty or stale worktree state
