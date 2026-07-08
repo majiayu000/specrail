@@ -1,5 +1,5 @@
 name: specrail
-version: 0.2.1
+version: 0.3.0
 description: Issue-first, spec-first, AI-assisted repository workflow pack.
 
 durable_state:
@@ -14,6 +14,11 @@ durable_state:
 
 automation_policy:
   default_mode: dry_run
+  # auth_mode selects how merge/spec authorization works for queue runs.
+  # auto: the queue invocation is standing merge authorization; merges happen
+  #   only on complete current evidence. review: per-PR explicit human merge
+  #   authorization. Pin `review` here to force review mode for this repo.
+  auth_mode: auto
   allowed_agent_actions:
     - propose_labels
     - draft_specs
@@ -23,12 +28,27 @@ automation_policy:
     - diagnose_ci
     - draft_release_notes
   forbidden_agent_actions:
-    - final_approval
-    - merge
     - force_push
     - close_disputed_issue
     - public_security_disclosure
     - permission_change
+
+auth_modes:
+  auto:
+    description: "Default for plain implx queue drains. The invocation is the standing merge authorization; merge only when ALL current evidence is green (CI rollup, pr_gate, resolved review threads, reviewer-lane evidence, clean merge state). Missing spec/task packets are auto-drafted and implemented in the same run; items needing a human choice are skipped and reported once in a final human_decisions list."
+    allowed_agent_actions:
+      - merge_on_complete_evidence
+      - close_issue_on_merged_evidence
+    waived_human_gates:
+      - spec_approval
+      - final_pr_review
+      - merge
+  review:
+    description: "Per-PR explicit human merge authorization in the current conversation. Freshly drafted specs wait for human confirmation before implementation."
+    forbidden_agent_actions:
+      - final_approval
+      - merge
+    waived_human_gates: []
 
 required_human_gates:
   - readiness_label
