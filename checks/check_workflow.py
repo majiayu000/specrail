@@ -67,9 +67,13 @@ REQUIRED_FILE_GLOBS = [
     "schemas/*.schema.json",
 ]
 
+VALID_AUTH_MODES = ("auto", "review")
+
 REQUIRED_TOKENS = {
     "workflow.yaml": [
         "default_mode: dry_run",
+        "auth_mode:",
+        "auth_modes:",
         "forbidden_agent_actions:",
         "required_human_gates:",
         "action_policy:",
@@ -154,6 +158,48 @@ def validate_impl_branch_template(config: object) -> list[str]:
         return ["workflow.yaml: artifacts.impl_branch is required"]
     if "{issue_number}" not in template:
         errors.append("workflow.yaml: artifacts.impl_branch must contain {issue_number}")
+    return errors
+
+
+def validate_auth_mode(config: object) -> list[str]:
+    errors: list[str] = []
+    workflow = config.workflow  # type: ignore[attr-defined]
+    policy = workflow.get("automation_policy")
+    if not isinstance(policy, dict):
+        return ["workflow.yaml: automation_policy must be a mapping"]
+
+    auth_mode = policy.get("auth_mode")
+    if auth_mode not in VALID_AUTH_MODES:
+        errors.append(
+            "workflow.yaml: automation_policy.auth_mode must be one of: "
+            + ", ".join(VALID_AUTH_MODES)
+        )
+
+    gates = workflow.get("required_human_gates")
+    gate_names = {str(gate) for gate in gates} if isinstance(gates, list) else set()
+
+    modes = workflow.get("auth_modes")
+    if not isinstance(modes, dict):
+        errors.append("workflow.yaml: auth_modes must be a mapping")
+        return errors
+    for mode in VALID_AUTH_MODES:
+        body = modes.get(mode)
+        if not isinstance(body, dict):
+            errors.append(f"workflow.yaml: auth_modes.{mode} must be a mapping")
+            continue
+        waived = body.get("waived_human_gates")
+        if not isinstance(waived, list):
+            errors.append(
+                f"workflow.yaml: auth_modes.{mode}.waived_human_gates must be a list"
+            )
+            continue
+        for gate in waived:
+            if str(gate) not in gate_names:
+                errors.append(
+                    f"workflow.yaml: auth_modes.{mode} waives unknown human gate {gate}"
+                )
+    for mode in sorted(set(modes) - set(VALID_AUTH_MODES)):
+        errors.append(f"workflow.yaml: auth_modes defines unknown mode {mode}")
     return errors
 
 
@@ -298,6 +344,7 @@ def main() -> int:
         errors.extend(validate_labels(config))
         errors.extend(validate_action_policy(config))
         errors.extend(validate_impl_branch_template(config))
+        errors.extend(validate_auth_mode(config))
         errors.extend(validate_skills_lock(repo))
         errors.extend(validate_template_parity(repo))
         for spec_dir in select_spec_packet_dirs(

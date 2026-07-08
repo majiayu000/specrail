@@ -1,6 +1,6 @@
 ---
 name: implx
-description: "Use when the user says \"implx\", \"use implx\", \"用 implx\", or asks for the one-line SpecRail queue shortcut. Plain implx means drain the full actionable issue/PR queue by default: run SpecRail preflight, create missing spec/task PR work before implementation, use threads for reviewer/merge-reviewer lanes when available, create per-issue implementation PRs, require CI/reviewThreads/pr_gate evidence, preserve human merge authorization, and perform closure audit."
+description: "Use when the user says \"implx\", \"use implx\", \"用 implx\", or asks for the one-line SpecRail queue shortcut. Plain implx means drain the full actionable issue/PR queue in auto mode: run SpecRail preflight, create missing spec/task PR work before implementation, use threads for reviewer/merge-reviewer lanes when available, create per-issue implementation PRs, require CI/reviewThreads/pr_gate evidence, auto-merge on complete evidence, and perform closure audit. Say \"implx review\" / \"implx 人工\" for the review mode that keeps per-PR human merge authorization."
 ---
 
 # Implx
@@ -45,8 +45,43 @@ These explicit forms are equivalent:
 
 Use `queue_mode: bounded_tranche` only when the prompt explicitly limits scope,
 for example one issue, one PR, the current tranche, plan-only, status-only, or
-review-only work. Plain `implx` does not grant merge authorization; merge still
-requires explicit authorization in the current conversation.
+review-only work.
+
+## Authorization Mode
+
+Two modes. Record the selected mode at startup and pass it downstream.
+
+`auth_mode: auto` — the DEFAULT for plain `implx`, `use implx`, `用 implx`,
+and any drain/resume form that does not ask for review:
+
+- The invocation itself IS the standing merge authorization for this run.
+  Do not ask per-PR "can I merge" questions.
+- Merge a PR when ALL evidence is current and green per
+  `skills/specrail-implement-queue/SKILL.md` (CI rollup, PR gate, resolved
+  review threads, clean merge state, reviewer-lane evidence).
+- Use closing keywords for final slices so merged PRs close their issues;
+  close merged-but-open issues during closure audit.
+- `needs_spec` / `needs_tasks` issues are actionable: auto-draft the spec or
+  task packet via the focused SpecRail skills, then implement. Do not park
+  them waiting for human spec approval.
+- Items that genuinely need a human decision (duplicate-ownership conflicts,
+  maintainer waivers, probe or time-window gates, destructive or irreversible
+  actions, conflicting review feedback, architecture-level rewrites) never
+  block the queue: skip them, keep draining, and report them once in a final
+  `human_decisions` list with a recommended action each.
+
+`auth_mode: review` — selected by `implx review`, `implx 审核`, `implx 人工`,
+or when the repository `workflow.yaml` pins `auth_mode: review`:
+
+- Preserve per-PR explicit human merge authorization in the current
+  conversation before any merge.
+- Route `needs_spec` / `needs_tasks` to spec-writing skills but wait for
+  human confirmation before implementing from a freshly drafted spec.
+
+In both modes, never force-push, delete unmerged branches, replace a
+maintainer-writable PR without cause, publish releases, or act outside the
+repository without explicit instruction. Auto mode does not weaken the
+Bounded Tranche Hard Stop, reviewer-lane, or self-review authorization rules.
 
 `full_queue_drain` means the objective spans the whole actionable queue, not
 that one session runs unbounded. Execution is a sequence of bounded tranches:
@@ -55,12 +90,13 @@ runtime checkpoint at tranche start, stops when the budget is exhausted, and
 hands off to a fresh session via the checkpoint. See the Bounded Tranche Hard
 Stop rules in `skills/specrail-implement-queue/SKILL.md`.
 
-Pass the selected mode to `skills/specrail-implement-queue/SKILL.md`:
+Pass the selected modes to `skills/specrail-implement-queue/SKILL.md`:
 
 ```yaml
 implx_context:
   overall_objective:
   queue_mode: bounded_tranche | full_queue_drain
+  auth_mode: auto | review
   user_authorization:
   current_branch:
   dirty_files:
@@ -103,8 +139,11 @@ threads were launched.
 
 ## Boundaries
 
-- Do not grant final approval.
-- Do not merge without current PR-gate evidence and explicit authorization.
+- In `auto` mode, merge only on complete current evidence (CI, review threads,
+  merge state, PR gate, reviewer lane); evidence gaps mean skip and report,
+  not ask.
+- In `review` mode, do not merge without explicit human authorization in the
+  current conversation.
 - Do not treat green CI as merge readiness without review-thread and merge-state
   truth.
 - Do not close an issue from a partial implementation.
@@ -122,12 +161,14 @@ implx_handoff:
   route: implement_queue
   overall_objective:
   queue_mode:
+  auth_mode:
   delegated_skill: skills/specrail-implement-queue/SKILL.md
   queue_truth:
     open_issues:
     open_prs:
     current_branch:
     dirty_files:
+  human_decisions:
   focused_handoff:
   thread_dispatch_gate:
     native_subagents:
