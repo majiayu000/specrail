@@ -59,12 +59,12 @@ authorizes a non-spec exception and the checkpoint records the reason.
 
 Spec-drafting authorization depends on `auth_mode`:
 
-- `auth_mode: auto` (the implx default): drafting the missing spec or task
-  packet and then implementing from it is authorized by the invocation itself.
-  Draft, self-check with the spec-writing skill's own gates, and continue to
-  implementation in the same run, subject to the Spec/Impl Mix Gate. Escalate
-  to `human_decisions` only for architecture-level rewrites or specs the issue
-  lacks evidence to draft.
+- `auth_mode: auto`: drafting the missing spec or task packet and then
+  implementing from it is authorized only when the current user message
+  explicitly selected `implx auto` / `implx 自动`. Draft, self-check with the
+  spec-writing skill's own gates, and continue to implementation in the same
+  run, subject to the Spec/Impl Mix Gate. Escalate to `human_decisions` only
+  for architecture-level rewrites or specs the issue lacks evidence to draft.
 - `auth_mode: review`: draft the spec, then wait for human confirmation
   before implementing from it.
 
@@ -125,6 +125,9 @@ specrail_implementation_queue:
     runtime_gate:
   stop_policy:
 ```
+
+If `auth_mode` is not provided by the calling skill, default to
+`auth_mode: review`.
 
 For broad queues, always execute as bounded tranches. If the calling skill is
 `implx`, or the user otherwise asks to finish actionable issues/PRs, set
@@ -417,10 +420,11 @@ unreported lane failures.
 
 ### Merge Authorization
 
-`auth_mode: auto` (implx default):
+`auth_mode: auto`:
 
-- The queue invocation is the standing merge authorization for the run. Do not
-  ask per-PR merge questions.
+- The current user message must explicitly say `implx auto` / `implx 自动`.
+  That invocation is the standing merge authorization for the run. Do not ask
+  per-PR merge questions.
 - Merge when ALL current evidence is green: CI/check rollup passing, PR gate
   passed, review threads resolved, reviewer-lane evidence present, merge state
   clean. Any evidence gap means skip the PR, record the gap in

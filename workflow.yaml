@@ -15,10 +15,10 @@ durable_state:
 automation_policy:
   default_mode: dry_run
   # auth_mode selects how merge/spec authorization works for queue runs.
-  # auto: the queue invocation is standing merge authorization; merges happen
-  #   only on complete current evidence. review: per-PR explicit human merge
-  #   authorization. Pin `review` here to force review mode for this repo.
-  auth_mode: auto
+  # review is the default for plain implx and preserves per-PR explicit human
+  #   merge authorization. auto is selected only by an explicit `implx auto`
+  #   invocation and still requires complete current evidence before merge.
+  auth_mode: review
   allowed_agent_actions:
     - propose_labels
     - draft_specs
@@ -35,7 +35,7 @@ automation_policy:
 
 auth_modes:
   auto:
-    description: "Default for plain implx queue drains. The invocation is the standing merge authorization; merge only when ALL current evidence is green (CI rollup, pr_gate, resolved review threads, reviewer-lane evidence, clean merge state). Missing spec/task packets are auto-drafted and implemented in the same run; items needing a human choice are skipped and reported once in a final human_decisions list."
+    description: "Explicit `implx auto` queue drains. The invocation is the standing merge authorization; merge only when ALL current evidence is green (CI rollup, pr_gate, resolved review threads, reviewer-lane evidence, clean merge state). Missing spec/task packets are auto-drafted and implemented in the same run; items needing a human choice are skipped and reported once in a final human_decisions list."
     allowed_agent_actions:
       - merge_on_complete_evidence
       - close_issue_on_merged_evidence
