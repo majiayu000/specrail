@@ -65,12 +65,12 @@
     {
       "name": "specrail-write-product-spec",
       "path": "skills/specrail-write-product-spec/SKILL.md",
-      "computedHash": "sha256:201e0b4215f952a3ee01e52d8a2ccedfbf4f92ca6ed4a92928e8b1a7f7851ce2"
+      "computedHash": "sha256:d93cdc59efdcf8d458b51bf6880269372c9cdc8c3097209f30d932c82e4be39e"
     },
     {
       "name": "specrail-write-tech-spec",
       "path": "skills/specrail-write-tech-spec/SKILL.md",
-      "computedHash": "sha256:3ca3706c7ec88def7c61d86f2dbe9f66c1cf8423330f495902fcaa0f628aedc8"
+      "computedHash": "sha256:002a37ed41906de66ff1aa9be01c8ef6ae4870bcbe65b7613ad7c47c22b5a920"
     }
   ]
 }

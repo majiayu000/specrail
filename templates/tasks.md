@@ -11,6 +11,10 @@ GH-
 
 ## Implementation Tasks
 
+Each task line: backticked `SP<issue>-T<n>` ID, description,
+`Covers: B-xxx` (or `Covers: none` + reason), then `Owner:`, `Done when:`,
+`Verify:`.
+
 - [ ] 
 - [ ] 
 

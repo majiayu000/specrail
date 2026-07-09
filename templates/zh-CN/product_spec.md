@@ -18,20 +18,35 @@ GH-
 
 ## Behavior Invariants
 
-用编号列表写可观察、可测试、无实现细节的行为契约。相关时覆盖 happy path、
-empty、error、loading、cancellation、permission、offline/network failure、
-concurrency/race、compatibility、accessibility 等状态。
+用编号列表写可观察、可测试、无实现细节的行为契约。使用稳定 ID
+（`B-001`、`B-002`…）；修订只追加，不重排、不复用。长度启发式、密度规则
+与 worked example 见 `specrail-write-product-spec` skill。trivial 变更在
+Linked Issue 下声明 `complexity: trivial` 并保持最小 spec。
 
-1.
+1. B-001 
 
 ## 验收标准
 
 - [ ] 
 - [ ] 
 
-## 边界情况
+## 边界情况清单
 
-- 
+每一类要么由具名 invariant 覆盖，要么写明 N/A + 原因。特别注意组合边界
+（如：已授权 + 前提证据缺失）。
+
+| 类别 | 判定（covered: B-xxx / N/A + 原因） |
+| --- | --- |
+| 空/缺失输入 |  |
+| 错误与失败路径 |  |
+| 授权/权限 |  |
+| 并发/竞态 |  |
+| 重试/幂等 |  |
+| 非法状态转换 |  |
+| 兼容/迁移 |  |
+| 降级/回退 |  |
+| 证据与审计完整性 |  |
+| 取消/中断 |  |
 
 ## 发布说明
 
