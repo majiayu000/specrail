@@ -54,7 +54,7 @@ def test_impl_branch_template_accepts_current_workflow() -> None:
 
 def _auth_workflow(**overrides: object) -> dict[str, object]:
     workflow: dict[str, object] = {
-        "automation_policy": {"auth_mode": "auto"},
+        "automation_policy": {"auth_mode": "review"},
         "required_human_gates": [
             "readiness_label",
             "spec_approval",
