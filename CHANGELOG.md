@@ -4,6 +4,16 @@
 
 ### Added
 
+- Deep spec authoring method (GH-86): `specrail-write-product-spec` gains a
+  length heuristic (with `complexity: trivial` opt-out), a 10-category
+  boundary checklist ("covered: B-xxx or N/A + reason"), a worked example at
+  target density, and stable append-only `B-xxx` invariant IDs;
+  `specrail-write-tech-spec` gains verified `path:line` anchor discipline and
+  a full-coverage Product-to-Test mapping rule (no orphan invariants, no
+  TBD); `specrail-plan-tasks` requires every product invariant in the task
+  coverage union. All six locale templates are updated to match; task lines
+  carry `Covers: B-xxx`. No new gate logic (depth gating is a separate
+  follow-up).
 - Two-mode implx authorization: `automation_policy.auth_mode` (`auto` default,
   `review` opt-in) with an `auth_modes` block declaring per-mode waived human
   gates and mode-scoped forbidden actions; `merge`/`final_approval` are now

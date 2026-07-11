@@ -10,6 +10,9 @@ Link to `product.md`.
 
 ## Codebase Context
 
+Files 列使用写作时经 Read/grep 核实的 `path:line` 锚点；禁止凭记忆猜测。
+无法核实的引用删除或标注"待定位"。
+
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
 |  |  |  |  |
@@ -20,9 +23,12 @@ Link to `product.md`.
 
 ## Product-to-Test Mapping
 
-| Product invariant | Implementation area | Verification |
+枚举 `product.md` 的全部 `B-xxx`，不允许孤儿 invariant。Verification 为
+可执行命令或具体的人工复核步骤；禁止留空或 TBD。
+
+| Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 |  |  |
+| B-001 |  |  |
 
 ## 数据流
 

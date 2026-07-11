@@ -35,7 +35,7 @@
     {
       "name": "specrail-plan-tasks",
       "path": "skills/specrail-plan-tasks/SKILL.md",
-      "computedHash": "sha256:9486f79656d1c7588b1e12f11970672e6a351c884458016c6eb7965ad29a9026"
+      "computedHash": "sha256:ae76ce467fde7f4939a0a94980a8344d307b6a2787e59008d42c3d8d7a49e0f9"
     },
     {
       "name": "specrail-pr-gate",
@@ -65,12 +65,12 @@
     {
       "name": "specrail-write-product-spec",
       "path": "skills/specrail-write-product-spec/SKILL.md",
-      "computedHash": "sha256:201e0b4215f952a3ee01e52d8a2ccedfbf4f92ca6ed4a92928e8b1a7f7851ce2"
+      "computedHash": "sha256:8b184006422026eb1a572ec1307e6cd01ac6c041fd41da1f860cc705d03298ae"
     },
     {
       "name": "specrail-write-tech-spec",
       "path": "skills/specrail-write-tech-spec/SKILL.md",
-      "computedHash": "sha256:3ca3706c7ec88def7c61d86f2dbe9f66c1cf8423330f495902fcaa0f628aedc8"
+      "computedHash": "sha256:b3a2d997cf1f5fab8224f93491d243968851e4598e43cf3fd47ed8ea66d3f4cc"
     }
   ]
 }

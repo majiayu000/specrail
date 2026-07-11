@@ -10,6 +10,9 @@ Link to `product.md`.
 
 ## Codebase Context
 
+Files column uses `path:line` anchors verified with Read/grep at writing time;
+never guess. Unverifiable references are dropped or marked "to locate".
+
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
 |  |  |  |  |
@@ -20,9 +23,12 @@ Explain the planned implementation.
 
 ## Product-to-Test Mapping
 
-| Product invariant | Implementation area | Verification |
+Enumerate every `B-xxx` from `product.md` — no orphan invariants. Verification
+is an executable command or a concrete manual check; no empty cells, no TBD.
+
+| Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 |  |  |
+| B-001 |  |  |
 
 ## Data Flow
 
