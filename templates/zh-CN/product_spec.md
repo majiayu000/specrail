@@ -10,11 +10,11 @@ GH-
 
 ## 目标
 
-- 
+-
 
 ## 非目标
 
-- 
+-
 
 ## Behavior Invariants
 
@@ -23,12 +23,12 @@ GH-
 与 worked example 见 `specrail-write-product-spec` skill。trivial 变更在
 Linked Issue 下声明 `complexity: trivial` 并保持最小 spec。
 
-1. B-001 
+1. B-001
 
 ## 验收标准
 
-- [ ] 
-- [ ] 
+- [ ]
+- [ ]
 
 ## 边界情况清单
 

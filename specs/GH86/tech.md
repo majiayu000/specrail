@@ -17,9 +17,9 @@ GH-86
 | task planning skill | `skills/specrail-plan-tasks/SKILL.md:10-27` | 要求稳定 task ID、Owner/Done when/Verify，但未要求 task 覆盖全部 product invariant | B-008 的 product→task 覆盖纪律写入点 |
 | product 模板 | `templates/product_spec.md:19-26`、`templates/zh-CN/product_spec.md:19-25` | Behavior Invariants 段仅一句状态类别提示 + `1.` 占位 | 加 B-xxx ID 约定与边界清单表 |
 | tech 模板 | `templates/tech_spec.md:21-25`、`templates/zh-CN/tech_spec.md:21-25` | Product-to-Test Mapping 表头用 `P1` 占位 | 改为 `B-001` 并要求全量覆盖 |
-| tasks 模板 | `templates/tasks.md`、`templates/zh-CN/tasks.md` | 任务行无 Covers 标注 | 加 `Covers: B-xxx` 追加字段（B-008） |
+| tasks 模板 | `templates/tasks.md:14-19`、`templates/zh-CN/tasks.md:14-18` | 任务行无 Covers 标注 | 加 `Covers: B-xxx` 追加字段（B-008） |
 | lock 校验 | `checks/specrail_lib.py:599-601` | computedHash 与 SKILL.md 字节 sha256 严格比对，不符即 error | B-011 的确定性验证依据 |
-| lock 条目 | `skills-lock.json` | 两个 write skill 与 plan-tasks skill 各有一条 `computedHash` | skill 更新后必须再生 |
+| lock 条目 | `skills-lock.json:36-38`、`skills-lock.json:66-73` | 两个 write skill 与 plan-tasks skill 各有一条 `computedHash` | skill 更新后必须再生 |
 | task plan 校验 | `checks/check_workflow.py:288-314` | 每个 `- [` 行需反引号 `SP<issue>-T<n>` ID + Owner/Done when/Verify | B-012：Covers 必须是追加而非替代 |
 | 安装器 | `tools/install_codex_skills.py:95` | 安装后按 `sha256:` + hexdigest 复核 | 发布说明中重装路径的依据 |
 

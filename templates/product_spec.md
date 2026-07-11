@@ -10,11 +10,11 @@ Describe the user-visible problem and why it matters.
 
 ## Goals
 
-- 
+-
 
 ## Non-Goals
 
-- 
+-
 
 ## Behavior Invariants
 
@@ -24,12 +24,12 @@ reuse. Follow the length heuristic, density rule, and worked example in the
 `specrail-write-product-spec` skill. For trivial changes declare
 `complexity: trivial` under Linked Issue and keep the spec minimal.
 
-1. B-001 
+1. B-001
 
 ## Acceptance Criteria
 
-- [ ] 
-- [ ] 
+- [ ]
+- [ ]
 
 ## Boundary Checklist
 

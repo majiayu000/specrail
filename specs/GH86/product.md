@@ -6,7 +6,7 @@ GH-86
 
 ## 用户问题
 
-SpecRail 生成的 spec 系统性偏浅：14 篇 product.md 中 13 篇落在 45-84 行，长度与功能复杂度脱钩。根因是深度载体错位——模板是 38 行填空框架，write skill 只有 34-36 行且只说"填模板"，模型对每个标题做最小填充（slot completion），模板成为深度天花板。浅 spec 的直接代价已被盲测实验证实：GH59 的历史浅 spec 对"已授权 self_review 在无 lane 失败记录时仍通过 gate"这一真实缺陷只有 PARTIAL 覆盖，照字面实现正好产出该漏洞（PR #83 才修）；同一 issue 用深方法盲写的 spec 以 B-022 精确命中。
+SpecRail 生成的 spec 系统性偏浅：14 篇 product.md 中 13 篇落在 45-84 行，长度与功能复杂度脱钩。根因是深度载体错位——模板是 38 行填空框架，write skill 只有 34-36 行且只说"填模板"，模型对每个标题做最小填充（slot completion），模板成为深度天花板。浅 spec 的直接代价已被盲测实验证实：GH59 的历史浅 spec 对"已授权 self_review 在无 lane 失败记录时仍通过 gate"这一真实缺陷只有 PARTIAL 覆盖，照字面实现正好产出该漏洞（PR #83 才修）；同一 issue 用深方法盲写的 spec 以其第 22 条 behavior invariant 精确命中。
 
 本变更把深度从模板搬回 skill prompt：worked example、边界穷尽清单、长度启发式、稳定 invariant ID 与全量映射纪律，写进两个 write skill 与两套 locale 模板。
 
