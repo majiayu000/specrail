@@ -174,6 +174,11 @@ def validate_auth_mode(config: object) -> list[str]:
             "workflow.yaml: automation_policy.auth_mode must be one of: "
             + ", ".join(VALID_AUTH_MODES)
         )
+    elif auth_mode != "review":
+        errors.append(
+            "workflow.yaml: automation_policy.auth_mode must be review; "
+            "auto requires an explicit current implx auto invocation"
+        )
 
     gates = workflow.get("required_human_gates")
     gate_names = {str(gate) for gate in gates} if isinstance(gates, list) else set()

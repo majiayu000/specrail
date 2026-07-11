@@ -50,6 +50,8 @@ review-only work.
 ## Authorization Mode
 
 Two modes. Record the selected mode at startup and pass it downstream.
+The repository's persisted `automation_policy.auth_mode` is a `review` safety
+baseline; it never selects or authorizes auto mode.
 
 `auth_mode: review` — the DEFAULT for plain `implx`, `use implx`, `用 implx`,
 `implx review`, `implx 审核`, and `implx 人工`:

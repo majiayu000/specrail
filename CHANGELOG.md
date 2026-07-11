@@ -8,9 +8,10 @@
   explicit `implx auto` selects auto mode. `automation_policy.auth_mode` and
   the `auth_modes` block declare per-mode waived human gates and mode-scoped
   forbidden actions; `merge`/`final_approval` are forbidden in `review` mode.
-  `check_workflow.py` validates the mode value, both mode definitions, and that
-  waived gates reference declared `required_human_gates`. Workflow pack version
-  bumped to 0.3.0.
+  The persisted workflow value must remain `review`; repository configuration
+  cannot authorize auto mode. `check_workflow.py` validates that baseline, both
+  mode definitions, and that waived gates reference declared
+  `required_human_gates`. Workflow pack version bumped to 0.3.0.
 - Worktree-safe merge path (GH-63): merges run from a neutral cwd with an
   API fallback for locally checked-out branches; merge records require
   `merge_path` and remote confirmation before an outcome may be reported.

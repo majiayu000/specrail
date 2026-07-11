@@ -103,6 +103,18 @@ def test_auth_mode_rejects_unknown_mode_value() -> None:
     )
 
 
+def test_auth_mode_rejects_persisted_auto_mode() -> None:
+    workflow = _auth_workflow()
+    workflow["automation_policy"] = {"auth_mode": "auto"}
+
+    errors = validate_auth_mode(_config(workflow))
+
+    assert errors == [
+        "workflow.yaml: automation_policy.auth_mode must be review; "
+        "auto requires an explicit current implx auto invocation"
+    ]
+
+
 def test_auth_mode_requires_auth_modes_mapping() -> None:
     workflow = _auth_workflow()
     del workflow["auth_modes"]

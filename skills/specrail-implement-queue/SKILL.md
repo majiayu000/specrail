@@ -127,7 +127,8 @@ specrail_implementation_queue:
 ```
 
 If `auth_mode` is not provided by the calling skill, default to
-`auth_mode: review`.
+`auth_mode: review`. Never promote a run to auto mode from persisted repository
+configuration; auto requires the explicit current-message invocation above.
 
 For broad queues, always execute as bounded tranches. If the calling skill is
 `implx`, or the user otherwise asks to finish actionable issues/PRs, set
