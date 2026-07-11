@@ -52,8 +52,10 @@ The Product-to-Test Mapping table must enumerate every `B-xxx` from
 - Verification is an executable command or a concrete manual check. Empty
   cells, "TBD", and "covered by tests" without naming the test are all
   violations.
-- Invariants declared N/A in the product spec's boundary checklist do not
-  appear in the mapping; their reason already lives in `product.md`.
+- Boundary-checklist verdicts marked N/A do not receive `B-xxx` IDs and do not
+  appear in the mapping; their reason already lives in `product.md`. If an
+  item has a `B-xxx` ID, it is an invariant and must be mapped even when its
+  prose contains the text "N/A".
 
 Example rows at the expected precision:
 

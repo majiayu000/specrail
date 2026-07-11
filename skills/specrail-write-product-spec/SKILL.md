@@ -103,8 +103,11 @@ the item degrades instead of silently substituting self-review.
 >    负例测不到 gate 逻辑，不算覆盖。
 > 10. B-010 兼容：存量 checkpoint 缺少新字段时按保守值处理（等价于
 >     "无独立审查"），不得默认放行。
-> 11. B-011 N/A（取消/中断）：gate 是离线校验，无长时会话状态，中断后
->     重跑即幂等；理由记录于此，不再写 invariant。
+>
+> Boundary checklist verdict — Cancellation / interruption: N/A. The gate is
+> an offline check with no long-running session state; rerunning it is
+> idempotent after interruption. This verdict has no `B-xxx` ID because it is
+> not a behavior invariant.
 
 Note how B-006 exists only because B-001 (source recorded) and B-005
 (authorization recorded) were combined with "prerequisite evidence absent".

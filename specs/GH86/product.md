@@ -34,10 +34,10 @@ SpecRail 生成的 spec 系统性偏浅：14 篇 product.md 中 13 篇落在 45-
 5. B-005 product spec 的 behavior invariant 必须使用稳定 ID（B-001 起连续编号）；后续修订只追加不重排，已发布的 B-xxx 含义不得复用给不同行为。
 6. B-006 tech skill 必须要求 Codebase Context 中每个文件引用为写作时已核实的 `path:line` 锚点（用 Read/grep 验证后写入）；禁止凭记忆猜测路径或行号；无法核实的引用必须删除或降级为"待定位"。
 7. B-007 tech skill 必须要求 Product-to-Test Mapping 覆盖 product spec 的全部 B-xxx（无孤儿 invariant），且每行 Verification 为可执行命令或可人工复核的具体步骤，不得为空或 TBD。
-8. B-008 tasks 模板与 skill 指引必须让每个实现任务行标注 `Covers: B-xxx`（可多个）；与任何 invariant 无关的基建任务标注 `Covers: none` 并给一句原因。
+8. B-008 tasks 模板与 `specrail-plan-tasks` skill 必须让每个实现任务行标注 `Covers: B-xxx`（可多个），并要求所有 product invariant 至少被一个任务覆盖；与任何 invariant 无关的基建任务标注 `Covers: none` 并给一句原因。
 9. B-009 两套 locale 模板（`templates/` 与 `templates/zh-CN/`）在本变更后保持标题结构一致；稳定 ID、路径、命令、JSON key、状态与路由名一律保持英文，不随 locale 翻译。
 10. B-010 本变更落地后，`specs/GH86/` 自身的 spec packet 必须是用新方法写成的合格样本（含 B-xxx ID、边界清单表、全量映射），作为自举验证。
-11. B-011 `skills-lock.json` 中两个 write skill 的 computedHash 必须与更新后的 SKILL.md 内容一致，`check_workflow.py` 校验通过；lock 中其余 12 个 skill 的条目不受影响。
+11. B-011 `skills-lock.json` 中两个 write skill 与 `specrail-plan-tasks` 的 computedHash 必须与更新后的 SKILL.md 内容一致，`check_workflow.py` 校验通过；lock 中其余 11 个 skill 的条目不受影响。
 12. B-012 修改后的 `templates/*/tasks.md` 生成的任务行仍满足 `validate_task_plan` 的既有约束（反引号稳定 ID + Owner/Done when/Verify），`Covers:` 是追加字段而非替代。
 
 ## 边界情况清单
@@ -59,7 +59,7 @@ SpecRail 生成的 spec 系统性偏浅：14 篇 product.md 中 13 篇落在 45-
 
 - [ ] `skills/specrail-write-product-spec/SKILL.md` 满足 B-001~B-005；`skills/specrail-write-tech-spec/SKILL.md` 满足 B-006~B-007。
 - [ ] 六个模板文件（product/tech/tasks × 两套 locale）满足 B-008、B-009、B-012。
-- [ ] `skills-lock.json` 满足 B-011，`python3 checks/check_workflow.py --repo . --all-specs` 通过。
+- [ ] `specrail-plan-tasks` 与两套 tasks 模板满足 B-008；`skills-lock.json` 满足 B-011，`python3 checks/check_workflow.py --repo . --all-specs` 通过。
 - [ ] `uvx pytest -q` 通过（本变更不应引起任何测试变化）。
 - [ ] `specs/GH86/` 自身满足 B-010。
 
