@@ -135,6 +135,26 @@ def test_pr_gate_schema_rejects_missing_thread_resolver_fixture() -> None:
         validate_instance(schema, json.loads(fixture.read_text(encoding="utf-8")))
 
 
+def test_pr_gate_schema_accepts_structured_partial_issue_reference() -> None:
+    evidence = json.loads(
+        (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    evidence["linked_issue"] = 671
+    evidence["issue_reference"] = {
+        "number": 671,
+        "kind": "partial",
+        "source": "pr_body",
+        "verified": True,
+        "state": "OPEN",
+        "url": "https://github.com/majiayu000/remem/issues/671",
+        "closing_issue_numbers": [806],
+    }
+
+    validate_instance(pr_review_gate_schema(), evidence)
+
+
 def test_runtime_checkpoint_inline_valid_instance_matches_schema() -> None:
     validate_instance(runtime_checkpoint_schema(), valid_checkpoint())
 

@@ -4,6 +4,11 @@
 
 ### Added
 
+- Verified partial issue-reference evidence (GH-88): the read-only PR adapter
+  accepts an explicit `--issue`, validates a standalone `Refs #N` against the
+  live open issue, preserves coexisting closing references, and emits a
+  structured relation that the offline PR gate checks without granting closure
+  or final-completion semantics.
 - Deep spec authoring method (GH-86): `specrail-write-product-spec` gains a
   length heuristic (with `complexity: trivial` opt-out), a 10-category
   boundary checklist ("covered: B-xxx or N/A + reason"), a worked example at

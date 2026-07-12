@@ -139,6 +139,25 @@ python3 checks/github_pr_evidence.py \
 python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
 ```
 
+For a partial implementation slice whose body contains a standalone
+`Refs #<issue-number>` directive, bind the intended issue explicitly:
+
+```sh
+python3 checks/github_pr_evidence.py \
+  --github-repo OWNER/REPO \
+  --pr <pr-number> \
+  --issue <issue-number> \
+  --review-source independent_lane \
+  --json > pr-evidence.json
+```
+
+The adapter verifies that target against the live same-repository issue and
+requires it to remain open. Other bounded closing references may coexist and
+are retained in `issue_reference.closing_issue_numbers`; they do not redirect
+the explicitly selected `linked_issue`. A verified `partial` relation satisfies
+only the PR gate's linked-work requirement. It does not prove final-slice
+completion and does not authorize issue closure.
+
 The GitHub adapter is read-only and only reshapes `gh` output. The PR gate is
 offline. GitHub or `threads` may collect evidence such as PR head SHA, CI
 status, review threads, review source, lane failures, merge state, and linked

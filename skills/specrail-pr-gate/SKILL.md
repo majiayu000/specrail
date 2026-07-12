@@ -15,13 +15,26 @@ Use this skill before saying a PR is merge-ready.
 python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --review-source independent_lane --json > <evidence.json>
 ```
 
+For a partial slice with a standalone `Refs #<issue-number>` directive, pass
+the expected issue explicitly:
+
+```sh
+python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --issue <issue-number> --review-source independent_lane --json > <evidence.json>
+```
+
+The expected issue must exist in the same repository and remain open. Other
+closing references may coexist; the adapter records all of them without
+redirecting the explicit target. A verified `partial` relation satisfies only
+linked-work evidence and never authorizes final completion or issue closure.
+
 2. Run the offline gate:
 
 ```sh
 python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
 ```
 
-3. Confirm evidence includes linked issue, current PR head SHA, gate-query
+3. Confirm evidence includes linked issue and, for new adapter output, a
+   self-consistent `issue_reference`; also confirm current PR head SHA, gate-query
    completion timestamp, gate-query head SHA, CI/check rollup, review decision,
    review source, lane failures, review-thread resolution, merge state, and human
    merge authorization.
