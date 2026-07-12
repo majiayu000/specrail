@@ -4,6 +4,14 @@
 
 ### Added
 
+- Two-mode implx authorization: plain `implx` defaults to `review` mode, while
+  explicit `implx auto` selects auto mode. `automation_policy.auth_mode` and
+  the `auth_modes` block declare per-mode waived human gates and mode-scoped
+  forbidden actions; `merge`/`final_approval` are forbidden in `review` mode.
+  The persisted workflow value must remain `review`; repository configuration
+  cannot authorize auto mode. `check_workflow.py` validates that baseline, both
+  mode definitions, and that waived gates reference declared
+  `required_human_gates`. Workflow pack version bumped to 0.3.0.
 - Verified partial issue-reference evidence (GH-88): the read-only PR adapter
   accepts an explicit `--issue`, validates a standalone `Refs #N` against the
   live open issue, preserves coexisting closing references, and emits a
@@ -19,12 +27,6 @@
   coverage union. All six locale templates are updated to match; task lines
   carry `Covers: B-xxx`. No new gate logic (depth gating is a separate
   follow-up).
-- Two-mode implx authorization: `automation_policy.auth_mode` (`auto` default,
-  `review` opt-in) with an `auth_modes` block declaring per-mode waived human
-  gates and mode-scoped forbidden actions; `merge`/`final_approval` are now
-  forbidden only in `review` mode. `check_workflow.py` validates the mode
-  value, both mode definitions, and that waived gates reference declared
-  `required_human_gates`. Workflow pack version bumped to 0.3.0.
 - Worktree-safe merge path (GH-63): merges run from a neutral cwd with an
   API fallback for locally checked-out branches; merge records require
   `merge_path` and remote confirmation before an outcome may be reported.

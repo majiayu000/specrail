@@ -59,7 +59,7 @@ def test_impl_branch_template_accepts_current_workflow() -> None:
 
 def _auth_workflow(**overrides: object) -> dict[str, object]:
     workflow: dict[str, object] = {
-        "automation_policy": {"auth_mode": "auto"},
+        "automation_policy": {"auth_mode": "review"},
         "required_human_gates": [
             "readiness_label",
             "spec_approval",
@@ -106,6 +106,18 @@ def test_auth_mode_rejects_unknown_mode_value() -> None:
         "workflow.yaml: automation_policy.auth_mode must be one of: auto, review"
         in errors
     )
+
+
+def test_auth_mode_rejects_persisted_auto_mode() -> None:
+    workflow = _auth_workflow()
+    workflow["automation_policy"] = {"auth_mode": "auto"}
+
+    errors = validate_auth_mode(_config(workflow))
+
+    assert errors == [
+        "workflow.yaml: automation_policy.auth_mode must be review; "
+        "auto requires an explicit current implx auto invocation"
+    ]
 
 
 def test_auth_mode_requires_auth_modes_mapping() -> None:

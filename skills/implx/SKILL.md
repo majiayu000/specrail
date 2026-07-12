@@ -1,6 +1,6 @@
 ---
 name: implx
-description: "Use when the user says \"implx\", \"use implx\", \"用 implx\", or asks for the one-line SpecRail queue shortcut. Plain implx means drain the full actionable issue/PR queue in auto mode: run SpecRail preflight, create missing spec/task PR work before implementation, use threads for reviewer/merge-reviewer lanes when available, create per-issue implementation PRs, require CI/reviewThreads/pr_gate evidence, auto-merge on complete evidence, and perform closure audit. Say \"implx review\" / \"implx 人工\" for the review mode that keeps per-PR human merge authorization."
+description: "Use when the user says \"implx\", \"use implx\", \"用 implx\", or asks for the one-line SpecRail queue shortcut. Plain implx means drain the full actionable issue/PR queue in review mode: run SpecRail preflight, create missing spec/task PR work before implementation, use threads for reviewer/merge-reviewer lanes when available, create per-issue implementation PRs, require CI/reviewThreads/pr_gate evidence, preserve per-PR human merge authorization, and perform closure audit. Say \"implx auto\" / \"implx 自动\" for the explicit auto mode that treats the invocation as standing merge authorization for this run."
 ---
 
 # Implx
@@ -50,12 +50,22 @@ review-only work.
 ## Authorization Mode
 
 Two modes. Record the selected mode at startup and pass it downstream.
+The repository's persisted `automation_policy.auth_mode` is a `review` safety
+baseline; it never selects or authorizes auto mode.
 
-`auth_mode: auto` — the DEFAULT for plain `implx`, `use implx`, `用 implx`,
-and any drain/resume form that does not ask for review:
+`auth_mode: review` — the DEFAULT for plain `implx`, `use implx`, `用 implx`,
+`implx review`, `implx 审核`, and `implx 人工`:
 
-- The invocation itself IS the standing merge authorization for this run.
-  Do not ask per-PR "can I merge" questions.
+- Preserve per-PR explicit human merge authorization in the current
+  conversation before any merge.
+- Route `needs_spec` / `needs_tasks` to spec-writing skills but wait for
+  human confirmation before implementing from a freshly drafted spec.
+
+`auth_mode: auto` — selected only by a current user message that explicitly says
+`implx auto` or `implx 自动`:
+
+- The explicit `implx auto` invocation itself IS the standing merge
+  authorization for this run. Do not ask per-PR "can I merge" questions.
 - Merge a PR when ALL evidence is current and green per
   `skills/specrail-implement-queue/SKILL.md` (CI rollup, PR gate, resolved
   review threads, clean merge state, reviewer-lane evidence).
@@ -69,14 +79,6 @@ and any drain/resume form that does not ask for review:
   actions, conflicting review feedback, architecture-level rewrites) never
   block the queue: skip them, keep draining, and report them once in a final
   `human_decisions` list with a recommended action each.
-
-`auth_mode: review` — selected by `implx review`, `implx 审核`, `implx 人工`,
-or when the repository `workflow.yaml` pins `auth_mode: review`:
-
-- Preserve per-PR explicit human merge authorization in the current
-  conversation before any merge.
-- Route `needs_spec` / `needs_tasks` to spec-writing skills but wait for
-  human confirmation before implementing from a freshly drafted spec.
 
 In both modes, never force-push, delete unmerged branches, replace a
 maintainer-writable PR without cause, publish releases, or act outside the
