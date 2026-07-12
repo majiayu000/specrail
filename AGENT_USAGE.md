@@ -108,7 +108,7 @@ agent session may need to restart before the installed skills are discoverable.
 7. Run the local evaluator before taking the route action:
 
 ```sh
-python3 checks/github_issue_evidence.py --github-repo OWNER/REPO --issue <issue-number> --json > issue-evidence.json
+python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO --issue <issue-number> --json > issue-evidence.json
 python3 checks/github_duplicate_evidence.py --github-repo OWNER/REPO --issue <issue-number> --json > duplicate-work-evidence.json
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --evidence issue-evidence.json --json
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
@@ -127,6 +127,10 @@ python3 checks/check_workflow.py --repo .
 python3 checks/check_workflow.py --repo . --all-specs
 python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue-number>
 ```
+
+`--all-specs` discovers packets from `workflow.yaml`'s
+`artifacts.spec_packet` template. The issue evidence adapter and route gate
+render their spec paths from the same artifact configuration.
 
 9. Before reporting a PR as merge-ready, collect PR evidence and run:
 

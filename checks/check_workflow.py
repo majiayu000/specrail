@@ -6,13 +6,16 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from specrail_lib import (
     SpecRailError,
     artifact_templates,
     load_pack,
     read_text,
+    resolve_path,
+    resolve_repo_path,
+    spec_packet_artifact_paths,
     validate_action_policy,
     validate_json_schemas,
     validate_labels,
@@ -228,12 +231,25 @@ def validate_spec_packet(spec_dir: Path) -> list[str]:
     if issue_number:
         issue_tokens = [f"GH-{issue_number}", f"GH{issue_number}", f"#{issue_number}"]
 
+    resolved_spec_dir = resolve_path(spec_dir, label=f"spec packet {spec_dir}")
+    if resolved_spec_dir.name != spec_dir.name:
+        errors.append(f"{spec_dir}: must preserve its GH<number> packet identity")
+        return errors
     for name in ["product.md", "tech.md"]:
         path = spec_dir / name
         if not path.is_file():
             errors.append(f"{spec_dir}: missing {name}")
             continue
-        text = read_text(path)
+        resolved_path = resolve_path(path, label=f"spec artifact {path}")
+        try:
+            resolved_path.relative_to(resolved_spec_dir)
+        except ValueError:
+            errors.append(f"{path}: must stay within the spec packet")
+            continue
+        if resolved_path != resolved_spec_dir / name:
+            errors.append(f"{path}: must preserve its declared artifact identity")
+            continue
+        text = read_text(resolved_path)
         if not text.strip():
             errors.append(f"{path}: must not be empty")
         if issue_tokens and not any(token in text for token in issue_tokens):
@@ -243,7 +259,21 @@ def validate_spec_packet(spec_dir: Path) -> list[str]:
     if not task_path.is_file():
         errors.append(f"{spec_dir}: missing tasks.md")
     else:
-        errors.extend(validate_task_plan(task_path, issue_number))
+        resolved_task_path = resolve_path(
+            task_path,
+            label=f"spec artifact {task_path}",
+        )
+        try:
+            resolved_task_path.relative_to(resolved_spec_dir)
+        except ValueError:
+            errors.append(f"{task_path}: must stay within the spec packet")
+        else:
+            if resolved_task_path != resolved_spec_dir / "tasks.md":
+                errors.append(
+                    f"{task_path}: must preserve its declared artifact identity"
+                )
+                return errors
+            errors.extend(validate_task_plan(resolved_task_path, issue_number))
     return errors
 
 
@@ -254,18 +284,36 @@ def spec_packet_sort_key(spec_dir: Path) -> tuple[int, int, str]:
     return (1, 0, str(spec_dir))
 
 
-def discover_spec_packet_dirs(repo: Path) -> list[Path]:
-    specs_dir = repo / "specs"
+def discover_spec_packet_dirs(
+    repo: Path,
+    spec_root: PurePosixPath | None = None,
+) -> list[Path]:
+    configured_root = spec_root if spec_root is not None else PurePosixPath("specs")
+    specs_dir = resolve_repo_path(
+        repo,
+        configured_root,
+        label="configured spec packet root",
+    )
     if not specs_dir.is_dir():
         return []
-    return sorted(
-        [
-            path.resolve()
-            for path in specs_dir.iterdir()
-            if path.is_dir() and re.fullmatch(r"GH([0-9]+)", path.name)
-        ],
-        key=spec_packet_sort_key,
-    )
+    resolved_repo = resolve_path(repo, label="repository")
+    spec_dirs: list[Path] = []
+    for path in specs_dir.iterdir():
+        if not path.is_dir() or not re.fullmatch(r"GH([0-9]+)", path.name):
+            continue
+        relative_path = PurePosixPath(*path.relative_to(resolved_repo).parts)
+        resolved_path = resolve_repo_path(
+            repo,
+            relative_path,
+            label=f"spec packet {path.name}",
+        )
+        if resolved_path != specs_dir / path.name:
+            raise SpecRailError(
+                f"spec packet {path.name} resolves to a different name or "
+                "configured path"
+            )
+        spec_dirs.append(resolved_path)
+    return sorted(spec_dirs, key=spec_packet_sort_key)
 
 
 def select_spec_packet_dirs(
@@ -273,11 +321,23 @@ def select_spec_packet_dirs(
     raw_spec_dirs: list[str],
     *,
     all_specs: bool,
+    spec_root: PurePosixPath | None = None,
 ) -> list[Path]:
     spec_dirs: list[Path] = []
     if all_specs:
-        spec_dirs.extend(discover_spec_packet_dirs(repo))
-    spec_dirs.extend((repo / raw_spec_dir).resolve() for raw_spec_dir in raw_spec_dirs)
+        spec_dirs.extend(discover_spec_packet_dirs(repo, spec_root))
+    for raw_spec_dir in raw_spec_dirs:
+        resolved_spec_dir = resolve_repo_path(
+            repo,
+            raw_spec_dir,
+            label=f"spec directory {raw_spec_dir!r}",
+        )
+        lexical_name = PurePosixPath(raw_spec_dir.rstrip("/")).name
+        if resolved_spec_dir.name != lexical_name:
+            raise SpecRailError(
+                f"spec directory {raw_spec_dir!r} resolves to a different packet identity"
+            )
+        spec_dirs.append(resolved_spec_dir)
 
     unique_spec_dirs: list[Path] = []
     seen: set[Path] = set()
@@ -330,19 +390,23 @@ def main() -> int:
         "--spec-dir",
         action="append",
         default=[],
-        help="Optional specs/GH<number> directory to validate",
+        help="Optional GH<number> spec packet directory to validate",
     )
     parser.add_argument(
         "--all-specs",
         action="store_true",
-        help="Validate every specs/GH<number> directory under the repo",
+        help="Validate every configured GH<number> spec packet under the repo",
     )
     args = parser.parse_args()
 
-    repo = Path(args.repo).resolve()
     errors: list[str] = []
     try:
+        repo = resolve_path(Path(args.repo), label="repository")
         config = load_pack(repo)
+        configured_spec_paths = spec_packet_artifact_paths(config, 1, repo=repo)
+        configured_spec_root = PurePosixPath(
+            configured_spec_paths["spec_packet"]
+        ).parent
         errors.extend(validate_required_files(repo))
         errors.extend(validate_required_file_globs(repo))
         errors.extend(validate_tokens(repo))
@@ -358,6 +422,7 @@ def main() -> int:
             repo,
             args.spec_dir,
             all_specs=args.all_specs,
+            spec_root=configured_spec_root,
         ):
             errors.extend(validate_spec_packet(spec_dir))
     except SpecRailError as exc:

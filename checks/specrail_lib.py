@@ -10,7 +10,7 @@ import json
 import re
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 
@@ -384,6 +384,173 @@ def render_artifact_path(config: PackConfig, artifact: str, issue: int | None) -
         template.replace("{issue_number}", str(issue))
         .replace("{work_id}", work_id_for_issue(issue) or "")
     )
+
+
+def validated_artifact_path(
+    config: PackConfig,
+    artifact: str,
+    issue: int,
+) -> PurePosixPath:
+    rendered = render_artifact_path(config, artifact, issue)
+    label = f"workflow.yaml: artifacts.{artifact}"
+    if not rendered:
+        raise SpecRailError(f"{label} is required")
+    return validated_repo_relative_path(rendered, label=label)
+
+
+def validated_repo_relative_path(raw: str, *, label: str) -> PurePosixPath:
+    if "\\" in raw:
+        raise SpecRailError(f"{label} must use repo-relative POSIX paths")
+    candidate = PurePosixPath(raw.rstrip("/"))
+    windows_candidate = PureWindowsPath(raw.rstrip("/"))
+    has_windows_drive_component = any(":" in part for part in candidate.parts)
+    if (
+        candidate.is_absolute()
+        or windows_candidate.drive
+        or has_windows_drive_component
+        or ".." in candidate.parts
+    ):
+        raise SpecRailError(f"{label} must stay within the repository")
+    if "{" in raw or "}" in raw:
+        raise SpecRailError(f"{label} contains an unsupported placeholder")
+    return candidate
+
+
+def spec_packet_root(config: PackConfig) -> PurePosixPath:
+    template = artifact_templates(config).get("spec_packet")
+    if not template:
+        raise SpecRailError("workflow.yaml: artifacts.spec_packet is required")
+    if "{issue_number}" not in template and "{work_id}" not in template:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet must contain "
+            "{issue_number} or {work_id}"
+        )
+    first = validated_artifact_path(config, "spec_packet", 1)
+    second = validated_artifact_path(config, "spec_packet", 2)
+    if first.name != "GH1" or second.name != "GH2":
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet must render its final directory "
+            "as GH<number>"
+        )
+    if first.parent != second.parent:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet parent directory must not depend "
+            "on the issue number"
+        )
+    return first.parent
+
+
+def _spec_packet_artifact_paths(config: PackConfig, issue: int) -> dict[str, str]:
+    packet = validated_artifact_path(config, "spec_packet", issue)
+    paths = {"spec_packet": packet.as_posix()}
+    expected_files = {
+        "product_spec": "product.md",
+        "tech_spec": "tech.md",
+        "task_plan": "tasks.md",
+    }
+    for artifact, filename in expected_files.items():
+        path = validated_artifact_path(config, artifact, issue)
+        expected = packet / filename
+        if path != expected:
+            raise SpecRailError(
+                f"workflow.yaml: artifacts.{artifact} must render inside "
+                f"artifacts.spec_packet as {filename}"
+            )
+        paths[artifact] = path.as_posix()
+    return paths
+
+
+def spec_packet_artifact_paths(
+    config: PackConfig,
+    issue: int,
+    *,
+    repo: Path | None = None,
+) -> dict[str, str]:
+    configured_root = spec_packet_root(config)
+    probe_paths = {
+        probe_issue: _spec_packet_artifact_paths(config, probe_issue)
+        for probe_issue in (1, 2)
+    }
+    paths = probe_paths.get(issue) or _spec_packet_artifact_paths(config, issue)
+    if repo is not None:
+        _validate_resolved_spec_packet_paths(repo, configured_root, paths)
+    return paths
+
+
+def resolve_path(path: Path, *, label: str) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise SpecRailError(f"{label} could not be resolved: {exc}") from exc
+
+
+def resolve_repo_path(repo: Path, raw: str | PurePosixPath, *, label: str) -> Path:
+    relative_path = validated_repo_relative_path(str(raw), label=label)
+    resolved_repo = resolve_path(repo, label="repository")
+    resolved_path = resolve_path(
+        resolved_repo.joinpath(*relative_path.parts),
+        label=label,
+    )
+    try:
+        resolved_path.relative_to(resolved_repo)
+    except ValueError as exc:
+        raise SpecRailError(f"{label} resolves outside the repository") from exc
+    return resolved_path
+
+
+def _validate_resolved_spec_packet_paths(
+    repo: Path,
+    configured_root: PurePosixPath,
+    paths: dict[str, str],
+) -> None:
+    resolved_root = resolve_repo_path(
+        repo,
+        configured_root,
+        label="workflow.yaml: configured spec packet root",
+    )
+    resolved_packet = resolve_repo_path(
+        repo,
+        paths["spec_packet"],
+        label="workflow.yaml: artifacts.spec_packet",
+    )
+    try:
+        resolved_packet.relative_to(resolved_root)
+    except ValueError as exc:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet resolves outside the "
+            "configured spec packet root"
+        ) from exc
+
+    expected_packet = resolved_root / PurePosixPath(paths["spec_packet"]).name
+    if resolved_packet != expected_packet:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet does not preserve its "
+            "configured packet identity after resolution"
+        )
+
+    expected_files = {
+        "product_spec": "product.md",
+        "tech_spec": "tech.md",
+        "task_plan": "tasks.md",
+    }
+    for artifact, filename in expected_files.items():
+        resolved_artifact = resolve_repo_path(
+            repo,
+            paths[artifact],
+            label=f"workflow.yaml: artifacts.{artifact}",
+        )
+        try:
+            resolved_artifact.relative_to(resolved_packet)
+        except ValueError as exc:
+            raise SpecRailError(
+                f"workflow.yaml: artifacts.{artifact} resolves outside the "
+                "configured spec packet"
+            ) from exc
+        if resolved_artifact != resolved_packet / filename:
+            raise SpecRailError(
+                f"workflow.yaml: artifacts.{artifact} does not preserve its "
+                "configured artifact identity after resolution"
+            )
 
 
 def infer_state(config: PackConfig, state: str | None, labels: list[str]) -> tuple[str | None, list[str]]:

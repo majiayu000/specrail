@@ -4,7 +4,7 @@ import hashlib
 import json
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +80,18 @@ def test_discover_spec_packet_dirs_returns_empty_without_specs_dir(tmp_path: Pat
     assert discover_spec_packet_dirs(tmp_path) == []
 
 
+def test_discover_spec_packet_dirs_uses_configured_root(tmp_path: Path) -> None:
+    for name in ["GH10", "GH2", "draft"]:
+        (tmp_path / "docs" / "specs" / name).mkdir(parents=True)
+
+    spec_dirs = discover_spec_packet_dirs(
+        tmp_path,
+        PurePosixPath("docs/specs"),
+    )
+
+    assert [path.name for path in spec_dirs] == ["GH2", "GH10"]
+
+
 def test_select_spec_packet_dirs_deduplicates_explicit_specs(tmp_path: Path) -> None:
     for name in ["GH10", "GH2"]:
         (tmp_path / "specs" / name).mkdir(parents=True)
@@ -88,6 +100,22 @@ def test_select_spec_packet_dirs_deduplicates_explicit_specs(tmp_path: Path) -> 
         tmp_path,
         ["specs/GH10"],
         all_specs=True,
+    )
+
+    assert [path.name for path in spec_dirs] == ["GH2", "GH10"]
+
+
+def test_select_spec_packet_dirs_combines_configured_and_explicit_specs(
+    tmp_path: Path,
+) -> None:
+    for name in ["GH10", "GH2"]:
+        (tmp_path / "docs" / "specs" / name).mkdir(parents=True)
+
+    spec_dirs = select_spec_packet_dirs(
+        tmp_path,
+        ["docs/specs/GH10"],
+        all_specs=True,
+        spec_root=PurePosixPath("docs/specs"),
     )
 
     assert [path.name for path in spec_dirs] == ["GH2", "GH10"]
