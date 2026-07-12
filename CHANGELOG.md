@@ -12,6 +12,21 @@
   cannot authorize auto mode. `check_workflow.py` validates that baseline, both
   mode definitions, and that waived gates reference declared
   `required_human_gates`. Workflow pack version bumped to 0.3.0.
+- Verified partial issue-reference evidence (GH-88): the read-only PR adapter
+  accepts an explicit `--issue`, validates a standalone `Refs #N` against the
+  live open issue, preserves coexisting closing references, and emits a
+  structured relation that the offline PR gate checks without granting closure
+  or final-completion semantics.
+- Deep spec authoring method (GH-86): `specrail-write-product-spec` gains a
+  length heuristic (with `complexity: trivial` opt-out), a 10-category
+  boundary checklist ("covered: B-xxx or N/A + reason"), a worked example at
+  target density, and stable append-only `B-xxx` invariant IDs;
+  `specrail-write-tech-spec` gains verified `path:line` anchor discipline and
+  a full-coverage Product-to-Test mapping rule (no orphan invariants, no
+  TBD); `specrail-plan-tasks` requires every product invariant in the task
+  coverage union. All six locale templates are updated to match; task lines
+  carry `Covers: B-xxx`. No new gate logic (depth gating is a separate
+  follow-up).
 - Worktree-safe merge path (GH-63): merges run from a neutral cwd with an
   API fallback for locally checked-out branches; merge records require
   `merge_path` and remote confirmation before an outcome may be reported.

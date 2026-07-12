@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
@@ -28,6 +30,137 @@ def test_pr_gate_allows_clean_authorized_merge() -> None:
     assert result["decision"] == "allowed"
     assert result["missing"] == []
     assert result["reasons"] == []
+
+
+def test_pr_gate_allows_legacy_linked_issue_without_structured_reference() -> None:
+    evidence = clean_evidence()
+
+    result = evaluate_pr_gate(evidence)
+
+    assert "issue_reference" not in evidence
+    assert result["decision"] == "allowed"
+
+
+@pytest.mark.parametrize("invalid_relation", [None, [], "partial"])
+def test_pr_gate_blocks_present_non_object_issue_reference(
+    invalid_relation: object,
+) -> None:
+    evidence = clean_evidence()
+    evidence["issue_reference"] = invalid_relation
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "issue_reference must be an object" in result["reasons"]
+
+
+def test_pr_gate_allows_verified_partial_reference_without_treating_it_as_closing() -> None:
+    evidence = clean_evidence()
+    evidence["linked_issue"] = 671
+    evidence["issue_reference"] = {
+        "number": 671,
+        "kind": "partial",
+        "source": "pr_body",
+        "verified": True,
+        "state": "OPEN",
+        "url": "https://github.com/majiayu000/remem/issues/671",
+        "closing_issue_numbers": [806],
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "allowed"
+    assert "issue_reference: verified partial GH-671" in result["satisfied"]
+    assert result["issue_reference"]["closing_issue_numbers"] == [806]
+    assert "issue_closure" not in result
+    assert "completion_mode" not in result
+    assert "close_issue" not in result["blocked_actions"]
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ({"number": 670}, "must match linked_issue"),
+        ({"verified": False}, "verified must be true"),
+        ({"source": "closingIssuesReferences"}, "partial source must be pr_body"),
+        ({"state": "CLOSED"}, "partial state must be OPEN"),
+        ({"closing_issue_numbers": [671, 806]}, "partial target must not be closing"),
+        ({"closing_issue_numbers": "806"}, "list of positive integers"),
+        ({"closing_issue_numbers": [806, 806]}, "must not contain duplicates"),
+        ({"number": True}, "issue_reference.number"),
+        ({"closure_authorized": True}, "unsupported fields"),
+        ({"kind": "unknown"}, "kind must be one of"),
+    ],
+)
+def test_pr_gate_blocks_inconsistent_partial_reference(
+    change: dict[str, object],
+    reason: str,
+) -> None:
+    evidence = clean_evidence()
+    evidence["linked_issue"] = 671
+    relation = {
+        "number": 671,
+        "kind": "partial",
+        "source": "pr_body",
+        "verified": True,
+        "state": "OPEN",
+        "closing_issue_numbers": [806],
+    }
+    relation.update(change)
+    evidence["issue_reference"] = relation
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(reason in item for item in result["reasons"] + result["missing"])
+
+
+def test_pr_gate_allows_verified_closing_reference() -> None:
+    evidence = clean_evidence()
+    evidence["issue_reference"] = {
+        "number": evidence["linked_issue"],
+        "kind": "closing",
+        "source": "closingIssuesReferences",
+        "verified": True,
+        "closing_issue_numbers": [evidence["linked_issue"]],
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "allowed"
+    assert any("verified closing" in item for item in result["satisfied"])
+
+
+def test_pr_gate_blocks_closing_reference_without_target_in_closing_numbers() -> None:
+    evidence = clean_evidence()
+    evidence["issue_reference"] = {
+        "number": evidence["linked_issue"],
+        "kind": "closing",
+        "source": "closingIssuesReferences",
+        "verified": True,
+        "closing_issue_numbers": [806],
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("closing target must appear" in item for item in result["reasons"])
+
+
+def test_pr_gate_blocks_closing_reference_with_partial_source() -> None:
+    evidence = clean_evidence()
+    evidence["issue_reference"] = {
+        "number": evidence["linked_issue"],
+        "kind": "closing",
+        "source": "pr_body",
+        "verified": True,
+        "closing_issue_numbers": [evidence["linked_issue"]],
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("closing source" in item for item in result["reasons"])
 
 
 def test_pr_gate_blocks_missing_review_source() -> None:

@@ -86,6 +86,11 @@ Build an issue-to-PR plan:
 - closing keywords only for the final slice that satisfies every acceptance
   criterion
 
+When gating a partial slice, pass that expected issue to the read-only evidence
+adapter with `--issue <issue>`. This verifies the live open issue and keeps any
+other bounded closing references auditable without treating the partial target
+as final or authorizing its closure.
+
 Record the plan as:
 
 ```yaml
