@@ -36,6 +36,11 @@ def test_required_files_include_duplicate_work_checks() -> None:
     assert "schemas/duplicate_work_evidence.schema.json" in REQUIRED_FILES
 
 
+def test_required_files_include_pr_issue_reference_module() -> None:
+    assert "checks/github_evidence_common.py" in REQUIRED_FILES
+    assert "checks/github_issue_reference.py" in REQUIRED_FILES
+
+
 def test_impl_branch_template_requires_issue_number_placeholder() -> None:
     class Config:
         workflow = {"artifacts": {"impl_branch": "{agent}/branch-{slug}"}}
