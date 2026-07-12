@@ -72,6 +72,13 @@ shell metacharacter 都保持单一参数。required artifact 的存在
 artifact templates；记录 Unreleased 修复。不修改 skill 文件，避免不必要的
 lockfile churn。
 
+### 6. Pack 资产所有权
+
+schema/template 元校验移入 `checks/pack_asset_validation.py`，使用显式 SpecRail
+资产集合，不再扫描消费仓库同目录下的所有文件。这样仍能对缺失或损坏的 pack
+资产 fail closed，同时不会把消费仓库自己的 schema/template 约束冒充为
+SpecRail 约束。
+
 ## Product-to-Test Mapping
 
 | Behavior invariant | Implementation area | Verification |
@@ -84,6 +91,7 @@ lockfile churn。
 | B-006 invalid template rejection | shared path validators | `python3 -m pytest -q tests/test_check_workflow.py -k 'spec_packet_root or invalid_paths or symlink or parent_escape'` |
 | B-007 read-only boundary | unchanged collector/gate command paths | `python3 -m pytest -q tests/test_github_issue_evidence.py tests/test_route_gate.py` |
 | B-008 explicit errors | CLI exception handling and validator | `python3 checks/check_workflow.py --repo .` plus negative unit tests |
+| B-009 consumer asset coexistence | `pack_asset_validation.py` | `python3 -m pytest -q tests/test_pack_asset_validation.py` |
 
 ## 数据流
 

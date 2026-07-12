@@ -16,6 +16,7 @@ GH-91
 - [x] `SP91-T003` 让 route gate 安全生成 configured packet 验证命令。 Covers: B-004, B-005, B-006 | Owner: route_gate | Done when: custom `--spec-dir` 经 shell quote，artifact resolve 不能逃逸 repo | Verify: `python3 -m pytest -q tests/test_route_gate.py`
 - [x] `SP91-T004` 更新 README、AGENT_USAGE 和 CHANGELOG。 Covers: B-001, B-003, B-004 | Owner: docs | Done when: 文档说明唯一配置源且命令仍可复制执行 | Verify: `python3 checks/check_workflow.py --repo .`
 - [x] `SP91-T005` 执行 focused/full/pack 验证并复核 diff。 Covers: B-001, B-002, B-003, B-004, B-005, B-006, B-007, B-008 | Owner: coordinator | Done when: 全部命令通过且无未声明写入 | Verify: `python3 -m pytest -q && python3 checks/check_workflow.py --repo . --all-specs && python3 checks/check_workflow.py --repo . --spec-dir specs/GH91 && git diff --check`
+- [x] `SP91-T006` 将 pack asset 校验限定为 SpecRail 自有 schema/template。 Covers: B-009 | Owner: workflow | Done when: 消费仓库同目录资产被忽略，SpecRail 资产缺失仍失败 | Verify: `python3 -m pytest -q tests/test_pack_asset_validation.py`
 
 ## 并行拆分
 

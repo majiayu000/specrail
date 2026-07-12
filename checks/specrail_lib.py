@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from pack_asset_validation import validate_json_schemas, validate_template_parity
+
 
 SCHEMA_ANNOTATION_KEYS = {"$id", "$schema", "description", "title"}
 SUPPORTED_SCHEMA_KEYS = SCHEMA_ANNOTATION_KEYS | {
@@ -636,51 +638,6 @@ def validate_action_policy(config: PackConfig) -> list[str]:
         for state in allowed_from:
             if str(state) not in states:
                 errors.append(f"workflow.yaml: action {route} references unknown state {state}")
-    return errors
-
-
-def validate_template_parity(repo: Path) -> list[str]:
-    errors: list[str] = []
-    root = repo / "templates"
-    zh = root / "zh-CN"
-    base_files = sorted(path.name for path in root.glob("*.md"))
-    zh_files = sorted(path.name for path in zh.glob("*.md")) if zh.is_dir() else []
-    for name in base_files:
-        if name not in zh_files:
-            errors.append(f"templates/zh-CN: missing localized template {name}")
-    for name in zh_files:
-        if name not in base_files:
-            errors.append(f"templates/zh-CN/{name}: no matching base template")
-    stable_tokens = ["GH-", "ready_to_spec", "ready_to_implement"]
-    for name in ["issue_feature.md", "product_spec.md", "tech_spec.md", "pull_request.md"]:
-        for rel in [Path("templates") / name, Path("templates/zh-CN") / name]:
-            path = repo / rel
-            if not path.is_file():
-                continue
-            text = read_text(path)
-            for token in stable_tokens:
-                if token in read_text(repo / "templates" / name) and token not in text:
-                    errors.append(f"{rel}: missing stable token {token}")
-    return errors
-
-
-def validate_json_schemas(repo: Path) -> list[str]:
-    errors: list[str] = []
-    schema_dir = repo / "schemas"
-    if not schema_dir.is_dir():
-        return ["missing schemas/ directory"]
-    for path in sorted(schema_dir.glob("*.schema.json")):
-        try:
-            data = json.loads(read_text(path))
-        except json.JSONDecodeError as exc:
-            errors.append(f"{path.relative_to(repo)}: invalid JSON: {exc.msg}")
-            continue
-        if "$schema" not in data:
-            errors.append(f"{path.relative_to(repo)}: missing $schema")
-        if "title" not in data:
-            errors.append(f"{path.relative_to(repo)}: missing title")
-        if data.get("type") != "object":
-            errors.append(f"{path.relative_to(repo)}: top-level type must be object")
     return errors
 
 

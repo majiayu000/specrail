@@ -42,12 +42,15 @@ SpecRail 允许消费仓库在 `workflow.yaml` 的 `artifacts` 中声明 spec pa
    placeholder 必须 fail closed，不得回退到 `specs/`。
 7. B-007 GitHub adapter 仍为只读 collector，offline gates 仍不执行网络写入。
 8. B-008 任何配置读取或 artifact 渲染错误必须输出明确错误并返回非零状态。
+9. B-009 adopted repo 自有的 schema/template 不得被误判为 SpecRail pack 资产；
+   SpecRail 自有资产缺失或非法仍必须失败。
 
 ## 验收标准
 
 - [x] `docs/specs/GH{issue_number}/` 配置能通过 `--all-specs` 发现测试。
 - [x] 自定义配置的 issue evidence 和 route gate 命令测试通过。
 - [x] 默认路径兼容、非法 template 和逃逸路径负例测试通过。
+- [x] 消费仓库自有 schema/template coexistence 测试通过。
 - [x] focused tests、完整 pytest、pack check、all-specs check 和 diff check 通过。
 
 ## 边界情况清单

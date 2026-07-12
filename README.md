@@ -226,6 +226,10 @@ cp skills-lock.json /path/to/your-repo/
 Keep the consumer repository's own `README.md` and `LICENSE` unless the
 maintainer explicitly wants to replace them.
 
+The workflow checker validates the copied SpecRail schema and template set by
+explicit ownership. Consumer-owned files may coexist under `schemas/` and
+`templates/` without being treated as SpecRail assets.
+
 If the consumer repository does not already have an `AGENTS.md`, add a short
 entrypoint that points agents at the copied SpecRail contract:
 
