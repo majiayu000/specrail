@@ -24,6 +24,7 @@ from check_workflow import validate_auth_mode, validate_impl_branch_template  # 
 from specrail_lib import (  # noqa: E402
     SpecRailError,
     load_pack,
+    resolve_path,
     spec_packet_artifact_paths,
     spec_packet_root,
 )
@@ -128,6 +129,30 @@ def test_spec_packet_root_requires_template() -> None:
 
     with pytest.raises(SpecRailError, match="artifacts.spec_packet is required"):
         spec_packet_root(config)
+
+
+def test_resolve_path_rejects_missing_filesystem_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_path(_path: Path) -> None:
+        raise FileNotFoundError("unavailable filesystem root")
+
+    monkeypatch.setattr(Path, "lstat", missing_path)
+
+    with pytest.raises(SpecRailError, match="could not be resolved"):
+        resolve_path(Path("/"), label="repository")
+
+
+def test_resolve_path_wraps_unavailable_working_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable_cwd(_path: Path) -> Path:
+        raise FileNotFoundError("working directory was removed")
+
+    monkeypatch.setattr(Path, "absolute", unavailable_cwd)
+
+    with pytest.raises(SpecRailError, match="could not be resolved"):
+        resolve_path(Path("."), label="repository")
 
 
 @pytest.mark.parametrize(

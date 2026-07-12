@@ -478,10 +478,24 @@ def spec_packet_artifact_paths(
 
 
 def resolve_path(path: Path, *, label: str) -> Path:
+    missing_parts: list[str] = []
     try:
-        return path.resolve()
+        candidate = path.absolute()
+        while True:
+            try:
+                candidate.lstat()
+            except FileNotFoundError:
+                parent = candidate.parent
+                if parent == candidate:
+                    raise
+                missing_parts.append(candidate.name)
+                candidate = parent
+                continue
+            break
+        resolved_path = candidate.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise SpecRailError(f"{label} could not be resolved: {exc}") from exc
+    return resolved_path.joinpath(*reversed(missing_parts))
 
 
 def resolve_repo_path(repo: Path, raw: str | PurePosixPath, *, label: str) -> Path:
