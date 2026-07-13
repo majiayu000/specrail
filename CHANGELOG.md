@@ -4,6 +4,12 @@
 
 ### Added
 
+- Configured spec packet paths (GH-91): all-spec discovery, GitHub issue
+  evidence, and route-gate verification commands now honor the artifact
+  templates in `workflow.yaml`; invalid or repository-escaping packet
+  templates fail closed instead of silently falling back to `specs/`. Pack
+  validation now scopes schema/template checks to SpecRail-owned assets so
+  consumer repository files can coexist in the same directories.
 - Two-mode implx authorization: plain `implx` defaults to `review` mode, while
   explicit `implx auto` selects auto mode. `automation_policy.auth_mode` and
   the `auth_modes` block declare per-mode waived human gates and mode-scoped

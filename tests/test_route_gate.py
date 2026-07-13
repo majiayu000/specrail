@@ -5,17 +5,25 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "checks"))
+
+from route_gate import artifact_exists  # noqa: E402
 
 
-def run_route_gate(*args: str) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+def run_route_gate(
+    *args: str,
+    repo: Path = ROOT,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     result = subprocess.run(
         [
             sys.executable,
             "checks/route_gate.py",
             "--repo",
-            ".",
+            str(repo),
             *args,
             "--json",
         ],
@@ -26,6 +34,24 @@ def run_route_gate(*args: str) -> tuple[subprocess.CompletedProcess[str], dict[s
     )
     payload = json.loads(result.stdout)
     return result, payload
+
+
+def write_custom_pack(repo: Path, spec_root: str = "docs/specs") -> None:
+    repo.mkdir()
+    workflow = (ROOT / "workflow.yaml").read_text(encoding="utf-8").replace(
+        "specs/GH{issue_number}",
+        f"{spec_root}/GH{{issue_number}}",
+    )
+    (repo / "workflow.yaml").write_text(workflow, encoding="utf-8")
+    for name in ["states.yaml", "labels.yaml"]:
+        (repo / name).write_text(
+            (ROOT / name).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+
+def test_artifact_exists_rejects_empty_path() -> None:
+    assert artifact_exists(ROOT, None) is False
 
 
 def write_duplicate_evidence(
@@ -139,6 +165,160 @@ def test_route_gate_allows_trusted_readiness_label_evidence(tmp_path: Path) -> N
 
     assert result.returncode == 0
     assert payload["decision"] == "allowed"
+
+
+def test_route_gate_uses_configured_spec_packet_in_verification_command(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+
+    result, payload = run_route_gate(
+        "--route",
+        "write_spec",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_spec",
+        repo=repo,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "python3 checks/check_workflow.py --repo . --spec-dir=docs/specs/GH999"
+        in payload["verification_commands"]
+    )
+
+
+def test_route_gate_shell_quotes_configured_spec_packet_command(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo, "docs/spec packets;printf PWN")
+
+    result, payload = run_route_gate(
+        "--route",
+        "write_spec",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_spec",
+        repo=repo,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "python3 checks/check_workflow.py --repo . --spec-dir="
+        "'docs/spec packets;printf PWN/GH999'"
+        in payload["verification_commands"]
+    )
+
+
+def test_route_gate_uses_equals_for_leading_dash_spec_packet(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo, "-specs")
+
+    result, payload = run_route_gate(
+        "--route",
+        "write_spec",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_spec",
+        repo=repo,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "python3 checks/check_workflow.py --repo . --spec-dir=-specs/GH999"
+        in payload["verification_commands"]
+    )
+
+
+def test_route_gate_blocks_root_symlink_outside_repo(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    write_custom_pack(repo)
+    (repo / "docs").mkdir()
+    outside.mkdir()
+    try:
+        (repo / "docs" / "specs").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+
+    result, payload = run_route_gate(
+        "--route",
+        "write_spec",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_spec",
+        repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any(
+        "resolves outside the repository" in reason
+        for reason in payload["reasons"]
+    )
+
+
+def test_route_gate_reports_root_symlink_loop_as_blocked(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    (repo / "docs").mkdir()
+    try:
+        (repo / "docs" / "specs").symlink_to("specs", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+
+    result, payload = run_route_gate(
+        "--route",
+        "write_spec",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_spec",
+        repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("could not be resolved" in reason for reason in payload["reasons"])
+    assert "Traceback" not in result.stderr
+
+def test_route_gate_blocks_invalid_spec_packet_template(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    workflow_path = repo / "workflow.yaml"
+    workflow_path.write_text(
+        workflow_path.read_text(encoding="utf-8").replace(
+            "docs/specs/GH{issue_number}/",
+            "../specs/GH{issue_number}/",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = run_route_gate(
+        "--route",
+        "write_spec",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_spec",
+        repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert (
+        "workflow.yaml: artifacts.spec_packet must stay within the repository"
+        in payload["reasons"]
+    )
 
 
 def test_route_gate_dry_run_warns_for_missing_artifacts_but_required_blocks(

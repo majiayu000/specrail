@@ -82,6 +82,9 @@ Validate every `specs/GH<number>` packet:
 python3 checks/check_workflow.py --repo . --all-specs
 ```
 
+The all-specs scan uses `workflow.yaml`'s `artifacts.spec_packet` template, so
+adopted repositories may keep packets under paths such as `docs/specs/GH1`.
+
 Evaluate whether an agent may take the next workflow action from local evidence:
 
 ```sh
@@ -92,7 +95,7 @@ python3 checks/route_gate.py --repo . --route implement --issue 123 --state read
 Collect read-only GitHub issue evidence before running the route gate:
 
 ```sh
-python3 checks/github_issue_evidence.py --github-repo OWNER/REPO --issue 123 --json > issue-evidence.json
+python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO --issue 123 --json > issue-evidence.json
 python3 checks/route_gate.py --repo . --route write_spec --issue 123 --evidence issue-evidence.json --json
 ```
 
@@ -101,6 +104,7 @@ local route evidence. It does not write labels, comments, issues, or PRs. Issue
 states inferred from labels are trusted readiness evidence; states inferred from
 requester-editable body hints are marked `state_trusted: false` and cannot
 replace maintainer readiness labels for human-gated routes.
+Artifact paths are rendered from the selected repo's `workflow.yaml`.
 
 Evaluate whether PR merge evidence is complete before a maintainer merges:
 
@@ -221,6 +225,10 @@ cp skills-lock.json /path/to/your-repo/
 
 Keep the consumer repository's own `README.md` and `LICENSE` unless the
 maintainer explicitly wants to replace them.
+
+The workflow checker validates the copied SpecRail schema and template set by
+explicit ownership. Consumer-owned files may coexist under `schemas/` and
+`templates/` without being treated as SpecRail assets.
 
 If the consumer repository does not already have an `AGENTS.md`, add a short
 entrypoint that points agents at the copied SpecRail contract:

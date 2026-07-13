@@ -17,9 +17,13 @@ sys.path.insert(0, str(CHECKS))
 from github_issue_evidence import (  # noqa: E402
     EvidenceError,
     build_issue_evidence,
+    collect_issue_evidence,
+    configured_artifacts,
+    main as issue_evidence_main,
     parse_github_repo,
     parse_issue_number,
 )
+from specrail_lib import SpecRailError  # noqa: E402
 
 
 def issue_payload(
@@ -36,6 +40,20 @@ def issue_payload(
         "url": f"https://github.com/majiayu000/specrail/issues/{number}",
         "body": body,
     }
+
+
+def write_custom_pack(repo: Path) -> None:
+    repo.mkdir()
+    workflow = (ROOT / "workflow.yaml").read_text(encoding="utf-8").replace(
+        "specs/GH{issue_number}",
+        "docs/specs/GH{issue_number}",
+    )
+    (repo / "workflow.yaml").write_text(workflow, encoding="utf-8")
+    for name in ["states.yaml", "labels.yaml"]:
+        (repo / name).write_text(
+            (ROOT / name).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
 
 
 def test_parse_github_repo_and_issue_number_require_valid_input() -> None:
@@ -75,6 +93,165 @@ def test_build_evidence_matches_route_gate_contract_from_label() -> None:
             "task_plan": "specs/GH16/tasks.md",
         },
     }
+
+
+def test_configured_artifacts_uses_workflow_templates(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+
+    assert configured_artifacts(repo, 16) == {
+        "product_spec": "docs/specs/GH16/product.md",
+        "tech_spec": "docs/specs/GH16/tech.md",
+        "task_plan": "docs/specs/GH16/tasks.md",
+    }
+
+
+def test_configured_artifacts_rejects_root_symlink_outside_repo(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    write_custom_pack(repo)
+    (repo / "docs").mkdir()
+    outside.mkdir()
+    try:
+        (repo / "docs" / "specs").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+
+    with pytest.raises(SpecRailError, match="resolves outside the repository"):
+        configured_artifacts(repo, 16)
+
+
+def test_configured_artifacts_rejects_missing_template(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    workflow_path = repo / "workflow.yaml"
+    workflow_path.write_text(
+        workflow_path.read_text(encoding="utf-8").replace(
+            "  task_plan: docs/specs/GH{issue_number}/tasks.md\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SpecRailError, match="artifacts.task_plan is required"):
+        configured_artifacts(repo, 16)
+
+
+def test_cli_fails_before_github_query_for_invalid_artifact_config(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    workflow_path = repo / "workflow.yaml"
+    workflow_path.write_text(
+        workflow_path.read_text(encoding="utf-8").replace(
+            "  task_plan: docs/specs/GH{issue_number}/tasks.md\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/github_issue_evidence.py",
+            "--repo",
+            str(repo),
+            "--github-repo",
+            "majiayu000/specrail",
+            "--issue",
+            "16",
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "workflow.yaml: artifacts.task_plan is required" in result.stderr
+
+
+def test_cli_reports_configured_root_symlink_loop_before_github_query(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    (repo / "docs").mkdir()
+    try:
+        (repo / "docs" / "specs").symlink_to("specs", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/github_issue_evidence.py",
+            "--repo",
+            str(repo),
+            "--github-repo",
+            "majiayu000/specrail",
+            "--issue",
+            "16",
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "could not be resolved" in result.stderr
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_collector_rejects_mismatched_github_issue_number(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    monkeypatch.setattr(
+        "github_issue_evidence.collect_issue_view",
+        lambda _github_repo, _issue_number: issue_payload(number=17),
+    )
+
+    with pytest.raises(EvidenceError, match="expected 16, got 17"):
+        collect_issue_evidence("majiayu000/specrail", 16, repo)
+
+
+def test_cli_returns_nonzero_for_mismatched_github_issue_number(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    monkeypatch.setattr(
+        "github_issue_evidence.collect_issue_view",
+        lambda _github_repo, _issue_number: issue_payload(number=17),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "github_issue_evidence.py",
+            "--repo",
+            str(repo),
+            "--github-repo",
+            "majiayu000/specrail",
+            "--issue",
+            "16",
+            "--json",
+        ],
+    )
+
+    assert issue_evidence_main() == 1
+    assert "issue number mismatch: expected 16, got 17" in capsys.readouterr().err
 
 
 def test_build_evidence_uses_body_state_hint_without_readiness_label() -> None:
@@ -157,11 +334,15 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
     )
     fake_gh.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
 
     result = subprocess.run(
         [
             sys.executable,
             "checks/github_issue_evidence.py",
+            "--repo",
+            str(repo),
             "--github-repo",
             "majiayu000/specrail",
             "--issue",
@@ -182,7 +363,7 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
     assert evidence["state_source"] == "body_hint"
     assert evidence["state_trusted"] is False
     assert evidence["labels"] == ["area_runtime"]
-    assert evidence["artifacts"]["product_spec"] == "specs/GH16/product.md"
+    assert evidence["artifacts"]["product_spec"] == "docs/specs/GH16/product.md"
 
 
 def test_route_gate_consumes_issue_fixture() -> None:

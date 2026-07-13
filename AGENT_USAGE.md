@@ -97,18 +97,18 @@ agent session may need to restart before the installed skills are discoverable.
    change is small and mechanical, or the user explicitly asks to skip spec
    creation.
 5. Confirm the current state from durable repo state when possible.
-6. Create or update the required artifact:
+6. Create or update the required artifact. For spec artifacts, use the
+   configured `artifacts.product_spec`, `artifacts.tech_spec`, and
+   `artifacts.task_plan` paths from `workflow.yaml`:
    - issue
-   - `specs/GH<issue-number>/product.md`
-   - `specs/GH<issue-number>/tech.md`
-   - `specs/GH<issue-number>/tasks.md`
+   - configured product, tech, and task spec paths
    - PR body
    - review result
    - handoff
 7. Run the local evaluator before taking the route action:
 
 ```sh
-python3 checks/github_issue_evidence.py --github-repo OWNER/REPO --issue <issue-number> --json > issue-evidence.json
+python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO --issue <issue-number> --json > issue-evidence.json
 python3 checks/github_duplicate_evidence.py --github-repo OWNER/REPO --issue <issue-number> --json > duplicate-work-evidence.json
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --evidence issue-evidence.json --json
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
@@ -125,8 +125,13 @@ opened.
 ```sh
 python3 checks/check_workflow.py --repo .
 python3 checks/check_workflow.py --repo . --all-specs
-python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue-number>
 ```
+
+`--all-specs` discovers packets from `workflow.yaml`'s
+`artifacts.spec_packet` template. The issue evidence adapter and route gate
+render their spec paths from the same artifact configuration. For a single
+packet, run the exact configured command returned by `route_gate.py` in
+`verification_commands`.
 
 9. Before reporting a PR as merge-ready, collect PR evidence and run:
 
