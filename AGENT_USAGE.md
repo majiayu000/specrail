@@ -125,12 +125,13 @@ opened.
 ```sh
 python3 checks/check_workflow.py --repo .
 python3 checks/check_workflow.py --repo . --all-specs
-python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue-number>
 ```
 
 `--all-specs` discovers packets from `workflow.yaml`'s
 `artifacts.spec_packet` template. The issue evidence adapter and route gate
-render their spec paths from the same artifact configuration.
+render their spec paths from the same artifact configuration. For a single
+packet, run the exact configured command returned by `route_gate.py` in
+`verification_commands`.
 
 9. Before reporting a PR as merge-ready, collect PR evidence and run:
 
