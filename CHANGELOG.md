@@ -4,6 +4,12 @@
 
 ### Added
 
+- Spec depth audit tool (GH-93): read-only `tools/spec_depth_audit.py` measures
+  per-spec invariant count, EARS conditional ratio, boundary-category coverage,
+  and tech.md path:line anchors; supports `--repo` and repeatable `--spec-dir`
+  for out-of-repo A/B comparison. Docstring records the 2026-07-13 baseline
+  (60% of legacy specs at exactly 5 invariants, 28/30 with zero anchors). No
+  gate integration; depth gating remains a Phase 2 item.
 - Configured spec packet paths (GH-91): all-spec discovery, GitHub issue
   evidence, and route-gate verification commands now honor the artifact
   templates in `workflow.yaml`; invalid or repository-escaping packet
