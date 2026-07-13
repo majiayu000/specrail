@@ -190,6 +190,45 @@ def test_route_gate_without_issue_reports_missing_evidence() -> None:
     assert not any("unsupported placeholder" in reason for reason in payload["reasons"])
 
 
+@pytest.mark.parametrize("runner", [run_check_workflow, run_route_gate])
+def test_base_checks_validate_all_spec_artifact_templates(
+    tmp_path: Path,
+    runner: object,
+) -> None:
+    repo = tmp_path / "repo"
+    copy_pack(repo)
+    workflow_path = repo / "workflow.yaml"
+    workflow_path.write_text(
+        workflow_path.read_text(encoding="utf-8").replace(
+            "product_spec: specs/GH{issue_number}/product.md",
+            "product_spec: ../outside/GH{issue_number}/product.md",
+        ),
+        encoding="utf-8",
+    )
+
+    if runner is run_check_workflow:
+        result = run_check_workflow(repo)
+        payload = None
+    else:
+        result, payload = run_route_gate(
+            repo,
+            "--route",
+            "implement",
+            "--state",
+            "ready_to_implement",
+        )
+
+    assert result.returncode == 1
+    if payload is None:
+        assert "artifacts.product_spec must stay within the repository" in result.stdout
+    else:
+        assert payload["decision"] == "blocked"
+        assert any(
+            "artifacts.product_spec must stay within the repository" in reason
+            for reason in payload["reasons"]
+        )
+
+
 def test_agent_usage_defers_to_configured_verification_commands() -> None:
     text = (ROOT / "AGENT_USAGE.md").read_text(encoding="utf-8")
 
