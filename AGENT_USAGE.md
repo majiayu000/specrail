@@ -97,11 +97,11 @@ agent session may need to restart before the installed skills are discoverable.
    change is small and mechanical, or the user explicitly asks to skip spec
    creation.
 5. Confirm the current state from durable repo state when possible.
-6. Create or update the required artifact:
+6. Create or update the required artifact. For spec artifacts, use the
+   configured `artifacts.product_spec`, `artifacts.tech_spec`, and
+   `artifacts.task_plan` paths from `workflow.yaml`:
    - issue
-   - `specs/GH<issue-number>/product.md`
-   - `specs/GH<issue-number>/tech.md`
-   - `specs/GH<issue-number>/tasks.md`
+   - configured product, tech, and task spec paths
    - PR body
    - review result
    - handoff

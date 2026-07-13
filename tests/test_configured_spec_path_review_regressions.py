@@ -304,3 +304,52 @@ def test_agent_usage_defers_to_configured_verification_commands() -> None:
 
     assert "--spec-dir specs/GH<issue-number>" not in text
     assert "verification_commands" in text
+
+
+def test_route_gate_rejects_provided_spec_outside_configured_path(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    copy_pack(repo)
+    workflow_path = repo / "workflow.yaml"
+    workflow_path.write_text(
+        workflow_path.read_text(encoding="utf-8").replace(
+            "specs/GH{issue_number}",
+            "docs/specs/GH{issue_number}",
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = run_route_gate(
+        repo,
+        "--route",
+        "implement",
+        "--issue",
+        "91",
+        "--state",
+        "ready_to_implement",
+        "--artifact",
+        "product_spec=specs/GH91/product.md",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "product_spec: specs/GH91/product.md" not in payload["satisfied"]
+    assert "product_spec:docs/specs/GH91/product.md" in payload["missing"]
+    assert any(
+        "product_spec provided at specs/GH91/product.md does not match "
+        "configured path docs/specs/GH91/product.md"
+        in reason
+        for reason in payload["reasons"]
+    )
+
+
+def test_agent_usage_creates_spec_artifacts_at_configured_paths() -> None:
+    text = (ROOT / "AGENT_USAGE.md").read_text(encoding="utf-8")
+    basic_flow = text.split("## Basic Agent Flow", 1)[1]
+    step_six = basic_flow.split("6. ", 1)[1].split("\n7. ", 1)[0]
+
+    assert "`specs/GH<issue-number>/product.md`" not in text
+    assert "`artifacts.product_spec`" in step_six
+    assert "`artifacts.tech_spec`" in step_six
+    assert "`artifacts.task_plan`" in step_six
+    assert "from `workflow.yaml`" in step_six
