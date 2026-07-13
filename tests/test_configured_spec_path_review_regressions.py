@@ -229,6 +229,76 @@ def test_base_checks_validate_all_spec_artifact_templates(
         )
 
 
+@pytest.mark.parametrize("runner", [run_check_workflow, run_route_gate])
+def test_base_checks_reject_configured_root_identity_redirect(
+    tmp_path: Path,
+    runner: object,
+) -> None:
+    repo = tmp_path / "repo"
+    copy_pack(repo)
+    workflow_path = repo / "workflow.yaml"
+    workflow_path.write_text(
+        workflow_path.read_text(encoding="utf-8").replace(
+            "specs/GH{issue_number}",
+            "docs/specs/GH{issue_number}",
+        ),
+        encoding="utf-8",
+    )
+    (repo / "docs").mkdir(exist_ok=True)
+    try:
+        (repo / "docs" / "specs").symlink_to("../specs", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink unavailable: {exc}")
+
+    if runner is run_check_workflow:
+        result = run_check_workflow(repo)
+        payload = None
+    else:
+        result, payload = run_route_gate(
+            repo,
+            "--route",
+            "implement",
+            "--state",
+            "ready_to_implement",
+        )
+
+    assert result.returncode == 1
+    if payload is None:
+        assert "configured spec packet root must preserve its configured identity" in result.stdout
+    else:
+        assert payload["decision"] == "blocked"
+        assert any(
+            "configured spec packet root must preserve its configured identity" in reason
+            for reason in payload["reasons"]
+        )
+
+
+def test_external_repo_loads_its_own_pack_asset_helper(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    copy_pack(repo)
+    (repo / "checks" / "pack_asset_validation.py").write_text(
+        'raise RuntimeError("target helper sentinel")\n',
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "checks" / "check_workflow.py"),
+            "--repo",
+            str(repo),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "cannot load checks/pack_asset_validation.py: target helper sentinel" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
 def test_agent_usage_defers_to_configured_verification_commands() -> None:
     text = (ROOT / "AGENT_USAGE.md").read_text(encoding="utf-8")
 
