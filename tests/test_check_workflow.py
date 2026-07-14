@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
 sys.path.insert(0, str(CHECKS))
 
+import check_workflow  # noqa: E402
+
 from check_workflow import REQUIRED_FILES, main as check_workflow_main  # noqa: E402
 from check_workflow import (  # noqa: E402
     discover_spec_packet_dirs,
@@ -20,7 +22,11 @@ from check_workflow import (  # noqa: E402
 )
 from check_workflow import validate_spec_packet  # noqa: E402
 from check_workflow import validate_required_file_globs  # noqa: E402
-from check_workflow import validate_auth_mode, validate_impl_branch_template  # noqa: E402
+from check_workflow import (  # noqa: E402
+    validate_auth_mode,
+    validate_impl_branch_template,
+    validate_pack_assets,
+)
 from specrail_lib import (  # noqa: E402
     SpecRailError,
     load_pack,
@@ -56,6 +62,47 @@ def test_required_files_include_duplicate_work_checks() -> None:
 def test_required_files_include_pr_issue_reference_module() -> None:
     assert "checks/github_evidence_common.py" in REQUIRED_FILES
     assert "checks/github_issue_reference.py" in REQUIRED_FILES
+
+
+def test_trusted_pack_asset_validation_ignores_target_helper(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    shutil.copytree(
+        ROOT,
+        target,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", ".coverage*"),
+    )
+    target_helper = target / "checks" / "pack_asset_validation.py"
+    target_helper.write_text(
+        "from pathlib import Path\n"
+        "Path(__file__).with_name('target-helper-executed').write_text('yes')\n"
+        "def validate_json_schemas(repo):\n"
+        "    return []\n"
+        "def validate_template_parity(repo):\n"
+        "    return []\n",
+        encoding="utf-8",
+    )
+    (target / "schemas" / "workflow_run.schema.json").unlink()
+
+    errors = validate_pack_assets(target)
+
+    assert "schemas: missing SpecRail schema workflow_run.schema.json" in errors
+    assert not target_helper.with_name("target-helper-executed").exists()
+
+
+def test_trusted_pack_asset_validation_requires_source_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = tmp_path / "runner" / "checks" / "check_workflow.py"
+    runner.parent.mkdir(parents=True)
+    monkeypatch.setattr(check_workflow, "__file__", str(runner))
+
+    errors = validate_pack_assets(ROOT)
+
+    assert errors == [
+        "cannot load trusted pack asset validation: "
+        "checks/pack_asset_validation.py is missing"
+    ]
 
 
 def test_impl_branch_template_requires_issue_number_placeholder() -> None:
@@ -312,6 +359,40 @@ def test_discovery_rejects_configured_root_symlink_outside_repo(
 
     with pytest.raises(SpecRailError, match="resolves outside the repository"):
         discover_spec_packet_dirs(repo, PurePosixPath("docs/specs"))
+
+
+@pytest.mark.parametrize("root_kind", ["missing", "regular_file"])
+def test_cli_all_specs_rejects_configured_root_is_unusable(
+    tmp_path: Path,
+    root_kind: str,
+) -> None:
+    repo = tmp_path / "repo"
+    shutil.copytree(
+        ROOT,
+        repo,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", ".coverage*"),
+    )
+    shutil.rmtree(repo / "specs")
+    if root_kind == "regular_file":
+        (repo / "specs").write_text("not a directory\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/check_workflow.py",
+            "--repo",
+            ".",
+            "--all-specs",
+        ],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "configured spec packet root" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
 
 
 def test_main_rejects_configured_root_symlink_without_all_specs(
