@@ -101,10 +101,7 @@
         "issue",
         "spec_paths",
         "content_hashes",
-        "merged_base_head",
-        "trusted_base_ref",
-        "trusted_base_sha",
-        "spec_revisions",
+        "approved_base_sha",
         "approved_at",
         "maintainer_actor",
         "state_source",
@@ -120,10 +117,10 @@
           "items": {"type": "string", "minLength": 1}
         },
         "content_hashes": {"type": "object"},
-        "merged_base_head": {"type": "string", "minLength": 40},
-        "trusted_base_ref": {"type": "string", "minLength": 1},
-        "trusted_base_sha": {"type": "string", "minLength": 40},
-        "spec_revisions": {"type": "object"},
+        "approved_base_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}$"
+        },
         "approved_at": {"type": "string", "minLength": 1},
         "maintainer_actor": {"type": "string", "minLength": 1},
         "state_source": {"const": "label"},

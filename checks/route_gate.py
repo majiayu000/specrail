@@ -32,6 +32,7 @@ from sensitive_enforcement import (
     classification_from_task_plan,
     evaluate_sensitive_evidence,
     sensitive_registry,
+    trusted_default_base,
     validate_sensitive_registry,
 )
 
@@ -319,11 +320,12 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         registry = sensitive_registry(config)
         if registry["paths"] or registry["specs"]:
             try:
+                _trusted_base_ref, trusted_base_sha = trusted_default_base(repo)
                 trusted_classification = classification_from_task_plan(
                     config,
                     repo,
                     issue=args.issue,
-                    base_sha=str(evidence.get("base_sha") or ""),
+                    base_sha=trusted_base_sha,
                 )
                 sensitive_input["sensitive_classification"] = {
                     key: trusted_classification[key]

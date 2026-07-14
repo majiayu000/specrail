@@ -580,8 +580,9 @@ def build_evidence(
                         repo,
                         repository=str(repository or ""),
                         issue=linked_issue,
-                        trusted_base_ref=evidence["base_ref"],
-                        trusted_base_sha=evidence["base_sha"],
+                        approved_base_sha=str(
+                            approval_metadata.get("approved_base_sha") or ""
+                        ),
                         approved_at=str(approval_metadata.get("approved_at") or ""),
                         maintainer_actor=str(
                             approval_metadata.get("maintainer_actor") or ""

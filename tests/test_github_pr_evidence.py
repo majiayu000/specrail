@@ -25,6 +25,7 @@ from github_pr_evidence import (  # noqa: E402
     parse_github_repo,
     references_partial_issue,
 )
+from github_approved_spec_evidence import collect_approval_metadata  # noqa: E402
 from github_pr_snapshot import (  # noqa: E402
     assert_same_pr_file_snapshot,
     collect_pr_file_snapshot,
@@ -117,6 +118,56 @@ def file_snapshot(paths: list[str], *, head_sha: str | None = None) -> dict[str,
             json.dumps(normalized, separators=(",", ":")).encode("utf-8")
         ).hexdigest(),
     }
+
+
+def approval_query_payload() -> dict[str, object]:
+    return {
+        "data": {
+            "repository": {
+                "defaultBranchRef": {"name": "main"},
+                "issue": {
+                    "state": "OPEN",
+                    "labels": {"nodes": [{"name": "ready_to_implement"}]},
+                    "timelineItems": {
+                        "nodes": [
+                            {
+                                "createdAt": "2026-07-14T00:00:00Z",
+                                "actor": {"login": "maintainer"},
+                                "label": {"name": "ready_to_implement"},
+                            }
+                        ]
+                    },
+                },
+            }
+        }
+    }
+
+
+def test_approval_metadata_binds_default_branch_tip_as_of_label() -> None:
+    calls: list[list[str]] = []
+
+    def fake_run_json(args: list[str]) -> object:
+        calls.append(args)
+        if len(calls) == 1:
+            return approval_query_payload()
+        return [{"sha": "a" * 40}]
+
+    metadata = collect_approval_metadata("example/repo", 97, fake_run_json)
+
+    assert metadata["approved_base_sha"] == "a" * 40
+    assert metadata["approved_at"] == "2026-07-14T00:00:00Z"
+    assert "sha=main" in calls[1]
+    assert "until=2026-07-14T00:00:00Z" in calls[1]
+    assert "per_page=1" in calls[1]
+
+
+def test_approval_metadata_blocks_when_no_default_commit_precedes_label() -> None:
+    responses: list[object] = [approval_query_payload(), []]
+
+    with pytest.raises(EvidenceError, match="no commit at or before"):
+        collect_approval_metadata(
+            "example/repo", 97, lambda _args: responses.pop(0)
+        )
 
 
 def snapshot_page(
@@ -264,8 +315,13 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
 def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> None:
     payload = pr_payload()
     head = base_sha()
+    checkout_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
     payload.update(
         {
+            "headRefOid": checkout_head,
             "body": "Closes #97\nenforcement_sensitive: true",
             "closingIssuesReferences": [{"number": 97}],
         }
@@ -285,11 +341,14 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> 
         repository="majiayu000/specrail",
         approval_metadata={
             "approved_at": "2030-07-14T00:00:00Z",
+            "approved_base_sha": head,
             "maintainer_actor": "maintainer",
             "state_source": "label",
             "state_trusted": True,
         },
-        pr_snapshot=file_snapshot(["checks/pr_gate.py"]),
+        pr_snapshot=file_snapshot(
+            ["checks/pr_gate.py"], head_sha=checkout_head
+        ),
     )
 
     assert evidence["sensitive_classification"]["matched_paths"] == [
@@ -319,6 +378,7 @@ def test_build_evidence_rejects_body_hint_approval_metadata() -> None:
             repo=ROOT, config=config, repository="majiayu000/specrail",
             approval_metadata={
                 "approved_at": "2026-07-14T00:00:00Z",
+                "approved_base_sha": head,
                 "maintainer_actor": "requester",
                 "state_source": "body_hint",
                 "state_trusted": False,

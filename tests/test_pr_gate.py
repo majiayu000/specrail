@@ -24,17 +24,23 @@ def clean_evidence() -> dict[str, object]:
 
 def sensitive_evidence() -> dict[str, object]:
     evidence = clean_evidence()
-    head = subprocess.run(
+    base_head = subprocess.run(
         ["git", "rev-parse", "origin/main"], cwd=ROOT, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    checkout_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
         capture_output=True, text=True,
     ).stdout.strip()
     issue = 97
     evidence["linked_issue"] = issue
+    evidence["head_sha"] = checkout_head
+    evidence["gate_query_head_sha"] = checkout_head
     evidence.update(
         {
             "repository": "majiayu000/specrail",
             "base_ref": "main",
-            "base_sha": head,
+            "base_sha": base_head,
             "changed_files_count": 0,
             "changed_files_sha256": __import__("hashlib").sha256(b"[]").hexdigest(),
             "enforcement_sensitive": True,
@@ -46,7 +52,7 @@ def sensitive_evidence() -> dict[str, object]:
             "approved_spec": build_approved_spec_evidence(
                 load_pack(ROOT), ROOT,
                 repository="majiayu000/specrail", issue=issue,
-                trusted_base_ref="main", trusted_base_sha=head,
+                approved_base_sha=base_head,
                 approved_at="2030-07-14T00:00:00Z",
                 maintainer_actor="maintainer",
             ),
@@ -75,7 +81,7 @@ def test_pr_gate_blocks_changed_file_snapshot_digest_mismatch() -> None:
 
 @pytest.mark.parametrize(
     "forgery",
-    ["hash", "head", "traversal", "body_hint", "unmerged", "late", "base_mismatch"],
+    ["hash", "head", "traversal", "body_hint", "not_ancestor", "base_mismatch"],
 )
 def test_pr_gate_blocks_forged_sensitive_approved_spec(forgery: str) -> None:
     evidence = sensitive_evidence()
@@ -84,23 +90,16 @@ def test_pr_gate_blocks_forged_sensitive_approved_spec(forgery: str) -> None:
         path = approval["spec_paths"][0]
         approval["content_hashes"][path] = "0" * 64
     elif forgery == "head":
-        approval["merged_base_head"] = "0" * 40
+        approval["approved_base_sha"] = "0" * 40
     elif forgery == "traversal":
         approval["spec_paths"][0] = "../product.md"
     else:
-        if forgery == "unmerged":
+        if forgery == "not_ancestor":
             feature_head = subprocess.run(
                 ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
                 capture_output=True, text=True,
             ).stdout.strip()
-            evidence["approved_spec"] = build_approved_spec_evidence(
-                load_pack(ROOT), ROOT, repository="majiayu000/specrail", issue=97,
-                trusted_base_ref="main", trusted_base_sha=feature_head,
-                approved_at="2030-07-14T00:00:00Z",
-                maintainer_actor="maintainer",
-            )
-        elif forgery == "late":
-            approval["approved_at"] = "2000-01-01T00:00:00Z"
+            approval["approved_base_sha"] = feature_head
         elif forgery == "base_mismatch":
             evidence["base_sha"] = "0" * 40
         else:
@@ -111,6 +110,27 @@ def test_pr_gate_blocks_forged_sensitive_approved_spec(forgery: str) -> None:
 
     assert result["decision"] == "blocked"
     assert "sensitive_enforcement" in result["missing"]
+
+
+@pytest.mark.parametrize("stale_kind", ["stale_evidence", "base_checkout"])
+def test_pr_gate_blocks_checkout_that_does_not_match_gated_head(
+    stale_kind: str,
+) -> None:
+    evidence = sensitive_evidence()
+    if stale_kind == "stale_evidence":
+        evidence["gate_query_head_sha"] = "f" * 40
+    else:
+        base_head = subprocess.run(
+            ["git", "rev-parse", "origin/main"], cwd=ROOT, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        evidence["head_sha"] = base_head
+        evidence["gate_query_head_sha"] = base_head
+
+    result = evaluate_pr_gate(evidence, repo=ROOT, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any("local checkout HEAD" in reason for reason in result["reasons"])
 
 
 def fixture(name: str) -> dict[str, object]:

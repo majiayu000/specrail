@@ -64,6 +64,23 @@ def write_sensitive_pack(
         ),
         encoding="utf-8",
     )
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir()
+    (schema_dir / "duplicate_work_evidence.schema.json").write_text(
+        (ROOT / "schemas" / "duplicate_work_evidence.schema.json").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "-c", "user.name=SpecRail Test",
+            "-c", "user.email=specrail@example.invalid", "commit", "-qm", "pack",
+        ],
+        check=True,
+    )
     packet = repo / "specs" / "GH999"
     packet.mkdir(parents=True)
     for name in ["product.md", "tech.md"]:
@@ -81,29 +98,32 @@ def write_sensitive_pack(
         + "\n-->\n",
         encoding="utf-8",
     )
-    schema_dir = repo / "schemas"
-    schema_dir.mkdir()
-    (schema_dir / "duplicate_work_evidence.schema.json").write_text(
-        (ROOT / "schemas" / "duplicate_work_evidence.schema.json").read_text(
-            encoding="utf-8"
-        ),
-        encoding="utf-8",
-    )
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
     subprocess.run(
         [
             "git", "-C", str(repo), "-c", "user.name=SpecRail Test",
-            "-c", "user.email=specrail@example.invalid", "commit", "-qm", "base",
+            "-c", "user.email=specrail@example.invalid", "commit", "-qm", "spec",
         ],
         check=True,
     )
-    return subprocess.run(
+    head = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
         check=True,
         capture_output=True,
         text=True,
     ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", head],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "symbolic-ref",
+            "refs/remotes/origin/HEAD", "refs/remotes/origin/main",
+        ],
+        check=True,
+    )
+    return head
 
 
 def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
@@ -112,8 +132,7 @@ def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
         repo,
         repository="example/consumer",
         issue=999,
-        trusted_base_ref="main",
-        trusted_base_sha=head,
+        approved_base_sha=head,
         approved_at="2030-07-14T00:00:00Z",
         maintainer_actor="maintainer",
     )
@@ -156,6 +175,133 @@ def test_route_gate_revalidates_sensitive_registry_and_approved_spec(
     assert payload["sensitive_classification"]["matched_paths"] == [
         "checks/route_gate.py"
     ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("base_ref", "forged", "reported base_ref"),
+        ("base_sha", "f" * 40, "reported base_sha"),
+    ],
+)
+def test_route_gate_blocks_forged_caller_base_identity(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    reason: str,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    evidence[field] = value
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert any(reason in item for item in payload["reasons"])
+
+
+@pytest.mark.parametrize("remote_state", ["missing", "ambiguous"])
+def test_route_gate_blocks_untrusted_origin_head(
+    tmp_path: Path,
+    remote_state: str,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    if remote_state == "missing":
+        subprocess.run(
+            ["git", "-C", str(repo), "symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+            check=True,
+        )
+    else:
+        subprocess.run(
+            [
+                "git", "-C", str(repo), "symbolic-ref",
+                "refs/remotes/origin/HEAD", "refs/remotes/upstream/main",
+            ],
+            check=True,
+        )
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert any("trusted default branch" in item for item in payload["reasons"])
+
+
+def test_route_gate_blocks_spec_incorporated_after_approval_base(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    pre_spec = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD^"], check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    evidence["approved_spec"]["approved_base_sha"] = pre_spec
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert any("approval base" in item for item in payload["reasons"])
+
+
+def test_route_gate_blocks_approved_spec_changed_on_current_default_base(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    (repo / "specs" / "GH999" / "product.md").write_text(
+        "GitHub issue: `#999`\nchanged after approval\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "-c", "user.name=SpecRail Test",
+            "-c", "user.email=specrail@example.invalid", "commit", "-qm", "spec drift",
+        ],
+        check=True,
+    )
+    current_base = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", current_base],
+        check=True,
+    )
+    evidence["base_sha"] = current_base
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert any("changed since approval" in item for item in payload["reasons"])
 
 
 @pytest.mark.parametrize("forgery", ["body_hint", "changed_hash", "false"])
