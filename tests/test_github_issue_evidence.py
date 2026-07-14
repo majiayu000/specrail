@@ -18,6 +18,7 @@ from github_issue_evidence import (  # noqa: E402
     EvidenceError,
     build_issue_evidence,
     collect_issue_evidence,
+    collect_issue_view,
     configured_artifacts,
     main as issue_evidence_main,
     parse_github_repo,
@@ -62,6 +63,15 @@ def test_parse_github_repo_and_issue_number_require_valid_input() -> None:
 
     with pytest.raises(EvidenceError):
         parse_github_repo("majiayu000/specrail/extra")
+
+
+def test_collect_issue_view_rejects_array_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("github_issue_evidence.run_gh_json", lambda _args: [])
+
+    with pytest.raises(EvidenceError, match="JSON object"):
+        collect_issue_view("majiayu000/specrail", 16)
 
     with pytest.raises(EvidenceError):
         parse_github_repo("../specrail")
