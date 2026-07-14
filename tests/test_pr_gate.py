@@ -25,7 +25,7 @@ def clean_evidence() -> dict[str, object]:
 def sensitive_evidence() -> dict[str, object]:
     evidence = clean_evidence()
     head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
+        ["git", "rev-parse", "origin/main"], cwd=ROOT, check=True,
         capture_output=True, text=True,
     ).stdout.strip()
     issue = 97
@@ -33,7 +33,10 @@ def sensitive_evidence() -> dict[str, object]:
     evidence.update(
         {
             "repository": "majiayu000/specrail",
+            "base_ref": "main",
             "base_sha": head,
+            "changed_files_count": 0,
+            "changed_files_sha256": __import__("hashlib").sha256(b"[]").hexdigest(),
             "enforcement_sensitive": True,
             "sensitive_classification": {
                 "source": "github_changed_files",
@@ -43,7 +46,8 @@ def sensitive_evidence() -> dict[str, object]:
             "approved_spec": build_approved_spec_evidence(
                 load_pack(ROOT), ROOT,
                 repository="majiayu000/specrail", issue=issue,
-                merged_base_head=head, approved_at="2026-07-14T00:00:00Z",
+                trusted_base_ref="main", trusted_base_sha=head,
+                approved_at="2030-07-14T00:00:00Z",
                 maintainer_actor="maintainer",
             ),
         }
@@ -59,7 +63,20 @@ def test_pr_gate_revalidates_explicit_sensitive_approved_spec() -> None:
     assert "approved spec evidence revalidated" in result["satisfied"]
 
 
-@pytest.mark.parametrize("forgery", ["hash", "head", "traversal", "body_hint"])
+def test_pr_gate_blocks_changed_file_snapshot_digest_mismatch() -> None:
+    evidence = sensitive_evidence()
+    evidence["changed_files_sha256"] = "0" * 64
+
+    result = evaluate_pr_gate(evidence, repo=ROOT, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any("changed_files_sha256" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    ["hash", "head", "traversal", "body_hint", "unmerged", "late", "base_mismatch"],
+)
 def test_pr_gate_blocks_forged_sensitive_approved_spec(forgery: str) -> None:
     evidence = sensitive_evidence()
     approval = evidence["approved_spec"]
@@ -71,8 +88,24 @@ def test_pr_gate_blocks_forged_sensitive_approved_spec(forgery: str) -> None:
     elif forgery == "traversal":
         approval["spec_paths"][0] = "../product.md"
     else:
-        approval["state_source"] = "body_hint"
-        approval["state_trusted"] = False
+        if forgery == "unmerged":
+            feature_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
+                capture_output=True, text=True,
+            ).stdout.strip()
+            evidence["approved_spec"] = build_approved_spec_evidence(
+                load_pack(ROOT), ROOT, repository="majiayu000/specrail", issue=97,
+                trusted_base_ref="main", trusted_base_sha=feature_head,
+                approved_at="2030-07-14T00:00:00Z",
+                maintainer_actor="maintainer",
+            )
+        elif forgery == "late":
+            approval["approved_at"] = "2000-01-01T00:00:00Z"
+        elif forgery == "base_mismatch":
+            evidence["base_sha"] = "0" * 40
+        else:
+            approval["state_source"] = "body_hint"
+            approval["state_trusted"] = False
 
     result = evaluate_pr_gate(evidence, repo=ROOT, config=load_pack(ROOT))
 

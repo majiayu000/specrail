@@ -568,6 +568,7 @@ def evaluate_pr_gate(
                     evidence,
                     expected_source="github_changed_files",
                     issue=evidence.get("linked_issue"),
+                    expected_base_ref=evidence.get("base_ref"),
                     expected_base_head=evidence.get("base_sha"),
                 )
             )

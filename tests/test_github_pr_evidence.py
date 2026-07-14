@@ -25,7 +25,12 @@ from github_pr_evidence import (  # noqa: E402
     parse_github_repo,
     references_partial_issue,
 )
+from github_pr_snapshot import (  # noqa: E402
+    assert_same_pr_file_snapshot,
+    collect_pr_file_snapshot,
+)
 from pr_gate import evaluate_pr_gate  # noqa: E402
+from sensitive_enforcement import classify_sensitive_changes  # noqa: E402
 from specrail_lib import PackConfig, load_pack  # noqa: E402
 
 
@@ -89,6 +94,100 @@ def threads_payload() -> dict[str, object]:
             }
         }
     }
+
+
+def base_sha() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "origin/main"], cwd=ROOT, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def file_snapshot(paths: list[str], *, head_sha: str | None = None) -> dict[str, object]:
+    normalized = sorted(paths)
+    return {
+        "head_sha": head_sha or str(pr_payload()["headRefOid"]),
+        "base_ref": "main",
+        "base_sha": base_sha(),
+        "default_base_ref": "main",
+        "default_base_sha": base_sha(),
+        "path_count": len(normalized),
+        "paths": normalized,
+        "paths_sha256": __import__("hashlib").sha256(
+            json.dumps(normalized, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+    }
+
+
+def snapshot_page(
+    paths: list[str],
+    *,
+    total: int,
+    has_next: bool,
+    cursor: str | None,
+) -> dict[str, object]:
+    return {
+        "data": {
+            "repository": {
+                "defaultBranchRef": {"name": "main", "target": {"oid": base_sha()}},
+                "pullRequest": {
+                    "headRefOid": str(pr_payload()["headRefOid"]),
+                    "baseRefName": "main",
+                    "baseRefOid": base_sha(),
+                    "changedFiles": total,
+                    "files": {
+                        "totalCount": total,
+                        "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
+                        "nodes": [{"path": path} for path in paths],
+                    },
+                },
+            }
+        }
+    }
+
+
+def test_pr_file_snapshot_finds_sensitive_path_after_first_100() -> None:
+    first = [f"docs/file-{index}.md" for index in range(100)]
+    pages = [
+        snapshot_page(first, total=101, has_next=True, cursor="page-2"),
+        snapshot_page(["checks/pr_gate.py"], total=101, has_next=False, cursor=None),
+    ]
+    snapshot = collect_pr_file_snapshot(
+        "majiayu000", "specrail", 10, lambda _args: pages.pop(0)
+    )
+    base = load_pack(ROOT)
+    workflow = deepcopy(base.workflow)
+    workflow["enforcement"]["sensitive_registry"]["paths"] = ["checks/**"]
+    config = PackConfig(ROOT, workflow, base.states, base.labels)
+
+    classification = classify_sensitive_changes(
+        config, ROOT, snapshot["paths"], [], source="github_changed_files"
+    )
+
+    assert snapshot["path_count"] == 101
+    assert classification["matched_paths"] == ["checks/pr_gate.py"]
+
+
+def test_pr_file_snapshot_rejects_incomplete_pagination() -> None:
+    page = snapshot_page(
+        [f"docs/file-{index}.md" for index in range(100)],
+        total=101,
+        has_next=False,
+        cursor=None,
+    )
+
+    with pytest.raises(EvidenceError, match="collected 100 of 101"):
+        collect_pr_file_snapshot(
+            "majiayu000", "specrail", 10, lambda _args: page
+        )
+
+
+def test_pr_file_snapshot_rejects_double_snapshot_drift() -> None:
+    before = file_snapshot(["README.md"])
+    after = file_snapshot(["README.md", "checks/pr_gate.py"])
+
+    with pytest.raises(EvidenceError, match="snapshot drifted"):
+        assert_same_pr_file_snapshot(before, after)
 
 
 def test_parse_github_repo_requires_owner_repo() -> None:
@@ -164,16 +263,11 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
 
 def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> None:
     payload = pr_payload()
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
-        capture_output=True, text=True,
-    ).stdout.strip()
+    head = base_sha()
     payload.update(
         {
             "body": "Closes #97\nenforcement_sensitive: true",
             "closingIssuesReferences": [{"number": 97}],
-            "baseRefOid": head,
-            "files": [{"path": "checks/pr_gate.py"}],
         }
     )
     base = load_pack(ROOT)
@@ -190,11 +284,12 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> 
         config=config,
         repository="majiayu000/specrail",
         approval_metadata={
-            "approved_at": "2026-07-14T00:00:00Z",
+            "approved_at": "2030-07-14T00:00:00Z",
             "maintainer_actor": "maintainer",
             "state_source": "label",
             "state_trusted": True,
         },
+        pr_snapshot=file_snapshot(["checks/pr_gate.py"]),
     )
 
     assert evidence["sensitive_classification"]["matched_paths"] == [
@@ -206,16 +301,11 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> 
 
 def test_build_evidence_rejects_body_hint_approval_metadata() -> None:
     payload = pr_payload()
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
-        capture_output=True, text=True,
-    ).stdout.strip()
+    head = base_sha()
     payload.update(
         {
             "body": "Closes #97\nenforcement_sensitive: true",
             "closingIssuesReferences": [{"number": 97}],
-            "baseRefOid": head,
-            "files": [{"path": "checks/pr_gate.py"}],
         }
     )
     base = load_pack(ROOT)
@@ -233,6 +323,7 @@ def test_build_evidence_rejects_body_hint_approval_metadata() -> None:
                 "state_source": "body_hint",
                 "state_trusted": False,
             },
+            pr_snapshot=file_snapshot(["checks/pr_gate.py"]),
         )
 
 

@@ -52,7 +52,10 @@ def write_custom_pack(repo: Path, spec_root: str = "docs/specs") -> None:
         )
 
 
-def write_sensitive_pack(repo: Path) -> str:
+def write_sensitive_pack(
+    repo: Path,
+    planned_paths: list[str] | None = None,
+) -> str:
     write_custom_pack(repo, "specs")
     workflow_path = repo / "workflow.yaml"
     workflow_path.write_text(
@@ -65,6 +68,19 @@ def write_sensitive_pack(repo: Path) -> str:
     packet.mkdir(parents=True)
     for name in ["product.md", "tech.md"]:
         (packet / name).write_text("GitHub issue: `#999`\n", encoding="utf-8")
+    manifest = {
+        "version": 1,
+        "issue": 999,
+        "complete": True,
+        "paths": planned_paths or ["checks/route_gate.py"],
+        "spec_refs": [],
+    }
+    (packet / "tasks.md").write_text(
+        "# Tasks\n<!-- specrail-planned-changes\n"
+        + json.dumps(manifest, separators=(",", ":"))
+        + "\n-->\n",
+        encoding="utf-8",
+    )
     schema_dir = repo / "schemas"
     schema_dir.mkdir()
     (schema_dir / "duplicate_work_evidence.schema.json").write_text(
@@ -96,8 +112,9 @@ def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
         repo,
         repository="example/consumer",
         issue=999,
-        merged_base_head=head,
-        approved_at="2026-07-14T00:00:00Z",
+        trusted_base_ref="main",
+        trusted_base_sha=head,
+        approved_at="2030-07-14T00:00:00Z",
         maintainer_actor="maintainer",
     )
     return {
@@ -106,6 +123,7 @@ def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
         "state_source": "label",
         "state_trusted": True,
         "repository": "example/consumer",
+        "base_ref": "main",
         "base_sha": head,
         "enforcement_sensitive": True,
         "sensitive_classification": {
@@ -140,7 +158,7 @@ def test_route_gate_revalidates_sensitive_registry_and_approved_spec(
     ]
 
 
-@pytest.mark.parametrize("forgery", ["body_hint", "changed_hash", "traversal", "false"])
+@pytest.mark.parametrize("forgery", ["body_hint", "changed_hash", "false"])
 def test_route_gate_blocks_forged_or_conflicting_sensitive_evidence(
     tmp_path: Path,
     forgery: str,
@@ -154,8 +172,6 @@ def test_route_gate_blocks_forged_or_conflicting_sensitive_evidence(
     elif forgery == "changed_hash":
         path = "specs/GH999/product.md"
         evidence["approved_spec"]["content_hashes"][path] = "0" * 64
-    elif forgery == "traversal":
-        evidence["sensitive_classification"]["changed_paths"] = ["../escape"]
     else:
         evidence["enforcement_sensitive"] = False
     evidence_path = tmp_path / "evidence.json"
@@ -170,6 +186,73 @@ def test_route_gate_blocks_forged_or_conflicting_sensitive_evidence(
     assert result.returncode == 1
     assert payload["decision"] == "blocked"
     assert "sensitive_enforcement" in payload["missing"]
+
+
+@pytest.mark.parametrize("caller_paths", [[], ["README.md"]])
+def test_route_gate_ignores_caller_planned_paths(
+    tmp_path: Path,
+    caller_paths: list[str],
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    evidence["sensitive_classification"]["changed_paths"] = caller_paths
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 0
+    assert payload["sensitive_classification"]["changed_paths"] == [
+        "checks/route_gate.py"
+    ]
+    assert payload["sensitive_classification"]["planned_paths_complete"] is True
+    assert payload["sensitive_classification"]["source_path"] == (
+        "specs/GH999/tasks.md"
+    )
+    assert len(payload["sensitive_classification"]["source_content_hash"]) == 64
+
+
+def test_route_gate_blocks_task_plan_changed_after_base(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    (repo / "specs" / "GH999" / "tasks.md").write_text(
+        "# caller-rewritten plan\n", encoding="utf-8"
+    )
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert any("task plan changed" in reason for reason in payload["reasons"])
+
+
+def test_route_gate_blocks_traversal_in_trusted_task_plan(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo, ["../escape"])
+    evidence = sensitive_route_evidence(repo, head)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("stay within" in reason for reason in payload["reasons"])
 
 
 def test_artifact_exists_rejects_empty_path() -> None:

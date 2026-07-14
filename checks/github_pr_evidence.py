@@ -21,6 +21,11 @@ from github_issue_reference import (
     references_partial_issue,
     relation_snapshot,
 )
+from github_pr_snapshot import (
+    assert_same_pr_file_snapshot,
+    collect_pr_file_snapshot,
+    enforcement_declaration,
+)
 from sensitive_enforcement import (
     build_approved_spec_evidence,
     classify_sensitive_changes,
@@ -34,13 +39,11 @@ PR_VIEW_FIELDS = [
     "state",
     "isDraft",
     "headRefOid",
-    "baseRefOid",
     "mergeStateStatus",
     "body",
     "closingIssuesReferences",
     "statusCheckRollup",
     "reviews",
-    "files",
 ]
 
 REVIEW_THREADS_QUERY = """
@@ -74,9 +77,6 @@ REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 STATUS_CONTEXT_STATES = {"SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED"}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
-ENFORCEMENT_DECLARATION_RE = re.compile(
-    r"(?im)^\s*enforcement_sensitive\s*:\s*(true|false)\s*$"
-)
 
 
 def parse_github_repo(raw: str) -> tuple[str, str]:
@@ -485,32 +485,6 @@ def load_lane_failures(path: str | None) -> list[dict[str, str]]:
     return [_normalize_lane_failure(item, index) for index, item in enumerate(payload, start=1)]
 
 
-def _enforcement_declaration(body: Any) -> bool | None:
-    if not isinstance(body, str):
-        return None
-    matches = ENFORCEMENT_DECLARATION_RE.findall(body)
-    if not matches:
-        return None
-    normalized = {value.lower() == "true" for value in matches}
-    if len(normalized) != 1:
-        raise EvidenceError("PR body contains conflicting enforcement_sensitive declarations")
-    return normalized.pop()
-
-
-def _changed_file_paths(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        raise EvidenceError("files must be a complete list for sensitive classification")
-    paths: list[str] = []
-    for index, item in enumerate(value, start=1):
-        if not isinstance(item, dict):
-            raise EvidenceError(f"files item #{index} must be an object")
-        path = item.get("path")
-        if not isinstance(path, str) or not path.strip():
-            raise EvidenceError(f"files item #{index}.path must be a non-empty string")
-        paths.append(path.strip())
-    return paths
-
-
 def build_evidence(
     pr_payload: dict[str, Any],
     threads_payload: dict[str, Any],
@@ -527,6 +501,7 @@ def build_evidence(
     config: PackConfig | None = None,
     repository: str | None = None,
     approval_metadata: dict[str, Any] | None = None,
+    pr_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     linked_issue, issue_reference = normalize_issue_reference(
@@ -554,21 +529,28 @@ def build_evidence(
     if issue_reference is not None:
         evidence["issue_reference"] = issue_reference
     if repo is not None and config is not None:
-        declaration = _enforcement_declaration(pr_payload.get("body"))
+        declaration = enforcement_declaration(pr_payload.get("body"))
         registry = sensitive_registry(config)
         if declaration is not None or registry["paths"] or registry["specs"]:
+            if not isinstance(pr_snapshot, dict) or pr_snapshot.get("head_sha") != head_sha:
+                raise EvidenceError(
+                    "complete PR file snapshot is required for sensitive classification"
+                )
             try:
                 classification = classify_sensitive_changes(
                     config,
                     repo,
-                    _changed_file_paths(pr_payload.get("files")),
+                    pr_snapshot.get("paths"),
                     [],
                     source="github_changed_files",
                 )
             except SpecRailError as exc:
                 raise EvidenceError(str(exc)) from exc
             evidence["repository"] = repository
-            evidence["base_sha"] = _require_string(pr_payload, "baseRefOid")
+            evidence["base_ref"] = pr_snapshot.get("base_ref")
+            evidence["base_sha"] = pr_snapshot.get("base_sha")
+            evidence["changed_files_count"] = pr_snapshot.get("path_count")
+            evidence["changed_files_sha256"] = pr_snapshot.get("paths_sha256")
             evidence["sensitive_classification"] = classification
             if declaration is not None:
                 evidence["enforcement_sensitive"] = declaration
@@ -598,7 +580,8 @@ def build_evidence(
                         repo,
                         repository=str(repository or ""),
                         issue=linked_issue,
-                        merged_base_head=evidence["base_sha"],
+                        trusted_base_ref=evidence["base_ref"],
+                        trusted_base_sha=evidence["base_sha"],
                         approved_at=str(approval_metadata.get("approved_at") or ""),
                         maintainer_actor=str(
                             approval_metadata.get("maintainer_actor") or ""
@@ -650,6 +633,13 @@ def collect_evidence(
     pr_payload_before = collect_pr_view(github_repo, pr_number)
     head_sha_before = _require_string(pr_payload_before, "headRefOid")
     relation_snapshot_before = relation_snapshot(pr_payload_before)
+    file_snapshot_before = None
+    if repo is not None and config is not None and (enforcement_declaration(pr_payload_before.get("body")) is not None or any(sensitive_registry(config).values())):
+        file_snapshot_before = collect_pr_file_snapshot(
+            owner, name, pr_number, run_gh_json
+        )
+        if file_snapshot_before["head_sha"] != head_sha_before:
+            raise EvidenceError("PR view and file snapshot head SHA disagree")
     threads_payload = collect_review_threads(owner, name, pr_number)
 
     issue_payload = None
@@ -663,15 +653,16 @@ def collect_evidence(
         issue_payload = collect_issue_view(github_repo, expected_issue)
 
     approval_metadata = None
-    if repo is not None and config is not None:
-        declaration = _enforcement_declaration(pr_payload_before.get("body"))
+    if file_snapshot_before is not None:
+        assert file_snapshot_before is not None
+        declaration = enforcement_declaration(pr_payload_before.get("body"))
         registry = sensitive_registry(config)
         if declaration is not None or registry["paths"] or registry["specs"]:
             try:
                 classification = classify_sensitive_changes(
                     config,
                     repo,
-                    _changed_file_paths(pr_payload_before.get("files")),
+                    file_snapshot_before.get("paths"),
                     [],
                     source="github_changed_files",
                 )
@@ -688,6 +679,14 @@ def collect_evidence(
                 approval_metadata = collect_approval_metadata(
                     github_repo, linked_issue, run_gh_json
                 )
+
+    file_snapshot_after = None
+    if file_snapshot_before is not None:
+        file_snapshot_after = collect_pr_file_snapshot(
+            owner, name, pr_number, run_gh_json
+        )
+        assert file_snapshot_before is not None
+        assert_same_pr_file_snapshot(file_snapshot_before, file_snapshot_after)
 
     pr_payload_after = collect_pr_view(github_repo, pr_number)
     head_sha_after = _require_string(pr_payload_after, "headRefOid")
@@ -717,6 +716,7 @@ def collect_evidence(
         config,
         github_repo,
         approval_metadata,
+        file_snapshot_after,
     )
 
 

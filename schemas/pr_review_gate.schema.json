@@ -43,6 +43,18 @@
       "type": "string",
       "minLength": 40
     },
+    "base_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "changed_files_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "changed_files_sha256": {
+      "type": "string",
+      "minLength": 64
+    },
     "enforcement_sensitive": {
       "type": "boolean"
     },
@@ -90,6 +102,9 @@
         "spec_paths",
         "content_hashes",
         "merged_base_head",
+        "trusted_base_ref",
+        "trusted_base_sha",
+        "spec_revisions",
         "approved_at",
         "maintainer_actor",
         "state_source",
@@ -106,6 +121,9 @@
         },
         "content_hashes": {"type": "object"},
         "merged_base_head": {"type": "string", "minLength": 40},
+        "trusted_base_ref": {"type": "string", "minLength": 1},
+        "trusted_base_sha": {"type": "string", "minLength": 40},
+        "spec_revisions": {"type": "object"},
         "approved_at": {"type": "string", "minLength": 1},
         "maintainer_actor": {"type": "string", "minLength": 1},
         "state_source": {"const": "label"},

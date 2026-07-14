@@ -29,7 +29,9 @@ from specrail_lib import (
 )
 from duplicate_work_gate import evaluate_duplicate_work_gate_path
 from sensitive_enforcement import (
+    classification_from_task_plan,
     evaluate_sensitive_evidence,
+    sensitive_registry,
     validate_sensitive_registry,
 )
 
@@ -311,16 +313,42 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             required_artifacts.append(path)
 
     if route == "implement":
-        sensitive_classification, sensitive_satisfied, sensitive_errors = (
+        trusted_classification: dict[str, Any] | None = None
+        sensitive_input = dict(evidence)
+        sensitive_input.pop("sensitive_classification", None)
+        registry = sensitive_registry(config)
+        if registry["paths"] or registry["specs"]:
+            try:
+                trusted_classification = classification_from_task_plan(
+                    config,
+                    repo,
+                    issue=args.issue,
+                    base_sha=str(evidence.get("base_sha") or ""),
+                )
+                sensitive_input["sensitive_classification"] = {
+                    key: trusted_classification[key]
+                    for key in [
+                        "source", "changed_paths", "spec_refs", "matched_paths",
+                        "matched_specs", "registry_configured",
+                        "enforcement_sensitive",
+                    ]
+                }
+            except (SpecRailError, TypeError) as exc:
+                sensitive_errors.append(str(exc))
+        sensitive_classification, sensitive_satisfied, evaluated_sensitive_errors = (
             evaluate_sensitive_evidence(
                 config,
                 repo,
-                evidence,
+                sensitive_input,
                 expected_source="task_plan",
                 issue=args.issue,
+                expected_base_ref=evidence.get("base_ref"),
                 expected_base_head=evidence.get("base_sha"),
             )
         )
+        sensitive_errors.extend(evaluated_sensitive_errors)
+        if trusted_classification is not None:
+            sensitive_classification = trusted_classification
         satisfied.extend(sensitive_satisfied)
         if sensitive_errors:
             reasons.extend(sensitive_errors)

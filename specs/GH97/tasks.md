@@ -9,6 +9,10 @@ GH-97
 - Product: `product.md`
 - Tech: `tech.md`
 
+<!-- specrail-planned-changes
+{"version":1,"issue":97,"complete":true,"paths":["workflow.yaml","checks/check_workflow.py","checks/github_approved_spec_evidence.py","checks/github_pr_evidence.py","checks/github_pr_snapshot.py","checks/pr_gate.py","checks/route_gate.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/sensitive_enforcement.py","checks/review_json_gate.py","checks/review_result_semantics.py","checks/closure_audit.py","schemas/pr_review_gate.schema.json","schemas/runtime_checkpoint.schema.json","schemas/review_result.schema.json","schemas/closure_audit_result.schema.json","tests/test_check_workflow.py","tests/test_github_pr_evidence.py","tests/test_pr_gate.py","tests/test_route_gate.py","tests/test_runtime_ledger_gate.py","tests/test_specrail_schema.py","tests/test_review_json_gate.py","tests/test_closure_audit.py"],"spec_refs":["specs/GH97/product.md","specs/GH97/tech.md","specs/GH97/tasks.md"]}
+-->
+
 ## 实现任务
 
 - [ ] `SP97-T1` Owner: agent; Dependencies: approved spec; PR: partial implementation A (`Refs #97`); Files: `workflow.yaml`, configured-path helpers, approved-spec adapter/evidence, `checks/route_gate.py`, `checks/github_pr_evidence.py`, `checks/pr_gate.py`, runtime gate/schema integration and focused tests; Done when: consumer registry 命中由受信任、规范化的 planned/current-head paths 自行计算；approved spec 由 maintainer-controlled label + merged base head + repo/issue/path/hash/actor/timestamp 证据生成并重新验证；`enforcement_sensitive` 缺失/冲突、forged/body-hint approval、批准后 spec 改变、true 无 approved spec、unsafe path 全部 fail closed，且非敏感 PR 保持兼容；Verify: focused workflow/route/evidence/PR/runtime/schema pytest、pack check。
