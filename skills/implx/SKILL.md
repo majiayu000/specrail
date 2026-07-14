@@ -79,6 +79,12 @@ baseline; it never selects or authorizes auto mode.
   actions, conflicting review feedback, architecture-level rewrites) never
   block the queue: skip them, keep draining, and report them once in a final
   `human_decisions` list with a recommended action each.
+- Budget exhaustion without a degradation signal does not pause the run:
+  follow the Same-Session Tranche Rollover rule in
+  `skills/specrail-implement-queue/SKILL.md` and continue with the next
+  tranche in the same session. Hand off to a fresh session only on compaction
+  budget reached, context soft stop, user interrupt, or a queue that is empty
+  or fully blocked.
 
 In both modes, never force-push, delete unmerged branches, replace a
 maintainer-writable PR without cause, publish releases, or act outside the
