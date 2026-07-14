@@ -56,6 +56,7 @@ def write_sensitive_pack(
     repo: Path,
     planned_paths: list[str] | None = None,
     manifest_count: int = 1,
+    render_manifest: bool = True,
 ) -> str:
     write_custom_pack(repo, "specs")
     workflow_path = repo / "workflow.yaml"
@@ -92,13 +93,25 @@ def write_sensitive_pack(
         "paths": planned_paths or ["checks/route_gate.py"],
         "spec_refs": [],
     }
+    template = (ROOT / "templates" / "tech_spec.md").read_text(encoding="utf-8")
+    template_manifest = (
+        '<!-- specrail-planned-changes\n'
+        '{"version":1,"issue":0,"complete":false,"paths":[],"spec_refs":[]}\n'
+        '-->'
+    )
     manifest_text = (
         "<!-- specrail-planned-changes\n"
         + json.dumps(manifest, separators=(",", ":"))
-        + "\n-->\n"
+        + "\n-->"
     )
+    assert template.count(template_manifest) == 1
+    replacement = manifest_text if render_manifest and manifest_count else ""
+    if not render_manifest:
+        replacement = template_manifest
+    rendered_tech = template.replace(template_manifest, replacement)
     (packet / "tech.md").write_text(
-        "GitHub issue: `#999`\n" + manifest_text * manifest_count,
+        "GitHub issue: `#999`\n" + rendered_tech
+        + ("\n" + manifest_text) * (manifest_count - 1),
         encoding="utf-8",
     )
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
@@ -147,6 +160,8 @@ def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
         spec_revisions=revisions,
         approved_at="2030-07-14T00:00:00Z",
         maintainer_actor="maintainer",
+        default_base_ref="main",
+        default_base_sha=head,
     )
     return {
         "github_state": "OPEN",
@@ -156,6 +171,8 @@ def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
         "repository": "example/consumer",
         "base_ref": "main",
         "base_sha": head,
+        "default_base_ref": "main",
+        "default_base_sha": head,
         "enforcement_sensitive": True,
         "sensitive_classification": {
             "source": "tech_spec",
@@ -219,27 +236,42 @@ def test_route_gate_blocks_forged_caller_base_identity(
     assert any(reason in item for item in payload["reasons"])
 
 
-@pytest.mark.parametrize("remote_state", ["missing", "ambiguous"])
-def test_route_gate_blocks_untrusted_origin_head(
+def test_route_gate_allows_missing_origin_head_with_exact_adapter_default(
     tmp_path: Path,
-    remote_state: str,
 ) -> None:
     repo = tmp_path / "repo"
     head = write_sensitive_pack(repo)
     evidence = sensitive_route_evidence(repo, head)
-    if remote_state == "missing":
-        subprocess.run(
-            ["git", "-C", str(repo), "symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
-            check=True,
-        )
-    else:
-        subprocess.run(
-            [
-                "git", "-C", str(repo), "symbolic-ref",
-                "refs/remotes/origin/HEAD", "refs/remotes/upstream/main",
-            ],
-            check=True,
-        )
+    subprocess.run(
+        ["git", "-C", str(repo), "symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+        check=True,
+    )
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 0
+    assert payload["decision"] == "allowed"
+
+
+def test_route_gate_blocks_non_origin_default_symbolic_ref(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "symbolic-ref",
+            "refs/remotes/origin/HEAD", "refs/remotes/upstream/main",
+        ],
+        check=True,
+    )
     evidence_path = tmp_path / "evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
@@ -251,6 +283,32 @@ def test_route_gate_blocks_untrusted_origin_head(
 
     assert result.returncode == 1
     assert any("trusted default branch" in item for item in payload["reasons"])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("default_base_ref", "forged"), ("default_base_sha", "f" * 40)],
+)
+def test_route_gate_blocks_forged_adapter_default_identity(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    evidence[field] = value
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert any("default base" in item for item in payload["reasons"])
 
 
 def test_route_gate_blocks_spec_source_that_predates_incorporation(
@@ -304,6 +362,8 @@ def test_route_gate_blocks_approved_spec_changed_on_current_default_base(
         check=True,
     )
     evidence["base_sha"] = current_base
+    evidence["default_base_sha"] = current_base
+    evidence["approved_spec"]["default_base_sha"] = current_base
     evidence_path = tmp_path / "evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
@@ -412,6 +472,23 @@ def test_route_gate_blocks_missing_or_duplicate_tech_manifest(
 
     assert result.returncode == 1
     assert any("exactly one" in reason for reason in payload["reasons"])
+
+
+def test_route_gate_blocks_unfilled_tech_template_manifest(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo, render_manifest=False)
+    evidence = sensitive_route_evidence(repo, head)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert any("version/issue binding" in reason for reason in payload["reasons"])
 
 
 def test_route_gate_blocks_traversal_in_trusted_tech_manifest(tmp_path: Path) -> None:

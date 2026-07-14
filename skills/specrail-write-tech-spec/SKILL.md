@@ -19,6 +19,12 @@ python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> 
 ```
 
 4. Explore the codebase first, then write `specs/GH<issue-number>/tech.md`.
+   Replace the template's `specrail-planned-changes` placeholder with exactly
+   one valid JSON manifest bound to the real issue: set `issue` to the linked
+   issue number, set `complete=true`, and exhaustively list the planned
+   repository-relative `paths` and applicable `spec_refs`. Never leave the
+   fail-closed issue `0`, `complete=false`, or empty placeholder lists in a
+   tech spec that is ready for implementation.
 5. Ground the plan in codebase context: relevant files, current behavior, and
    why each area changes or stays unchanged, following the anchor discipline
    below.

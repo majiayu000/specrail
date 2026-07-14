@@ -105,6 +105,68 @@ def test_trusted_pack_asset_validation_requires_source_helper(
     ]
 
 
+def test_tech_templates_have_one_fail_closed_planned_changes_manifest() -> None:
+    assert validate_pack_assets(ROOT) == []
+
+
+@pytest.mark.parametrize("failure", ["missing", "duplicate", "invalid"])
+def test_pack_assets_reject_invalid_tech_template_manifest(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    target = tmp_path / "target"
+    shutil.copytree(
+        ROOT,
+        target,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", ".coverage*"),
+    )
+    path = target / "templates" / "tech_spec.md"
+    marker = (
+        '<!-- specrail-planned-changes\n'
+        '{"version":1,"issue":0,"complete":false,"paths":[],"spec_refs":[]}\n'
+        '-->'
+    )
+    text = path.read_text(encoding="utf-8")
+    if failure == "missing":
+        text = text.replace(marker, "")
+    elif failure == "duplicate":
+        text = text.replace(marker, marker + "\n" + marker)
+    else:
+        text = text.replace(marker, "<!-- specrail-planned-changes\n{invalid}\n-->")
+    path.write_text(text, encoding="utf-8")
+
+    errors = validate_pack_assets(target)
+
+    assert any("templates/tech_spec.md" in error for error in errors)
+
+
+def test_check_workflow_rejects_invalid_sensitive_registry_provider_config(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    shutil.copytree(
+        ROOT,
+        target,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", ".coverage*"),
+    )
+    workflow = target / "workflow.yaml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace("    paths: []", "    paths: invalid"),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, "checks/check_workflow.py", "--repo", "."],
+        cwd=target,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "sensitive_registry.paths must be a list" in result.stdout
+
+
 def test_impl_branch_template_requires_issue_number_placeholder() -> None:
     class Config:
         workflow = {"artifacts": {"impl_branch": "{agent}/branch-{slug}"}}

@@ -320,7 +320,11 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         registry = sensitive_registry(config)
         if registry["paths"] or registry["specs"]:
             try:
-                _trusted_base_ref, trusted_base_sha = trusted_default_base(repo)
+                _trusted_base_ref, trusted_base_sha = trusted_default_base(
+                    repo,
+                    default_base_ref=evidence.get("default_base_ref"),
+                    default_base_sha=evidence.get("default_base_sha"),
+                )
                 trusted_classification = classification_from_approved_tech(
                     config,
                     repo,

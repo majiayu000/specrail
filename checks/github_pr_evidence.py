@@ -15,16 +15,11 @@ from typing import Any
 from github_evidence_common import EvidenceError, json_object
 from github_approved_spec_evidence import collect_approval_metadata
 from github_issue_reference import (
-    normalize_closing_issue_numbers,
-    normalize_issue_reference,
-    normalize_linked_issue,
-    references_partial_issue,
-    relation_snapshot,
+    normalize_closing_issue_numbers, normalize_issue_reference,
+    normalize_linked_issue, references_partial_issue, relation_snapshot,
 )
 from github_pr_snapshot import (
-    assert_same_pr_file_snapshot,
-    collect_pr_file_snapshot,
-    derive_spec_refs,
+    assert_same_pr_file_snapshot, collect_pr_file_snapshot, derive_spec_refs,
     enforcement_declaration,
 )
 from sensitive_enforcement import (
@@ -47,18 +42,11 @@ query SpecRailReviewThreads($owner: String!, $name: String!, $number: Int!) {
     pullRequest(number: $number) {
       reviewThreads(first: 100) {
         nodes {
-          id
-          isResolved
-          isOutdated
-          resolvedBy {
-            login
-          }
+          id isResolved isOutdated
+          resolvedBy { login }
           comments(first: 5) {
             nodes {
-              url
-              author {
-                login
-              }
+              url author { login }
             }
           }
         }
@@ -542,6 +530,8 @@ def build_evidence(
             evidence["repository"] = repository
             evidence["base_ref"] = pr_snapshot.get("base_ref")
             evidence["base_sha"] = pr_snapshot.get("base_sha")
+            evidence["default_base_ref"] = pr_snapshot.get("default_base_ref")
+            evidence["default_base_sha"] = pr_snapshot.get("default_base_sha")
             evidence["changed_files_count"] = pr_snapshot.get("path_count")
             evidence["changed_files_sha256"] = pr_snapshot.get("paths_sha256")
             evidence["sensitive_classification"] = classification
@@ -567,6 +557,18 @@ def build_evidence(
                     raise EvidenceError(
                         "approved spec requires trusted maintainer label evidence"
                     )
+                approval_default = (
+                    approval_metadata.get("default_base_ref"),
+                    approval_metadata.get("default_base_sha"),
+                )
+                snapshot_default = (
+                    pr_snapshot.get("default_base_ref"),
+                    pr_snapshot.get("default_base_sha"),
+                )
+                if approval_default != snapshot_default:
+                    raise EvidenceError(
+                        "approved-spec and PR snapshots disagree on trusted default base"
+                    )
                 try:
                     evidence["approved_spec"] = build_approved_spec_evidence(
                         config,
@@ -579,6 +581,8 @@ def build_evidence(
                             approval_metadata.get("maintainer_actor") or ""
                         ),
                         gated_head_sha=head_sha,
+                        default_base_ref=snapshot_default[0],
+                        default_base_sha=snapshot_default[1],
                     )
                 except SpecRailError as exc:
                     raise EvidenceError(str(exc)) from exc
@@ -672,7 +676,11 @@ def collect_evidence(
                     )
                 approval_metadata = collect_approval_metadata(
                     github_repo, linked_issue, run_gh_json,
-                    spec_source_commits=approved_spec_source_commits(config, repo, linked_issue),
+                    spec_source_commits=approved_spec_source_commits(
+                        config, repo, linked_issue,
+                        default_base_ref=file_snapshot_before.get("default_base_ref"),
+                        default_base_sha=file_snapshot_before.get("default_base_sha"),
+                    ),
                 )
 
     file_snapshot_after = None

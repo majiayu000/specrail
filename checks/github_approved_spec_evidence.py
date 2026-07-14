@@ -14,7 +14,7 @@ query SpecRailApprovalLabels(
   $owner: String!, $name: String!, $number: Int!, $cursor: String
 ) {
   repository(owner: $owner, name: $name) {
-    defaultBranchRef { name }
+    defaultBranchRef { name target { oid } }
     issue(number: $number) {
       state
       labels(first: 100, after: $cursor) {
@@ -31,7 +31,7 @@ query SpecRailApprovalTimeline(
   $owner: String!, $name: String!, $number: Int!, $cursor: String
 ) {
   repository(owner: $owner, name: $name) {
-    defaultBranchRef { name }
+    defaultBranchRef { name target { oid } }
     issue(number: $number) {
       state
       timelineItems(first: 100, after: $cursor, itemTypes: [LABELED_EVENT]) {
@@ -58,7 +58,7 @@ def collect_approval_metadata(
     spec_source_commits: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     owner, name = github_repo.split("/", 1)
-    identity: tuple[str, str] | None = None
+    identity: tuple[str, str, str] | None = None
 
     def collect_connection(query: str, key: str) -> list[Any]:
         nonlocal identity
@@ -76,7 +76,13 @@ def collect_approval_metadata(
             try:
                 repository = json_object(payload["data"]["repository"], "repository")
                 issue_data = json_object(repository["issue"], "issue")
-                default_branch = repository["defaultBranchRef"]["name"]
+                default_branch_ref = json_object(
+                    repository["defaultBranchRef"], "defaultBranchRef"
+                )
+                default_branch = default_branch_ref["name"]
+                default_base_sha = json_object(
+                    default_branch_ref["target"], "defaultBranchRef.target"
+                )["oid"]
                 connection = json_object(issue_data[key], key)
                 nodes = json_array(connection["nodes"], f"{key}.nodes")
                 page_info = json_object(connection["pageInfo"], f"{key}.pageInfo")
@@ -84,7 +90,14 @@ def collect_approval_metadata(
                 raise EvidenceError("approved-spec query returned malformed issue evidence") from exc
             if not isinstance(default_branch, str) or not default_branch.strip():
                 raise EvidenceError("approved-spec query lacks a trusted default branch")
-            page_identity = (default_branch.strip(), str(issue_data.get("state")))
+            if not isinstance(default_base_sha, str) or not re.fullmatch(
+                r"[0-9a-fA-F]{40}", default_base_sha
+            ):
+                raise EvidenceError("approved-spec query lacks a trusted default base SHA")
+            page_identity = (
+                default_branch.strip(), default_base_sha.lower(),
+                str(issue_data.get("state")),
+            )
             if identity is None:
                 identity = page_identity
             elif identity != page_identity:
@@ -105,7 +118,7 @@ def collect_approval_metadata(
     labels = collect_connection(APPROVAL_QUERY, "labels")
     events = collect_connection(APPROVAL_TIMELINE_QUERY, "timelineItems")
     assert identity is not None
-    default_branch, issue_state = identity
+    default_branch, default_base_sha, issue_state = identity
     if issue_state != "OPEN":
         raise EvidenceError("approved-spec issue must remain OPEN")
     current_labels = {
@@ -138,6 +151,8 @@ def collect_approval_metadata(
         "maintainer_actor": maintainer_actor,
         "state_source": "label",
         "state_trusted": True,
+        "default_base_ref": default_branch,
+        "default_base_sha": default_base_sha,
     }
     if spec_source_commits is None:
         return result
