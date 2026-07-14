@@ -24,6 +24,7 @@ from github_pr_evidence import (  # noqa: E402
     normalize_issue_reference,
     parse_github_repo,
     references_partial_issue,
+    run_gh_json,
 )
 from github_approved_spec_evidence import collect_approval_metadata  # noqa: E402
 from github_pr_snapshot import (  # noqa: E402
@@ -374,6 +375,32 @@ def test_pr_file_snapshot_rejects_non_array_rest_response() -> None:
             "majiayu000", "specrail", 10, lambda _args: graph,
             lambda _args: {"filename": "docs/safe.py"},
         )
+
+
+def test_production_runner_array_reaches_rest_array_consumer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = snapshot_page(["docs/safe.py"], total=1, has_next=False, cursor=None)
+    completed = subprocess.CompletedProcess(
+        args=["gh"], returncode=0,
+        stdout='[{"filename":"docs/safe.py"}]', stderr="",
+    )
+    monkeypatch.setattr("github_pr_evidence.subprocess.run", lambda *_args, **_kwargs: completed)
+
+    snapshot = collect_pr_file_snapshot(
+        "majiayu000", "specrail", 10, lambda _args: graph, run_gh_json
+    )
+
+    assert snapshot["paths"] == ["docs/safe.py"]
+
+
+def test_object_collector_rejects_production_runner_array_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("github_pr_evidence.run_gh_json", lambda _args: [])
+
+    with pytest.raises(EvidenceError, match="JSON object"):
+        collect_issue_view("example/repo", 1)
 
 
 def test_parse_github_repo_requires_owner_repo() -> None:

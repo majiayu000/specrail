@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from github_evidence_common import EvidenceError
+from github_evidence_common import EvidenceError, json_object
 from github_approved_spec_evidence import collect_approval_metadata
 from github_issue_reference import (
     normalize_closing_issue_numbers,
@@ -124,13 +124,11 @@ def run_gh_json(args: list[str]) -> Any:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise EvidenceError(f"gh command returned invalid JSON: {exc.msg}") from exc
-    if not isinstance(payload, dict):
-        raise EvidenceError("gh command JSON output must be an object")
     return payload
 
 
 def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
-    return run_gh_json(
+    return json_object(run_gh_json(
         [
             "pr",
             "view",
@@ -140,11 +138,11 @@ def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
             "--json",
             ",".join(PR_VIEW_FIELDS),
         ]
-    )
+    ), "gh pr view response")
 
 
 def collect_issue_view(github_repo: str, issue_number: int) -> dict[str, Any]:
-    return run_gh_json(
+    return json_object(run_gh_json(
         [
             "issue",
             "view",
@@ -154,11 +152,11 @@ def collect_issue_view(github_repo: str, issue_number: int) -> dict[str, Any]:
             "--json",
             "number,state,url",
         ]
-    )
+    ), "gh issue view response")
 
 
 def collect_review_threads(owner: str, name: str, pr_number: int) -> dict[str, Any]:
-    return run_gh_json(
+    return json_object(run_gh_json(
         [
             "api",
             "graphql",
@@ -171,7 +169,7 @@ def collect_review_threads(owner: str, name: str, pr_number: int) -> dict[str, A
             "-f",
             f"query={REVIEW_THREADS_QUERY}",
         ]
-    )
+    ), "review threads GraphQL response")
 
 
 def _require_mapping(value: Any, field: str) -> dict[str, Any]:
