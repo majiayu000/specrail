@@ -92,6 +92,53 @@ def test_validate_instance_supports_local_schema_subset() -> None:
     )
 
 
+def test_validate_instance_supports_min_properties_for_approved_spec_revisions() -> None:
+    approved_spec_schema = pr_review_gate_schema()["properties"]["approved_spec"]
+    revisions_schema = approved_spec_schema["properties"]["spec_revisions"]
+    revision = {
+        "source_commit_sha": "a" * 40,
+        "pr_number": 97,
+        "merged_at": "2026-07-15T00:00:00Z",
+        "merge_commit_sha": "b" * 40,
+    }
+
+    validate_instance(
+        revisions_schema,
+        {
+            "specs/GH97/product.md": revision,
+            "specs/GH97/tech.md": revision,
+        },
+    )
+    validate_instance({"type": "object", "minProperties": 0}, {})
+
+
+@pytest.mark.parametrize("threshold", [True, -1, 1.5, "2"])
+def test_validate_instance_rejects_invalid_min_properties_keyword(
+    threshold: object,
+) -> None:
+    with pytest.raises(
+        SpecRailError,
+        match="minProperties must be a non-negative integer",
+    ):
+        validate_instance({"minProperties": threshold}, {})
+
+
+def test_validate_instance_rejects_min_properties_for_non_object_instance() -> None:
+    with pytest.raises(
+        SpecRailError,
+        match="minProperties requires an object instance",
+    ):
+        validate_instance({"minProperties": 1}, [])
+
+
+def test_validate_instance_rejects_object_below_min_properties_threshold() -> None:
+    with pytest.raises(
+        SpecRailError,
+        match="object has fewer properties than minProperties",
+    ):
+        validate_instance({"type": "object", "minProperties": 2}, {"only": 1})
+
+
 def test_validate_instance_reports_required_enum_additional_and_unsupported() -> None:
     with pytest.raises(SpecRailError, match=r"\$\.name: missing required field"):
         validate_instance({"type": "object", "required": ["name"]}, {})
