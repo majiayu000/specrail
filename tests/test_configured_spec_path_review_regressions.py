@@ -273,13 +273,14 @@ def test_base_checks_reject_configured_root_identity_redirect(
         )
 
 
-def test_external_repo_loads_its_own_pack_asset_helper(tmp_path: Path) -> None:
+def test_external_repo_uses_trusted_pack_asset_validation(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     copy_pack(repo)
     (repo / "checks" / "pack_asset_validation.py").write_text(
         'raise RuntimeError("target helper sentinel")\n',
         encoding="utf-8",
     )
+    (repo / "schemas" / "workflow_run.schema.json").unlink()
 
     result = subprocess.run(
         [
@@ -295,7 +296,8 @@ def test_external_repo_loads_its_own_pack_asset_helper(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 1
-    assert "cannot load checks/pack_asset_validation.py: target helper sentinel" in result.stdout
+    assert "schemas: missing SpecRail schema workflow_run.schema.json" in result.stdout
+    assert "target helper sentinel" not in result.stdout + result.stderr
     assert "Traceback" not in result.stdout + result.stderr
 
 

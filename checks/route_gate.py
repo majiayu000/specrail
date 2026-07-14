@@ -109,6 +109,8 @@ def required_artifact_path(config: Any, artifact: str, issue: int | None) -> str
         return None
     if artifact == "verification":
         return None
+    if artifact in ARTIFACT_FILES and issue is not None:
+        return spec_packet_artifact_paths(config, issue)[artifact]
     return render_artifact_path(config, artifact, issue)
 
 

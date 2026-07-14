@@ -190,6 +190,68 @@ def test_route_gate_uses_configured_spec_packet_in_verification_command(
     )
 
 
+def test_route_gate_accepts_normalized_configured_artifact_evidence(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo, "./specs")
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir()
+    duplicate_schema = schema_dir / "duplicate_work_evidence.schema.json"
+    duplicate_schema.write_text(
+        (ROOT / "schemas" / duplicate_schema.name).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    packet = repo / "specs" / "GH999"
+    packet.mkdir(parents=True)
+    for name in ["product.md", "tech.md"]:
+        (packet / name).write_text("GitHub issue: `#999`\n", encoding="utf-8")
+    duplicate_evidence = write_duplicate_evidence(tmp_path)
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        "--duplicate-evidence",
+        str(duplicate_evidence),
+        "--artifact",
+        "product_spec=specs/GH999/product.md",
+        "--artifact",
+        "tech_spec=specs/GH999/tech.md",
+        "--mode",
+        "required",
+        repo=repo,
+    )
+
+    assert result.returncode == 0, payload
+    assert payload["decision"] == "allowed"
+    assert "product_spec: specs/GH999/product.md" in payload["satisfied"]
+
+    wrong_result, wrong_payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        "--duplicate-evidence",
+        str(duplicate_evidence),
+        "--artifact",
+        "product_spec=specs/GH998/product.md",
+        "--artifact",
+        "tech_spec=specs/GH999/tech.md",
+        "--mode",
+        "required",
+        repo=repo,
+    )
+
+    assert wrong_result.returncode == 1
+    assert wrong_payload["decision"] == "blocked"
+
+
 def test_route_gate_shell_quotes_configured_spec_packet_command(
     tmp_path: Path,
 ) -> None:
