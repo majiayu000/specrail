@@ -22,6 +22,7 @@ from specrail_lib import (
     resolve_spec_packet_root,
     spec_packet_artifact_paths,
     state_map,
+    validated_repo_relative_path,
     validate_action_policy,
     validate_labels,
     validate_state_graph,
@@ -271,17 +272,26 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         path = required_artifact_path(config, artifact, args.issue)
         required_artifacts.append(path or artifact)
         if provided:
-            if artifact in ARTIFACT_FILES and str(provided) != path:
-                missing.append(f"{artifact}:{path}")
-                reasons.append(
-                    f"{artifact} provided at {provided} does not match "
-                    f"configured path {path}"
-                )
-            elif artifact in ARTIFACT_FILES and not artifact_exists(
-                repo,
-                str(provided),
-            ):
-                missing.append(f"{artifact}:{provided}")
+            if artifact in ARTIFACT_FILES:
+                try:
+                    normalized_provided = validated_repo_relative_path(
+                        str(provided),
+                        label=f"{artifact} evidence path",
+                    ).as_posix()
+                except SpecRailError as exc:
+                    missing.append(f"{artifact}:{path}")
+                    reasons.append(str(exc))
+                    continue
+                if normalized_provided != path:
+                    missing.append(f"{artifact}:{path}")
+                    reasons.append(
+                        f"{artifact} provided at {provided} does not match "
+                        f"configured path {path}"
+                    )
+                elif not artifact_exists(repo, normalized_provided):
+                    missing.append(f"{artifact}:{normalized_provided}")
+                else:
+                    satisfied.append(f"{artifact}: {normalized_provided}")
             else:
                 satisfied.append(f"{artifact}: {provided}")
             continue

@@ -156,7 +156,10 @@ def validate_tokens(repo: Path) -> list[str]:
 def validate_pack_assets(repo: Path) -> list[str]:
     helper_path = Path(__file__).with_name("pack_asset_validation.py")
     if not helper_path.is_file():
-        return []
+        return [
+            "cannot load trusted pack asset validation: "
+            "checks/pack_asset_validation.py is missing"
+        ]
     try:
         spec = importlib.util.spec_from_file_location(
             "_specrail_trusted_pack_asset_validation",

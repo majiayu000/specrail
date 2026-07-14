@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
 sys.path.insert(0, str(CHECKS))
 
+import check_workflow  # noqa: E402
+
 from check_workflow import REQUIRED_FILES, main as check_workflow_main  # noqa: E402
 from check_workflow import (  # noqa: E402
     discover_spec_packet_dirs,
@@ -85,6 +87,22 @@ def test_trusted_pack_asset_validation_ignores_target_helper(tmp_path: Path) -> 
 
     assert "schemas: missing SpecRail schema workflow_run.schema.json" in errors
     assert not target_helper.with_name("target-helper-executed").exists()
+
+
+def test_trusted_pack_asset_validation_requires_source_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = tmp_path / "runner" / "checks" / "check_workflow.py"
+    runner.parent.mkdir(parents=True)
+    monkeypatch.setattr(check_workflow, "__file__", str(runner))
+
+    errors = validate_pack_assets(ROOT)
+
+    assert errors == [
+        "cannot load trusted pack asset validation: "
+        "checks/pack_asset_validation.py is missing"
+    ]
 
 
 def test_impl_branch_template_requires_issue_number_placeholder() -> None:

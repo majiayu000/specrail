@@ -34,9 +34,11 @@ SpecRail checkout 检查消费仓库时，目标仓库无法通过 no-op helper 
 ### 2. 复用规范化 artifact contract
 
 `required_artifact_path` 对 `product_spec`、`tech_spec`、`task_plan` 且 issue 已知时，
-从 `spec_packet_artifact_paths(config, issue)` 取路径；其他 artifact 保留现有 renderer。
-这使 required/provided 两侧都使用 `PurePosixPath.as_posix()` 结果，并继续经过现有
-packet/filename 约束。不存在的文件仍由 `artifact_exists` fail closed。
+从 `spec_packet_artifact_paths(config, issue)` 取路径；provided evidence 则先通过
+`validated_repo_relative_path` 规范化，其他 artifact 保留现有 renderer。这使
+required/provided 两侧都使用 `PurePosixPath.as_posix()` 结果，并继续经过现有
+packet/filename 与 repo-relative 约束。不存在的文件仍由 `artifact_exists`
+fail closed。
 
 ### 3. 拒绝不可用 spec root
 
