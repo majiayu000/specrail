@@ -11,6 +11,11 @@ Runtime item `state` values are handoff states mapped by
 `checks/specrail_lib.py` as `RUNTIME_STATE_MAPPING`; they do not replace the
 canonical workflow state machine in `states.yaml`.
 
+Budget guidance: prefer `basis: compaction` when the runtime exposes
+compaction. When `item_cap` is declared in `auth_mode: auto`, it defaults
+to 3; declaring `item_cap: 1` requires an `item_cap_reason` string in the
+budget object naming the high-risk item that justifies it.
+
 ```json
 {
   "checkpoint_version": 2,

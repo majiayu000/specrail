@@ -231,6 +231,12 @@ A reviewer or merge-reviewer lane failure is a gate event, not an implementation
 detail to hide. Failures include usage limits, crashes, zero output, or a lane
 closed before it produced a complete review verdict.
 
+Lane waits are bounded. After spawning a lane, allow at most one bounded wait
+plus one explicit stop-and-return request. A lane that still returns nothing is
+failed immediately as `failure_kind: zero_output` and enters the recovery path
+below (a different independent lane, retried once). Do not issue further waits
+against the same hung lane.
+
 When a reviewer lane fails:
 
 - record `lane_failures[]` with lane id, failure kind, and observed marker
@@ -276,12 +282,31 @@ checkpoint `budget` object (checkpoint_version 2):
   primary observable degradation signal; use `item_cap` where the runtime
   does not expose compaction.
 - `compaction_budget` default 1: stop before the second compaction.
+- `item_cap` default 3 when declared in `auth_mode: auto`. Declaring
+  `item_cap: 1` requires a recorded `item_cap_reason` in the budget object
+  (for example one high-risk migration item); do not default to 1.
 - Record observed `compaction_count` as the session runs.
 
-On budget exhaustion this is a normal terminal, not a failure: write the
-checkpoint with `stop_reason: budget_exhausted` and a `resume_prompt`, then
-hand off to a fresh session. Continuing past the budget requires an explicit
-user `budget_override` recorded with quoted scope and a conversation marker;
+Budget exhaustion ends the tranche, not necessarily the session. It is a
+normal terminal, not a failure: write the checkpoint with
+`stop_reason: budget_exhausted` and a `resume_prompt`, then take one of two
+branches:
+
+- Same-Session Tranche Rollover: when `auth_mode: auto`,
+  `queue_mode: full_queue_drain`, the exhausted basis is `item_cap`,
+  observed `compaction_count` has not exceeded `compaction_budget`, and
+  parent context usage is below the soft-stop ratio, continue in the same
+  session: declare the next tranche with a new `tranche_id` and a fresh
+  budget in the checkpoint, then keep draining. This closes the old budget
+  rather than exceeding it, so it is not a `budget_override` and must not
+  fabricate one.
+- Fresh-session handoff: in every other case (compaction budget reached,
+  context at or above soft stop, user interrupt, queue empty or fully
+  blocked, or `auth_mode: review`), hand off to a fresh session. The handoff
+  report must lead with the copy-paste `resume_prompt` as its first line.
+
+Continuing past a compaction budget still requires an explicit user
+`budget_override` recorded with quoted scope and a conversation marker;
 `checks/runtime_ledger_gate.py` blocks over-budget continuation without one
 and blocks version-2 drain checkpoints that declare no budget. Reviewer
 lanes stay bounded (the audited well-behaved lanes stayed under ~2M tokens);
