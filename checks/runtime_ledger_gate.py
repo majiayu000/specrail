@@ -154,13 +154,13 @@ def _validate_pr_gate_artifact(
     evidence: Any,
     label: str,
     errors: list[str],
-) -> None:
+) -> dict[str, Any] | None:
     path = _resolve_local_evidence_path(evidence)
     if path is None:
-        return
+        return None
     payload = _load_local_json(path, f"{label}: pr_gate", errors)
     if payload is None:
-        return
+        return None
 
     if "decision" in payload:
         result = payload
@@ -179,6 +179,13 @@ def _validate_pr_gate_artifact(
     item_head = raw_item.get("head_sha")
     if item_head and result.get("head_sha") and result.get("head_sha") != item_head:
         errors.append(f"{label}: pr_gate evidence head_sha must match item head_sha")
+    if raw_item.get("enforcement_sensitive") is True and result.get(
+        "enforcement_sensitive"
+    ) is not True:
+        errors.append(
+            f"{label}: sensitive item requires enforcement-sensitive pr_gate evidence"
+        )
+    return result
 
 
 def _thread_dispatch_gate(data: dict[str, Any]) -> dict[str, Any]:
@@ -328,6 +335,12 @@ def _validate_full_queue_checkpoint(
             errors.append(f"{label}: state is required")
         if not raw_item.get("next_action"):
             errors.append(f"{label}: next_action is required")
+        if raw_item.get("enforcement_sensitive") is True and not raw_item.get(
+            "approved_spec_evidence"
+        ):
+            errors.append(
+                f"{label}: enforcement-sensitive item requires approved_spec_evidence"
+            )
         spec_status = _validate_spec_status(
             raw_item.get("spec_status"),
             label,

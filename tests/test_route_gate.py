@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "checks"))
 
 from route_gate import artifact_exists  # noqa: E402
+from sensitive_enforcement import build_approved_spec_evidence  # noqa: E402
+from specrail_lib import load_pack  # noqa: E402
 
 
 def run_route_gate(
@@ -48,6 +50,126 @@ def write_custom_pack(repo: Path, spec_root: str = "docs/specs") -> None:
             (ROOT / name).read_text(encoding="utf-8"),
             encoding="utf-8",
         )
+
+
+def write_sensitive_pack(repo: Path) -> str:
+    write_custom_pack(repo, "specs")
+    workflow_path = repo / "workflow.yaml"
+    workflow_path.write_text(
+        workflow_path.read_text(encoding="utf-8").replace(
+            "    paths: []", "    paths:\n      - checks/**"
+        ),
+        encoding="utf-8",
+    )
+    packet = repo / "specs" / "GH999"
+    packet.mkdir(parents=True)
+    for name in ["product.md", "tech.md"]:
+        (packet / name).write_text("GitHub issue: `#999`\n", encoding="utf-8")
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir()
+    (schema_dir / "duplicate_work_evidence.schema.json").write_text(
+        (ROOT / "schemas" / "duplicate_work_evidence.schema.json").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "-c", "user.name=SpecRail Test",
+            "-c", "user.email=specrail@example.invalid", "commit", "-qm", "base",
+        ],
+        check=True,
+    )
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
+    approval = build_approved_spec_evidence(
+        load_pack(repo),
+        repo,
+        repository="example/consumer",
+        issue=999,
+        merged_base_head=head,
+        approved_at="2026-07-14T00:00:00Z",
+        maintainer_actor="maintainer",
+    )
+    return {
+        "github_state": "OPEN",
+        "state": "ready_to_implement",
+        "state_source": "label",
+        "state_trusted": True,
+        "repository": "example/consumer",
+        "base_sha": head,
+        "enforcement_sensitive": True,
+        "sensitive_classification": {
+            "source": "task_plan",
+            "changed_paths": ["checks/route_gate.py"],
+            "spec_refs": [],
+        },
+        "approved_spec": approval,
+    }
+
+
+def test_route_gate_revalidates_sensitive_registry_and_approved_spec(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    duplicate_evidence = write_duplicate_evidence(tmp_path)
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(duplicate_evidence),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 0
+    assert payload["decision"] == "allowed"
+    assert payload["sensitive_classification"]["matched_paths"] == [
+        "checks/route_gate.py"
+    ]
+
+
+@pytest.mark.parametrize("forgery", ["body_hint", "changed_hash", "traversal", "false"])
+def test_route_gate_blocks_forged_or_conflicting_sensitive_evidence(
+    tmp_path: Path,
+    forgery: str,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo)
+    evidence = sensitive_route_evidence(repo, head)
+    if forgery == "body_hint":
+        evidence["approved_spec"]["state_source"] = "body_hint"
+        evidence["approved_spec"]["state_trusted"] = False
+    elif forgery == "changed_hash":
+        path = "specs/GH999/product.md"
+        evidence["approved_spec"]["content_hashes"][path] = "0" * 64
+    elif forgery == "traversal":
+        evidence["sensitive_classification"]["changed_paths"] = ["../escape"]
+    else:
+        evidence["enforcement_sensitive"] = False
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert "sensitive_enforcement" in payload["missing"]
 
 
 def test_artifact_exists_rejects_empty_path() -> None:

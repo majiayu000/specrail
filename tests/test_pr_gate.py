@@ -14,10 +14,70 @@ FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
 from pr_gate import evaluate_pr_gate  # noqa: E402
+from sensitive_enforcement import build_approved_spec_evidence  # noqa: E402
+from specrail_lib import load_pack  # noqa: E402
 
 
 def clean_evidence() -> dict[str, object]:
     return fixture("pr-clean-authorized.json")
+
+
+def sensitive_evidence() -> dict[str, object]:
+    evidence = clean_evidence()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    issue = 97
+    evidence["linked_issue"] = issue
+    evidence.update(
+        {
+            "repository": "majiayu000/specrail",
+            "base_sha": head,
+            "enforcement_sensitive": True,
+            "sensitive_classification": {
+                "source": "github_changed_files",
+                "changed_paths": [],
+                "spec_refs": [],
+            },
+            "approved_spec": build_approved_spec_evidence(
+                load_pack(ROOT), ROOT,
+                repository="majiayu000/specrail", issue=issue,
+                merged_base_head=head, approved_at="2026-07-14T00:00:00Z",
+                maintainer_actor="maintainer",
+            ),
+        }
+    )
+    return evidence
+
+
+def test_pr_gate_revalidates_explicit_sensitive_approved_spec() -> None:
+    result = evaluate_pr_gate(sensitive_evidence(), repo=ROOT, config=load_pack(ROOT))
+
+    assert result["decision"] == "allowed"
+    assert result["enforcement_sensitive"] is True
+    assert "approved spec evidence revalidated" in result["satisfied"]
+
+
+@pytest.mark.parametrize("forgery", ["hash", "head", "traversal", "body_hint"])
+def test_pr_gate_blocks_forged_sensitive_approved_spec(forgery: str) -> None:
+    evidence = sensitive_evidence()
+    approval = evidence["approved_spec"]
+    if forgery == "hash":
+        path = approval["spec_paths"][0]
+        approval["content_hashes"][path] = "0" * 64
+    elif forgery == "head":
+        approval["merged_base_head"] = "0" * 40
+    elif forgery == "traversal":
+        approval["spec_paths"][0] = "../product.md"
+    else:
+        approval["state_source"] = "body_hint"
+        approval["state_trusted"] = False
+
+    result = evaluate_pr_gate(evidence, repo=ROOT, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert "sensitive_enforcement" in result["missing"]
 
 
 def fixture(name: str) -> dict[str, object]:

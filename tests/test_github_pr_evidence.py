@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ from github_pr_evidence import (  # noqa: E402
     references_partial_issue,
 )
 from pr_gate import evaluate_pr_gate  # noqa: E402
+from specrail_lib import PackConfig, load_pack  # noqa: E402
 
 
 def pr_payload() -> dict[str, object]:
@@ -158,6 +160,80 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
         }
     ]
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
+
+
+def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> None:
+    payload = pr_payload()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    payload.update(
+        {
+            "body": "Closes #97\nenforcement_sensitive: true",
+            "closingIssuesReferences": [{"number": 97}],
+            "baseRefOid": head,
+            "files": [{"path": "checks/pr_gate.py"}],
+        }
+    )
+    base = load_pack(ROOT)
+    workflow = deepcopy(base.workflow)
+    workflow["enforcement"]["sensitive_registry"]["paths"] = ["checks/**"]
+    config = PackConfig(ROOT, workflow, base.states, base.labels)
+
+    evidence = build_evidence(
+        payload,
+        threads_payload(),
+        {"actor": "user", "source": "chat"},
+        review_source="independent_lane",
+        repo=ROOT,
+        config=config,
+        repository="majiayu000/specrail",
+        approval_metadata={
+            "approved_at": "2026-07-14T00:00:00Z",
+            "maintainer_actor": "maintainer",
+            "state_source": "label",
+            "state_trusted": True,
+        },
+    )
+
+    assert evidence["sensitive_classification"]["matched_paths"] == [
+        "checks/pr_gate.py"
+    ]
+    assert evidence["approved_spec"]["issue"] == 97
+    assert evaluate_pr_gate(evidence, repo=ROOT, config=config)["decision"] == "allowed"
+
+
+def test_build_evidence_rejects_body_hint_approval_metadata() -> None:
+    payload = pr_payload()
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    payload.update(
+        {
+            "body": "Closes #97\nenforcement_sensitive: true",
+            "closingIssuesReferences": [{"number": 97}],
+            "baseRefOid": head,
+            "files": [{"path": "checks/pr_gate.py"}],
+        }
+    )
+    base = load_pack(ROOT)
+    workflow = deepcopy(base.workflow)
+    workflow["enforcement"]["sensitive_registry"]["paths"] = ["checks/**"]
+    config = PackConfig(ROOT, workflow, base.states, base.labels)
+
+    with pytest.raises(EvidenceError, match="trusted maintainer label"):
+        build_evidence(
+            payload, threads_payload(), review_source="independent_lane",
+            repo=ROOT, config=config, repository="majiayu000/specrail",
+            approval_metadata={
+                "approved_at": "2026-07-14T00:00:00Z",
+                "maintainer_actor": "requester",
+                "state_source": "body_hint",
+                "state_trusted": False,
+            },
+        )
 
 
 @pytest.mark.parametrize(

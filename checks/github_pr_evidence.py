@@ -9,9 +9,11 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from github_evidence_common import EvidenceError
+from github_approved_spec_evidence import collect_approval_metadata
 from github_issue_reference import (
     normalize_closing_issue_numbers,
     normalize_issue_reference,
@@ -19,6 +21,12 @@ from github_issue_reference import (
     references_partial_issue,
     relation_snapshot,
 )
+from sensitive_enforcement import (
+    build_approved_spec_evidence,
+    classify_sensitive_changes,
+    sensitive_registry,
+)
+from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
 PR_VIEW_FIELDS = [
@@ -26,11 +34,13 @@ PR_VIEW_FIELDS = [
     "state",
     "isDraft",
     "headRefOid",
+    "baseRefOid",
     "mergeStateStatus",
     "body",
     "closingIssuesReferences",
     "statusCheckRollup",
     "reviews",
+    "files",
 ]
 
 REVIEW_THREADS_QUERY = """
@@ -64,6 +74,9 @@ REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 STATUS_CONTEXT_STATES = {"SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED"}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
+ENFORCEMENT_DECLARATION_RE = re.compile(
+    r"(?im)^\s*enforcement_sensitive\s*:\s*(true|false)\s*$"
+)
 
 
 def parse_github_repo(raw: str) -> tuple[str, str]:
@@ -472,6 +485,32 @@ def load_lane_failures(path: str | None) -> list[dict[str, str]]:
     return [_normalize_lane_failure(item, index) for index, item in enumerate(payload, start=1)]
 
 
+def _enforcement_declaration(body: Any) -> bool | None:
+    if not isinstance(body, str):
+        return None
+    matches = ENFORCEMENT_DECLARATION_RE.findall(body)
+    if not matches:
+        return None
+    normalized = {value.lower() == "true" for value in matches}
+    if len(normalized) != 1:
+        raise EvidenceError("PR body contains conflicting enforcement_sensitive declarations")
+    return normalized.pop()
+
+
+def _changed_file_paths(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise EvidenceError("files must be a complete list for sensitive classification")
+    paths: list[str] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise EvidenceError(f"files item #{index} must be an object")
+        path = item.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise EvidenceError(f"files item #{index}.path must be a non-empty string")
+        paths.append(path.strip())
+    return paths
+
+
 def build_evidence(
     pr_payload: dict[str, Any],
     threads_payload: dict[str, Any],
@@ -484,6 +523,10 @@ def build_evidence(
     resolver_roles: dict[str, str] | None = None,
     expected_issue: int | None = None,
     issue_payload: dict[str, Any] | None = None,
+    repo: Path | None = None,
+    config: PackConfig | None = None,
+    repository: str | None = None,
+    approval_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     linked_issue, issue_reference = normalize_issue_reference(
@@ -510,6 +553,59 @@ def build_evidence(
     }
     if issue_reference is not None:
         evidence["issue_reference"] = issue_reference
+    if repo is not None and config is not None:
+        declaration = _enforcement_declaration(pr_payload.get("body"))
+        registry = sensitive_registry(config)
+        if declaration is not None or registry["paths"] or registry["specs"]:
+            try:
+                classification = classify_sensitive_changes(
+                    config,
+                    repo,
+                    _changed_file_paths(pr_payload.get("files")),
+                    [],
+                    source="github_changed_files",
+                )
+            except SpecRailError as exc:
+                raise EvidenceError(str(exc)) from exc
+            evidence["repository"] = repository
+            evidence["base_sha"] = _require_string(pr_payload, "baseRefOid")
+            evidence["sensitive_classification"] = classification
+            if declaration is not None:
+                evidence["enforcement_sensitive"] = declaration
+            if declaration is True or classification["enforcement_sensitive"]:
+                if not isinstance(repository, str) or not repository.strip():
+                    raise EvidenceError(
+                        "enforcement-sensitive PR requires repository identity"
+                    )
+                if linked_issue is None:
+                    raise EvidenceError(
+                        "enforcement-sensitive PR requires a linked issue"
+                    )
+                if not isinstance(approval_metadata, dict):
+                    raise EvidenceError(
+                        "enforcement-sensitive PR requires trusted approval metadata"
+                    )
+                if (
+                    approval_metadata.get("state_source") != "label"
+                    or approval_metadata.get("state_trusted") is not True
+                ):
+                    raise EvidenceError(
+                        "approved spec requires trusted maintainer label evidence"
+                    )
+                try:
+                    evidence["approved_spec"] = build_approved_spec_evidence(
+                        config,
+                        repo,
+                        repository=str(repository or ""),
+                        issue=linked_issue,
+                        merged_base_head=evidence["base_sha"],
+                        approved_at=str(approval_metadata.get("approved_at") or ""),
+                        maintainer_actor=str(
+                            approval_metadata.get("maintainer_actor") or ""
+                        ),
+                    )
+                except SpecRailError as exc:
+                    raise EvidenceError(str(exc)) from exc
     if review_source is not None:
         source = review_source.strip()
         if source not in REVIEW_SOURCES:
@@ -541,6 +637,8 @@ def collect_evidence(
     self_review_authorization: dict[str, str] | None = None,
     resolver_roles: dict[str, str] | None = None,
     expected_issue: int | None = None,
+    repo: Path | None = None,
+    config: PackConfig | None = None,
 ) -> dict[str, Any]:
     if expected_issue is not None and (
         not isinstance(expected_issue, int)
@@ -563,6 +661,33 @@ def collect_evidence(
                 f"PR body must contain a standalone Refs #{expected_issue} directive"
             )
         issue_payload = collect_issue_view(github_repo, expected_issue)
+
+    approval_metadata = None
+    if repo is not None and config is not None:
+        declaration = _enforcement_declaration(pr_payload_before.get("body"))
+        registry = sensitive_registry(config)
+        if declaration is not None or registry["paths"] or registry["specs"]:
+            try:
+                classification = classify_sensitive_changes(
+                    config,
+                    repo,
+                    _changed_file_paths(pr_payload_before.get("files")),
+                    [],
+                    source="github_changed_files",
+                )
+            except SpecRailError as exc:
+                raise EvidenceError(str(exc)) from exc
+            if declaration is True or classification["enforcement_sensitive"]:
+                linked_issue, _ = normalize_issue_reference(
+                    pr_payload_before, expected_issue, issue_payload
+                )
+                if linked_issue is None:
+                    raise EvidenceError(
+                        "enforcement-sensitive PR requires a linked issue"
+                    )
+                approval_metadata = collect_approval_metadata(
+                    github_repo, linked_issue, run_gh_json
+                )
 
     pr_payload_after = collect_pr_view(github_repo, pr_number)
     head_sha_after = _require_string(pr_payload_after, "headRefOid")
@@ -588,6 +713,10 @@ def collect_evidence(
         resolver_roles,
         expected_issue,
         issue_payload,
+        repo,
+        config,
+        github_repo,
+        approval_metadata,
     )
 
 
@@ -596,6 +725,7 @@ def main() -> int:
         description="Collect read-only GitHub PR evidence for SpecRail pr_gate.py."
     )
     parser.add_argument("--github-repo", required=True, help="GitHub repository as OWNER/REPO")
+    parser.add_argument("--repo", default=".", help="Local repository checkout")
     parser.add_argument("--pr", required=True, type=parse_pr_number, help="Pull request number")
     parser.add_argument(
         "--issue",
@@ -641,6 +771,7 @@ def main() -> int:
         )
         lane_failures = load_lane_failures(args.lane_failures_json)
         resolver_roles = load_resolver_role_map(args.resolver_role_map)
+        repo = resolve_path(Path(args.repo), label="repository")
         evidence = collect_evidence(
             args.github_repo,
             args.pr,
@@ -652,8 +783,10 @@ def main() -> int:
             self_review_authorization,
             resolver_roles,
             args.issue,
+            repo,
+            load_pack(repo),
         )
-    except EvidenceError as exc:
+    except (EvidenceError, SpecRailError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

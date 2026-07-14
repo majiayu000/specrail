@@ -35,6 +35,83 @@
       "type": ["integer", "null"],
       "minimum": 1
     },
+    "repository": {
+      "type": "string",
+      "minLength": 1
+    },
+    "base_sha": {
+      "type": "string",
+      "minLength": 40
+    },
+    "enforcement_sensitive": {
+      "type": "boolean"
+    },
+    "sensitive_classification": {
+      "type": "object",
+      "required": [
+        "source",
+        "changed_paths",
+        "spec_refs",
+        "matched_paths",
+        "matched_specs",
+        "registry_configured",
+        "enforcement_sensitive"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": ["github_changed_files", "task_plan"]
+        },
+        "changed_paths": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "spec_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "matched_paths": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "matched_specs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "registry_configured": {"type": "boolean"},
+        "enforcement_sensitive": {"type": "boolean"}
+      }
+    },
+    "approved_spec": {
+      "type": "object",
+      "required": [
+        "repository",
+        "issue",
+        "spec_paths",
+        "content_hashes",
+        "merged_base_head",
+        "approved_at",
+        "maintainer_actor",
+        "state_source",
+        "state_trusted"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "issue": {"type": "integer", "minimum": 1},
+        "spec_paths": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "content_hashes": {"type": "object"},
+        "merged_base_head": {"type": "string", "minLength": 40},
+        "approved_at": {"type": "string", "minLength": 1},
+        "maintainer_actor": {"type": "string", "minLength": 1},
+        "state_source": {"const": "label"},
+        "state_trusted": {"const": true}
+      }
+    },
     "issue_reference": {
       "type": "object",
       "required": [

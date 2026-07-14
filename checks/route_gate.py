@@ -28,6 +28,10 @@ from specrail_lib import (
     validate_state_graph,
 )
 from duplicate_work_gate import evaluate_duplicate_work_gate_path
+from sensitive_enforcement import (
+    evaluate_sensitive_evidence,
+    validate_sensitive_registry,
+)
 
 
 ROUTE_ALIASES = {
@@ -122,6 +126,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     config_errors.extend(validate_state_graph(config))
     config_errors.extend(validate_labels(config))
     config_errors.extend(validate_action_policy(config))
+    config_errors.extend(validate_sensitive_registry(config))
     try:
         configured_spec_paths = spec_packet_artifact_paths(config, 1)
         configured_spec_root = PurePosixPath(
@@ -156,6 +161,8 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     required_artifacts: list[str] = []
     human_gates: list[str] = []
     duplicate_work_result: dict[str, Any] | None = None
+    sensitive_classification: dict[str, Any] | None = None
+    sensitive_errors: list[str] = []
 
     if config_errors:
         return {
@@ -304,6 +311,20 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             required_artifacts.append(path)
 
     if route == "implement":
+        sensitive_classification, sensitive_satisfied, sensitive_errors = (
+            evaluate_sensitive_evidence(
+                config,
+                repo,
+                evidence,
+                expected_source="task_plan",
+                issue=args.issue,
+                expected_base_head=evidence.get("base_sha"),
+            )
+        )
+        satisfied.extend(sensitive_satisfied)
+        if sensitive_errors:
+            reasons.extend(sensitive_errors)
+            missing.append("sensitive_enforcement")
         if args.issue is None:
             duplicate_work_result = {
                 "decision": "needs_human",
@@ -357,6 +378,8 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
 
     if duplicate_work_result is not None:
         decision = stricter_decision(decision, str(duplicate_work_result["decision"]))
+    if sensitive_errors:
+        decision = "blocked"
 
     for artifact in creates:
         if args.issue is None:
@@ -389,6 +412,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         "allowed_actions": sorted(set(allowed_actions)),
         "blocked_actions": sorted(set(blocked_actions)),
         "duplicate_work_gate": duplicate_work_result,
+        "sensitive_classification": sensitive_classification,
         "verification_commands": verification_commands,
     }
 

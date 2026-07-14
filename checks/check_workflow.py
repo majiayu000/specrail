@@ -23,6 +23,7 @@ from specrail_lib import (
     validate_state_graph,
     validate_skills_lock,
 )
+from sensitive_enforcement import validate_sensitive_registry
 
 
 REQUIRED_FILES = [
@@ -38,6 +39,7 @@ REQUIRED_FILES = [
     "checks/duplicate_work_gate.py",
     "checks/github_evidence_common.py",
     "checks/github_duplicate_evidence.py",
+    "checks/github_approved_spec_evidence.py",
     "checks/github_issue_reference.py",
     "checks/github_issue_evidence.py",
     "checks/github_pr_evidence.py",
@@ -66,6 +68,7 @@ REQUIRED_FILES = [
     "policies/maintainer_escalation.md",
     "checks/runtime_ledger_gate.py",
     "checks/runtime_gate_rules.py",
+    "checks/sensitive_enforcement.py",
     "templates/tranche_checkpoint.md",
 ]
 REQUIRED_FILE_GLOBS = [
@@ -458,6 +461,7 @@ def main() -> int:
         errors.extend(validate_state_graph(config))
         errors.extend(validate_labels(config))
         errors.extend(validate_action_policy(config))
+        errors.extend(validate_sensitive_registry(config))
         errors.extend(validate_impl_branch_template(config))
         errors.extend(validate_auth_mode(config))
         errors.extend(validate_skills_lock(repo))
