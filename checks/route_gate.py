@@ -29,7 +29,7 @@ from specrail_lib import (
 )
 from duplicate_work_gate import evaluate_duplicate_work_gate_path
 from sensitive_enforcement import (
-    classification_from_task_plan,
+    classification_from_approved_tech,
     evaluate_sensitive_evidence,
     sensitive_registry,
     trusted_default_base,
@@ -321,7 +321,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         if registry["paths"] or registry["specs"]:
             try:
                 _trusted_base_ref, trusted_base_sha = trusted_default_base(repo)
-                trusted_classification = classification_from_task_plan(
+                trusted_classification = classification_from_approved_tech(
                     config,
                     repo,
                     issue=args.issue,
@@ -342,7 +342,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                 config,
                 repo,
                 sensitive_input,
-                expected_source="task_plan",
+                expected_source="tech_spec",
                 issue=args.issue,
                 expected_base_ref=evidence.get("base_ref"),
                 expected_base_head=evidence.get("base_sha"),

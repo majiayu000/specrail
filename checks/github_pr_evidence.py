@@ -24,9 +24,11 @@ from github_issue_reference import (
 from github_pr_snapshot import (
     assert_same_pr_file_snapshot,
     collect_pr_file_snapshot,
+    derive_spec_refs,
     enforcement_declaration,
 )
 from sensitive_enforcement import (
+    approved_spec_source_commits,
     build_approved_spec_evidence,
     classify_sensitive_changes,
     sensitive_registry,
@@ -35,15 +37,8 @@ from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
 PR_VIEW_FIELDS = [
-    "number",
-    "state",
-    "isDraft",
-    "headRefOid",
-    "mergeStateStatus",
-    "body",
-    "closingIssuesReferences",
-    "statusCheckRollup",
-    "reviews",
+    "number", "state", "isDraft", "headRefOid", "mergeStateStatus", "body",
+    "closingIssuesReferences", "statusCheckRollup", "reviews",
 ]
 
 REVIEW_THREADS_QUERY = """
@@ -109,7 +104,7 @@ def parse_issue_number(raw: str) -> int:
     return value
 
 
-def run_gh_json(args: list[str]) -> dict[str, Any]:
+def run_gh_json(args: list[str]) -> Any:
     command = ["gh", *args]
     try:
         completed = subprocess.run(
@@ -541,7 +536,7 @@ def build_evidence(
                     config,
                     repo,
                     pr_snapshot.get("paths"),
-                    [],
+                    derive_spec_refs(config, repo, linked_issue, pr_snapshot.get("paths")),
                     source="github_changed_files",
                 )
             except SpecRailError as exc:
@@ -580,13 +575,12 @@ def build_evidence(
                         repo,
                         repository=str(repository or ""),
                         issue=linked_issue,
-                        approved_base_sha=str(
-                            approval_metadata.get("approved_base_sha") or ""
-                        ),
+                        spec_revisions=approval_metadata.get("spec_revisions"),
                         approved_at=str(approval_metadata.get("approved_at") or ""),
                         maintainer_actor=str(
                             approval_metadata.get("maintainer_actor") or ""
                         ),
+                        gated_head_sha=head_sha,
                     )
                 except SpecRailError as exc:
                     raise EvidenceError(str(exc)) from exc
@@ -660,25 +654,28 @@ def collect_evidence(
         registry = sensitive_registry(config)
         if declaration is not None or registry["paths"] or registry["specs"]:
             try:
+                linked_issue, _ = normalize_issue_reference(
+                    pr_payload_before, expected_issue, issue_payload
+                )
                 classification = classify_sensitive_changes(
                     config,
                     repo,
                     file_snapshot_before.get("paths"),
-                    [],
+                    derive_spec_refs(
+                        config, repo, linked_issue, file_snapshot_before.get("paths")
+                    ),
                     source="github_changed_files",
                 )
             except SpecRailError as exc:
                 raise EvidenceError(str(exc)) from exc
             if declaration is True or classification["enforcement_sensitive"]:
-                linked_issue, _ = normalize_issue_reference(
-                    pr_payload_before, expected_issue, issue_payload
-                )
                 if linked_issue is None:
                     raise EvidenceError(
                         "enforcement-sensitive PR requires a linked issue"
                     )
                 approval_metadata = collect_approval_metadata(
-                    github_repo, linked_issue, run_gh_json
+                    github_repo, linked_issue, run_gh_json,
+                    spec_source_commits=approved_spec_source_commits(config, repo, linked_issue),
                 )
 
     file_snapshot_after = None

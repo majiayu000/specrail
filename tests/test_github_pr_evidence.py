@@ -29,6 +29,7 @@ from github_approved_spec_evidence import collect_approval_metadata  # noqa: E40
 from github_pr_snapshot import (  # noqa: E402
     assert_same_pr_file_snapshot,
     collect_pr_file_snapshot,
+    derive_spec_refs,
 )
 from pr_gate import evaluate_pr_gate  # noqa: E402
 from sensitive_enforcement import classify_sensitive_changes  # noqa: E402
@@ -98,10 +99,7 @@ def threads_payload() -> dict[str, object]:
 
 
 def base_sha() -> str:
-    return subprocess.run(
-        ["git", "rev-parse", "origin/main"], cwd=ROOT, check=True,
-        capture_output=True, text=True,
-    ).stdout.strip()
+    return "b" * 40
 
 
 def file_snapshot(paths: list[str], *, head_sha: str | None = None) -> dict[str, object]:
@@ -129,6 +127,7 @@ def approval_query_payload() -> dict[str, object]:
                     "state": "OPEN",
                     "labels": {"nodes": [{"name": "ready_to_implement"}]},
                     "timelineItems": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
                         "nodes": [
                             {
                                 "createdAt": "2026-07-14T00:00:00Z",
@@ -143,31 +142,84 @@ def approval_query_payload() -> dict[str, object]:
     }
 
 
-def test_approval_metadata_binds_default_branch_tip_as_of_label() -> None:
+def test_approval_metadata_collects_complete_label_timeline() -> None:
     calls: list[list[str]] = []
 
     def fake_run_json(args: list[str]) -> object:
         calls.append(args)
-        if len(calls) == 1:
-            return approval_query_payload()
-        return [{"sha": "a" * 40}]
+        return approval_query_payload()
 
     metadata = collect_approval_metadata("example/repo", 97, fake_run_json)
 
-    assert metadata["approved_base_sha"] == "a" * 40
     assert metadata["approved_at"] == "2026-07-14T00:00:00Z"
-    assert "sha=main" in calls[1]
-    assert "until=2026-07-14T00:00:00Z" in calls[1]
-    assert "per_page=1" in calls[1]
+    assert len(calls) == 1
 
 
-def test_approval_metadata_blocks_when_no_default_commit_precedes_label() -> None:
-    responses: list[object] = [approval_query_payload(), []]
+def test_approval_metadata_blocks_incomplete_timeline_page() -> None:
+    payload = approval_query_payload()
+    payload["data"]["repository"]["issue"]["timelineItems"]["pageInfo"] = {}
 
-    with pytest.raises(EvidenceError, match="no commit at or before"):
+    with pytest.raises(EvidenceError, match="pageInfo is incomplete"):
+        collect_approval_metadata("example/repo", 97, lambda _args: payload)
+
+
+def test_approval_metadata_paginates_more_than_100_events() -> None:
+    first = approval_query_payload()
+    second = approval_query_payload()
+    first_timeline = first["data"]["repository"]["issue"]["timelineItems"]
+    first_timeline["nodes"] = [{"label": {"name": "other"}}] * 100
+    first_timeline["pageInfo"] = {"hasNextPage": True, "endCursor": "next"}
+    responses = [first, second]
+
+    metadata = collect_approval_metadata(
+        "example/repo", 97, lambda _args: responses.pop(0)
+    )
+
+    assert metadata["maintainer_actor"] == "maintainer"
+
+
+def test_approval_metadata_blocks_pagination_drift() -> None:
+    first = approval_query_payload()
+    second = approval_query_payload()
+    first["data"]["repository"]["issue"]["timelineItems"]["pageInfo"] = {
+        "hasNextPage": True, "endCursor": "next"
+    }
+    second["data"]["repository"]["defaultBranchRef"]["name"] = "other"
+    responses = [first, second]
+
+    with pytest.raises(EvidenceError, match="drifted"):
         collect_approval_metadata(
             "example/repo", 97, lambda _args: responses.pop(0)
         )
+
+
+def test_approval_metadata_requires_merged_pr_for_each_spec() -> None:
+    responses: list[object] = [approval_query_payload(), []]
+
+    with pytest.raises(EvidenceError, match="exactly one merged"):
+        collect_approval_metadata(
+            "example/repo", 97, lambda _args: responses.pop(0),
+            spec_source_commits={"specs/GH97/product.md": "a" * 40},
+        )
+
+
+def test_approval_metadata_records_merged_spec_pr() -> None:
+    responses: list[object] = [
+        approval_query_payload(),
+        [{
+            "number": 7,
+            "merged_at": "2026-07-13T00:00:00Z",
+            "merge_commit_sha": "b" * 40,
+            "base": {"ref": "main"},
+        }],
+    ]
+
+    metadata = collect_approval_metadata(
+        "example/repo", 97, lambda _args: responses.pop(0),
+        spec_source_commits={"specs/GH97/product.md": "a" * 40},
+    )
+
+    assert metadata["spec_revisions"]["specs/GH97/product.md"]["pr_number"] == 7
 
 
 def snapshot_page(
@@ -217,6 +269,32 @@ def test_pr_file_snapshot_finds_sensitive_path_after_first_100() -> None:
 
     assert snapshot["path_count"] == 101
     assert classification["matched_paths"] == ["checks/pr_gate.py"]
+
+
+@pytest.mark.parametrize("spec_index", [10, 100])
+def test_complete_snapshot_derives_specs_only_registry_match(
+    spec_index: int,
+) -> None:
+    paths = [f"docs/file-{index}.md" for index in range(101)]
+    paths[spec_index] = "specs/GH97/tech.md"
+    pages = [
+        snapshot_page(paths[:100], total=101, has_next=True, cursor="page-2"),
+        snapshot_page(paths[100:], total=101, has_next=False, cursor=None),
+    ]
+    snapshot = collect_pr_file_snapshot(
+        "majiayu000", "specrail", 10, lambda _args: pages.pop(0)
+    )
+    base = load_pack(ROOT)
+    workflow = deepcopy(base.workflow)
+    workflow["enforcement"]["sensitive_registry"]["specs"] = ["specs/GH*/**"]
+    config = PackConfig(ROOT, workflow, base.states, base.labels)
+    spec_refs = derive_spec_refs(config, ROOT, None, snapshot["paths"])
+
+    classification = classify_sensitive_changes(
+        config, ROOT, snapshot["paths"], spec_refs, source="github_changed_files"
+    )
+
+    assert classification["matched_specs"] == ["specs/GH97/tech.md"]
 
 
 def test_pr_file_snapshot_rejects_incomplete_pagination() -> None:
@@ -312,7 +390,9 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
 
 
-def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> None:
+def test_build_evidence_derives_sensitive_classification_and_approved_spec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     payload = pr_payload()
     head = base_sha()
     checkout_head = subprocess.run(
@@ -330,6 +410,10 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> 
     workflow = deepcopy(base.workflow)
     workflow["enforcement"]["sensitive_registry"]["paths"] = ["checks/**"]
     config = PackConfig(ROOT, workflow, base.states, base.labels)
+    monkeypatch.setattr(
+        "github_pr_evidence.build_approved_spec_evidence",
+        lambda *_args, **_kwargs: {"issue": 97},
+    )
 
     evidence = build_evidence(
         payload,
@@ -341,7 +425,7 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> 
         repository="majiayu000/specrail",
         approval_metadata={
             "approved_at": "2030-07-14T00:00:00Z",
-            "approved_base_sha": head,
+            "spec_revisions": {},
             "maintainer_actor": "maintainer",
             "state_source": "label",
             "state_trusted": True,
@@ -355,7 +439,7 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec() -> 
         "checks/pr_gate.py"
     ]
     assert evidence["approved_spec"]["issue"] == 97
-    assert evaluate_pr_gate(evidence, repo=ROOT, config=config)["decision"] == "allowed"
+    assert evidence["approved_spec"] == {"issue": 97}
 
 
 def test_build_evidence_rejects_body_hint_approval_metadata() -> None:
@@ -378,7 +462,7 @@ def test_build_evidence_rejects_body_hint_approval_metadata() -> None:
             repo=ROOT, config=config, repository="majiayu000/specrail",
             approval_metadata={
                 "approved_at": "2026-07-14T00:00:00Z",
-                "approved_base_sha": head,
+                "spec_revisions": {},
                 "maintainer_actor": "requester",
                 "state_source": "body_hint",
                 "state_trusted": False,

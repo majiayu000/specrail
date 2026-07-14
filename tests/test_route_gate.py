@@ -55,6 +55,7 @@ def write_custom_pack(repo: Path, spec_root: str = "docs/specs") -> None:
 def write_sensitive_pack(
     repo: Path,
     planned_paths: list[str] | None = None,
+    manifest_count: int = 1,
 ) -> str:
     write_custom_pack(repo, "specs")
     workflow_path = repo / "workflow.yaml"
@@ -83,8 +84,7 @@ def write_sensitive_pack(
     )
     packet = repo / "specs" / "GH999"
     packet.mkdir(parents=True)
-    for name in ["product.md", "tech.md"]:
-        (packet / name).write_text("GitHub issue: `#999`\n", encoding="utf-8")
+    (packet / "product.md").write_text("GitHub issue: `#999`\n", encoding="utf-8")
     manifest = {
         "version": 1,
         "issue": 999,
@@ -92,10 +92,13 @@ def write_sensitive_pack(
         "paths": planned_paths or ["checks/route_gate.py"],
         "spec_refs": [],
     }
-    (packet / "tasks.md").write_text(
-        "# Tasks\n<!-- specrail-planned-changes\n"
+    manifest_text = (
+        "<!-- specrail-planned-changes\n"
         + json.dumps(manifest, separators=(",", ":"))
-        + "\n-->\n",
+        + "\n-->\n"
+    )
+    (packet / "tech.md").write_text(
+        "GitHub issue: `#999`\n" + manifest_text * manifest_count,
         encoding="utf-8",
     )
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
@@ -127,12 +130,21 @@ def write_sensitive_pack(
 
 
 def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
+    revisions = {
+        f"specs/GH999/{name}.md": {
+            "source_commit_sha": head,
+            "pr_number": 10,
+            "merged_at": "2029-01-01T00:00:00Z",
+            "merge_commit_sha": head,
+        }
+        for name in ["product", "tech"]
+    }
     approval = build_approved_spec_evidence(
         load_pack(repo),
         repo,
         repository="example/consumer",
         issue=999,
-        approved_base_sha=head,
+        spec_revisions=revisions,
         approved_at="2030-07-14T00:00:00Z",
         maintainer_actor="maintainer",
     )
@@ -146,7 +158,7 @@ def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
         "base_sha": head,
         "enforcement_sensitive": True,
         "sensitive_classification": {
-            "source": "task_plan",
+            "source": "tech_spec",
             "changed_paths": ["checks/route_gate.py"],
             "spec_refs": [],
         },
@@ -241,7 +253,7 @@ def test_route_gate_blocks_untrusted_origin_head(
     assert any("trusted default branch" in item for item in payload["reasons"])
 
 
-def test_route_gate_blocks_spec_incorporated_after_approval_base(
+def test_route_gate_blocks_spec_source_that_predates_incorporation(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -251,7 +263,8 @@ def test_route_gate_blocks_spec_incorporated_after_approval_base(
         ["git", "-C", str(repo), "rev-parse", "HEAD^"], check=True,
         capture_output=True, text=True,
     ).stdout.strip()
-    evidence["approved_spec"]["approved_base_sha"] = pre_spec
+    path = "specs/GH999/product.md"
+    evidence["approved_spec"]["spec_revisions"][path]["source_commit_sha"] = pre_spec
     evidence_path = tmp_path / "evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
@@ -262,7 +275,7 @@ def test_route_gate_blocks_spec_incorporated_after_approval_base(
     )
 
     assert result.returncode == 1
-    assert any("approval base" in item for item in payload["reasons"])
+    assert any("approved spec source" in item for item in payload["reasons"])
 
 
 def test_route_gate_blocks_approved_spec_changed_on_current_default_base(
@@ -358,18 +371,36 @@ def test_route_gate_ignores_caller_planned_paths(
     ]
     assert payload["sensitive_classification"]["planned_paths_complete"] is True
     assert payload["sensitive_classification"]["source_path"] == (
-        "specs/GH999/tasks.md"
+        "specs/GH999/tech.md"
     )
     assert len(payload["sensitive_classification"]["source_content_hash"]) == 64
 
 
-def test_route_gate_blocks_task_plan_changed_after_base(tmp_path: Path) -> None:
+def test_route_gate_allows_preimplement_without_tasks_md(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     head = write_sensitive_pack(repo)
     evidence = sensitive_route_evidence(repo, head)
-    (repo / "specs" / "GH999" / "tasks.md").write_text(
-        "# caller-rewritten plan\n", encoding="utf-8"
+    assert not (repo / "specs" / "GH999" / "tasks.md").exists()
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
     )
+
+    assert result.returncode == 0
+    assert payload["decision"] == "allowed"
+
+
+@pytest.mark.parametrize("manifest_count", [0, 2])
+def test_route_gate_blocks_missing_or_duplicate_tech_manifest(
+    tmp_path: Path, manifest_count: int
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo, manifest_count=manifest_count)
+    evidence = sensitive_route_evidence(repo, head)
     evidence_path = tmp_path / "evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
@@ -380,10 +411,10 @@ def test_route_gate_blocks_task_plan_changed_after_base(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 1
-    assert any("task plan changed" in reason for reason in payload["reasons"])
+    assert any("exactly one" in reason for reason in payload["reasons"])
 
 
-def test_route_gate_blocks_traversal_in_trusted_task_plan(tmp_path: Path) -> None:
+def test_route_gate_blocks_traversal_in_trusted_tech_manifest(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     head = write_sensitive_pack(repo, ["../escape"])
     evidence = sensitive_route_evidence(repo, head)

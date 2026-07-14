@@ -5,9 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from pathlib import Path
 from typing import Any, Callable
 
 from github_evidence_common import EvidenceError
+from sensitive_enforcement import normalize_changed_paths
+from specrail_lib import PackConfig, spec_packet_artifact_paths
 
 
 PR_FILES_QUERY = """
@@ -45,6 +48,24 @@ def enforcement_declaration(body: Any) -> bool | None:
     if len(normalized) != 1:
         raise EvidenceError("PR body contains conflicting enforcement_sensitive declarations")
     return normalized.pop()
+
+
+def derive_spec_refs(
+    config: PackConfig,
+    repo: Path,
+    linked_issue: int | None,
+    changed_paths: Any,
+) -> list[str]:
+    paths = normalize_changed_paths(
+        repo, changed_paths, label="PR changed-file snapshot paths"
+    )
+    refs = {
+        path for path in paths if re.fullmatch(r"specs/GH[1-9][0-9]*/.+", path)
+    }
+    if linked_issue is not None:
+        configured = spec_packet_artifact_paths(config, linked_issue, repo=repo)
+        refs.update([configured["product_spec"], configured["tech_spec"]])
+    return sorted(refs)
 
 
 def _mapping(value: Any, label: str) -> dict[str, Any]:

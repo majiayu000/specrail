@@ -8,6 +8,10 @@ GH-97
 
 Product: `product.md`
 
+<!-- specrail-planned-changes
+{"version":1,"issue":97,"complete":true,"paths":["workflow.yaml","checks/check_workflow.py","checks/github_approved_spec_evidence.py","checks/github_pr_evidence.py","checks/github_pr_snapshot.py","checks/pr_gate.py","checks/route_gate.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/sensitive_enforcement.py","checks/review_json_gate.py","checks/review_result_semantics.py","checks/closure_audit.py","schemas/pr_review_gate.schema.json","schemas/runtime_checkpoint.schema.json","schemas/review_result.schema.json","schemas/closure_audit_result.schema.json","tests/test_check_workflow.py","tests/test_github_pr_evidence.py","tests/test_pr_gate.py","tests/test_route_gate.py","tests/test_runtime_ledger_gate.py","tests/test_specrail_schema.py","tests/test_review_json_gate.py","tests/test_closure_audit.py"],"spec_refs":["specs/GH97/product.md","specs/GH97/tech.md"]}
+-->
+
 ## Codebase Context
 
 | Area | Files | Current behavior | Why relevant |

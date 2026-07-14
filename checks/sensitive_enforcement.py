@@ -21,13 +21,13 @@ from specrail_lib import (
 )
 
 
-CLASSIFICATION_SOURCES = {"github_changed_files", "task_plan"}
+CLASSIFICATION_SOURCES = {"github_changed_files", "tech_spec"}
 APPROVED_SPEC_FIELDS = {
     "repository",
     "issue",
     "spec_paths",
     "content_hashes",
-    "approved_base_sha",
+    "spec_revisions",
     "approved_at",
     "maintainer_actor",
     "state_source",
@@ -35,7 +35,7 @@ APPROVED_SPEC_FIELDS = {
 }
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
-TASK_PLAN_MANIFEST_RE = re.compile(
+PLANNED_CHANGES_MANIFEST_RE = re.compile(
     rb"<!--\s*specrail-planned-changes\s*\n(.*?)\n\s*-->", re.DOTALL
 )
 
@@ -201,38 +201,56 @@ def trusted_default_base(repo: Path) -> tuple[str, str]:
     return branch, sha.lower()
 
 
+def approved_spec_source_commits(
+    config: PackConfig, repo: Path, issue: int
+) -> dict[str, str]:
+    """Return each approved spec path's last source commit on trusted default."""
+
+    _branch, trusted_base_sha = trusted_default_base(repo)
+    configured = spec_packet_artifact_paths(config, issue, repo=repo)
+    result: dict[str, str] = {}
+    for path in [configured["product_spec"], configured["tech_spec"]]:
+        source_commit = _git(
+            repo,
+            ["log", "-1", "--format=%H", trusted_base_sha, "--", path],
+            f"approved spec source commit {path}",
+        ).decode("utf-8", errors="strict").strip()
+        if not COMMIT_RE.fullmatch(source_commit):
+            raise SpecRailError(f"approved spec lacks a source commit: {path}")
+        result[path] = source_commit.lower()
+    return result
+
+
 def build_approved_spec_evidence(
     config: PackConfig,
     repo: Path,
     *,
     repository: str,
     issue: int,
-    approved_base_sha: str,
+    spec_revisions: dict[str, Any],
     approved_at: str,
     maintainer_actor: str,
+    gated_head_sha: str | None = None,
 ) -> dict[str, Any]:
-    if not isinstance(approved_base_sha, str) or not COMMIT_RE.fullmatch(
-        approved_base_sha
-    ):
-        raise SpecRailError("approved_base_sha must be a full commit SHA")
     paths = spec_packet_artifact_paths(config, issue, repo=repo)
     spec_paths = [paths["product_spec"], paths["tech_spec"]]
-    hashes = {
-        path: _hash_bytes(
-            _git(
-                repo,
-                ["show", f"{approved_base_sha}:{path}"],
-                f"approved spec at approval base {path}",
-            )
+    if not isinstance(spec_revisions, dict) or set(spec_revisions) != set(spec_paths):
+        raise SpecRailError("spec_revisions must cover every approved spec path")
+    hashes: dict[str, str] = {}
+    for path in spec_paths:
+        revision = spec_revisions[path]
+        source_commit = revision.get("source_commit_sha") if isinstance(revision, dict) else None
+        if not isinstance(source_commit, str) or not COMMIT_RE.fullmatch(source_commit):
+            raise SpecRailError(f"spec_revisions[{path}].source_commit_sha must be a full SHA")
+        hashes[path] = _hash_bytes(
+            _git(repo, ["show", f"{source_commit}:{path}"], f"approved spec source {path}")
         )
-        for path in spec_paths
-    }
     evidence = {
         "repository": repository,
         "issue": issue,
         "spec_paths": spec_paths,
         "content_hashes": hashes,
-        "approved_base_sha": approved_base_sha,
+        "spec_revisions": spec_revisions,
         "approved_at": approved_at,
         "maintainer_actor": maintainer_actor,
         "state_source": "label",
@@ -244,6 +262,7 @@ def build_approved_spec_evidence(
         evidence,
         repository=repository,
         issue=issue,
+        gated_head_sha=gated_head_sha,
     )
     return evidence
 
@@ -279,6 +298,7 @@ def validate_approved_spec_evidence(
     *,
     repository: str,
     issue: int,
+    gated_head_sha: str | None = None,
 ) -> None:
     if not isinstance(evidence, dict):
         raise SpecRailError("approved_spec must be an object")
@@ -302,23 +322,8 @@ def validate_approved_spec_evidence(
             "approved_spec.approved_at must be a timezone-aware ISO-8601 timestamp"
         )
 
-    _timestamp(evidence.get("approved_at"), "approved_spec.approved_at")
-    approved_base_sha = evidence.get("approved_base_sha")
-    if not isinstance(approved_base_sha, str) or not COMMIT_RE.fullmatch(
-        approved_base_sha
-    ):
-        raise SpecRailError("approved_spec.approved_base_sha must be a full commit SHA")
-    _git(
-        repo,
-        ["cat-file", "-e", f"{approved_base_sha}^{{commit}}"],
-        "approved spec approval base",
-    )
+    approved_at = _timestamp(evidence.get("approved_at"), "approved_spec.approved_at")
     _trusted_base_ref, trusted_base_sha = trusted_default_base(repo)
-    _git(
-        repo,
-        ["merge-base", "--is-ancestor", approved_base_sha, trusted_base_sha],
-        "approved spec approval base must be an ancestor of the trusted default base",
-    )
 
     configured = spec_packet_artifact_paths(config, issue, repo=repo)
     expected_paths = [configured["product_spec"], configured["tech_spec"]]
@@ -330,16 +335,46 @@ def validate_approved_spec_evidence(
     hashes = evidence.get("content_hashes")
     if not isinstance(hashes, dict) or set(hashes) != set(expected_paths):
         raise SpecRailError("approved_spec.content_hashes must cover every approved spec path")
+    revisions = evidence.get("spec_revisions")
+    if not isinstance(revisions, dict) or set(revisions) != set(expected_paths):
+        raise SpecRailError("approved_spec.spec_revisions must cover every spec path")
+    if gated_head_sha is not None and not COMMIT_RE.fullmatch(gated_head_sha):
+        raise SpecRailError("gated head SHA must be a full commit SHA")
     for path in expected_paths:
         digest = hashes.get(path)
         if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
             raise SpecRailError(f"approved_spec.content_hashes[{path}] must be a sha256 hex digest")
-        approved_digest = _hash_bytes(
-            _git(
-                repo,
-                ["show", f"{approved_base_sha}:{path}"],
-                f"approved spec at approval base {path}",
-            )
+        revision = revisions.get(path)
+        required_revision_fields = {
+            "source_commit_sha", "pr_number", "merged_at", "merge_commit_sha"
+        }
+        if not isinstance(revision, dict) or set(revision) != required_revision_fields:
+            raise SpecRailError(f"approved_spec.spec_revisions[{path}] is malformed")
+        source_commit = revision.get("source_commit_sha")
+        merge_commit = revision.get("merge_commit_sha")
+        pr_number = revision.get("pr_number")
+        if not isinstance(source_commit, str) or not COMMIT_RE.fullmatch(source_commit):
+            raise SpecRailError(f"approved_spec.spec_revisions[{path}].source_commit_sha is invalid")
+        if not isinstance(merge_commit, str) or not COMMIT_RE.fullmatch(merge_commit):
+            raise SpecRailError(f"approved_spec.spec_revisions[{path}].merge_commit_sha is invalid")
+        if not isinstance(pr_number, int) or isinstance(pr_number, bool) or pr_number <= 0:
+            raise SpecRailError(f"approved_spec.spec_revisions[{path}].pr_number is invalid")
+        merged_at = _timestamp(
+            revision.get("merged_at"), f"approved_spec.spec_revisions[{path}].merged_at"
+        )
+        if merged_at > approved_at:
+            raise SpecRailError(f"approved spec PR merged after approval: {path}")
+        _git(repo, ["cat-file", "-e", f"{merge_commit}^{{commit}}"], f"approved spec merge commit {path}")
+        _git(
+            repo,
+            ["merge-base", "--is-ancestor", merge_commit, trusted_base_sha],
+            f"approved spec merge commit must be on trusted default base: {path}",
+        )
+        source_digest = _hash_bytes(
+            _git(repo, ["show", f"{source_commit}:{path}"], f"approved spec source {path}")
+        )
+        merge_digest = _hash_bytes(
+            _git(repo, ["show", f"{merge_commit}:{path}"], f"approved spec merge {path}")
         )
         current_base_digest = _hash_bytes(
             _git(
@@ -348,13 +383,21 @@ def validate_approved_spec_evidence(
                 f"approved spec at current trusted base {path}",
             )
         )
-        if digest != approved_digest or digest != current_base_digest:
+        gated_digest = digest
+        if gated_head_sha is not None:
+            gated_digest = _hash_bytes(
+                _git(repo, ["show", f"{gated_head_sha}:{path}"], f"approved spec at gated head {path}")
+            )
+        if not all(
+            value == digest
+            for value in [source_digest, merge_digest, current_base_digest, gated_digest]
+        ):
             raise SpecRailError(
                 f"approved spec content changed since approval or hash mismatched: {path}"
             )
 
 
-def classification_from_task_plan(
+def classification_from_approved_tech(
     config: PackConfig,
     repo: Path,
     *,
@@ -362,45 +405,38 @@ def classification_from_task_plan(
     base_sha: str,
 ) -> dict[str, Any]:
     if not COMMIT_RE.fullmatch(base_sha):
-        raise SpecRailError("task plan base_sha must be a full commit SHA")
-    task_path = spec_packet_artifact_paths(config, issue, repo=repo)["task_plan"]
+        raise SpecRailError("tech spec base_sha must be a full commit SHA")
+    tech_path = spec_packet_artifact_paths(config, issue, repo=repo)["tech_spec"]
     base_content = _git(
-        repo, ["show", f"{base_sha}:{task_path}"], "trusted task plan"
+        repo, ["show", f"{base_sha}:{tech_path}"], "trusted approved tech spec"
     )
-    current_path = resolve_repo_path(repo, task_path, label="trusted task plan")
-    try:
-        current_content = current_path.read_bytes()
-    except OSError as exc:
-        raise SpecRailError(f"cannot read trusted task plan: {exc}") from exc
-    if current_content != base_content:
-        raise SpecRailError("trusted task plan changed after the base snapshot")
-    matches = TASK_PLAN_MANIFEST_RE.findall(base_content)
+    matches = PLANNED_CHANGES_MANIFEST_RE.findall(base_content)
     if len(matches) != 1:
         raise SpecRailError(
-            "configured tasks.md must contain exactly one specrail-planned-changes manifest"
+            "configured tech.md must contain exactly one specrail-planned-changes manifest"
         )
     try:
         manifest = json.loads(matches[0])
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SpecRailError("task plan manifest must be valid UTF-8 JSON") from exc
+        raise SpecRailError("tech spec manifest must be valid UTF-8 JSON") from exc
     if not isinstance(manifest, dict) or set(manifest) != {
         "version", "issue", "complete", "paths", "spec_refs"
     }:
-        raise SpecRailError("task plan manifest has unsupported or missing fields")
+        raise SpecRailError("tech spec manifest has unsupported or missing fields")
     if manifest.get("version") != 1 or manifest.get("issue") != issue:
-        raise SpecRailError("task plan manifest version/issue binding is invalid")
+        raise SpecRailError("tech spec manifest version/issue binding is invalid")
     if manifest.get("complete") is not True:
-        raise SpecRailError("task plan manifest must declare complete=true")
+        raise SpecRailError("tech spec manifest must declare complete=true")
     classification = classify_sensitive_changes(
         config,
         repo,
         manifest.get("paths"),
         manifest.get("spec_refs"),
-        source="task_plan",
+        source="tech_spec",
     )
     classification.update(
         {
-            "source_path": task_path,
+            "source_path": tech_path,
             "source_content_hash": _hash_bytes(base_content),
             "source_base_sha": base_sha,
             "planned_paths_complete": True,
@@ -542,6 +578,11 @@ def evaluate_sensitive_evidence(
                     evidence.get("approved_spec"),
                     repository=repository.strip(),
                     issue=issue,
+                    gated_head_sha=(
+                        evidence.get("head_sha")
+                        if expected_source == "github_changed_files"
+                        else None
+                    ),
                 )
                 satisfied.append("approved spec evidence revalidated")
             except SpecRailError as exc:
