@@ -97,6 +97,17 @@ def _item_label(item: dict[str, Any], index: int) -> str:
     return f"item #{index}"
 
 
+def _validate_enforcement_sensitive(
+    item: dict[str, Any], label: str, errors: list[str]
+) -> None:
+    if "enforcement_sensitive" not in item:
+        return
+    if not isinstance(item["enforcement_sensitive"], bool):
+        errors.append(
+            f"{label}: enforcement_sensitive must be a boolean when present"
+        )
+
+
 def _is_yes(value: Any) -> bool:
     if value is True:
         return True
@@ -342,6 +353,7 @@ def _validate_full_queue_checkpoint(
             errors.append(f"{label}: state is required")
         if not raw_item.get("next_action"):
             errors.append(f"{label}: next_action is required")
+        _validate_enforcement_sensitive(raw_item, label, errors)
         if raw_item.get("enforcement_sensitive") is True and not raw_item.get(
             "approved_spec_evidence"
         ):
@@ -459,6 +471,7 @@ def evaluate_checkpoint(
             errors.append(f"{label}: state is required")
         if not raw_item.get("next_action"):
             errors.append(f"{label}: next_action is required")
+        _validate_enforcement_sensitive(raw_item, label, errors)
         if queue_mode == "full_queue_drain" and (raw_item.get("issue") or raw_item.get("pr")):
             spec_status = _validate_spec_status(
                 raw_item.get("spec_status"),
