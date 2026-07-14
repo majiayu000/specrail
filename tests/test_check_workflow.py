@@ -62,7 +62,7 @@ def test_required_files_include_pr_issue_reference_module() -> None:
     assert "checks/github_issue_reference.py" in REQUIRED_FILES
 
 
-def test_validate_pack_assets_uses_trusted_helper_for_target(tmp_path: Path) -> None:
+def test_trusted_pack_asset_validation_ignores_target_helper(tmp_path: Path) -> None:
     target = tmp_path / "target"
     shutil.copytree(
         ROOT,
