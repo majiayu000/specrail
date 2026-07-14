@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Initialize trusted default branch ref
+        run: git remote set-head origin --auto
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
