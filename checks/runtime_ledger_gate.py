@@ -25,7 +25,7 @@ from runtime_gate_rules import (
     _validate_self_review_authorization,
     _validate_tranche_mix,
 )
-from specrail_lib import SPEC_STATUSES
+from specrail_lib import PackConfig, SPEC_STATUSES, load_pack, resolve_path
 
 
 MERGE_READY_STATES = {"complete", "merge_ready", "ready_to_merge", "merged"}
@@ -154,6 +154,8 @@ def _validate_pr_gate_artifact(
     evidence: Any,
     label: str,
     errors: list[str],
+    repo: Path | None,
+    config: PackConfig | None,
 ) -> dict[str, Any] | None:
     path = _resolve_local_evidence_path(evidence)
     if path is None:
@@ -165,7 +167,7 @@ def _validate_pr_gate_artifact(
     if "decision" in payload:
         result = payload
     else:
-        result = evaluate_pr_gate(payload)
+        result = evaluate_pr_gate(payload, repo=repo, config=config)
 
     if result.get("decision") != "allowed":
         reasons = result.get("reasons")
@@ -361,7 +363,9 @@ def _validate_full_queue_checkpoint(
                 )
 
 
-def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
+def evaluate_checkpoint(
+    data: dict[str, Any], *, repo: Path | None = None, config: PackConfig | None = None
+) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
     satisfied: list[str] = []
@@ -563,7 +567,9 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
             if not pr_gate.get("evidence"):
                 errors.append(f"{label}: merge-ready state requires pr_gate evidence")
             else:
-                _validate_pr_gate_artifact(raw_item, pr_gate.get("evidence"), label, errors)
+                _validate_pr_gate_artifact(
+                    raw_item, pr_gate.get("evidence"), label, errors, repo, config
+                )
             if not pr_gate.get("checked_at"):
                 errors.append(f"{label}: merge-ready state requires pr_gate checked_at")
             if pr_gate.get("head_sha") != head_sha:
@@ -602,12 +608,16 @@ def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate a SpecRail runtime checkpoint.")
     parser.add_argument("--checkpoint", required=True, help="Path to runtime checkpoint JSON")
+    parser.add_argument("--repo", help="Repository root for raw sensitive PR evidence")
     parser.add_argument("--json", action="store_true", help="Print machine-readable result")
     args = parser.parse_args()
 
     try:
         data = _load_json(Path(args.checkpoint))
-        result = evaluate_checkpoint(data)
+        repo = resolve_path(Path(args.repo), label="repository") if args.repo else None
+        result = evaluate_checkpoint(
+            data, repo=repo, config=load_pack(repo) if repo is not None else None
+        )
     except ValueError as exc:
         result = {
             "decision": "blocked",

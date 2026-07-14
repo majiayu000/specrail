@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
-from github_evidence_common import EvidenceError
+from github_evidence_common import EvidenceError, json_array, json_object
 from sensitive_enforcement import normalize_changed_paths
 from specrail_lib import PackConfig, spec_packet_artifact_paths
 
@@ -90,7 +90,8 @@ def collect_pr_file_snapshot(
     owner: str,
     name: str,
     pr_number: int,
-    run_json: Callable[[list[str]], dict[str, Any]],
+    run_json: Callable[[list[str]], Any],
+    run_array_json: Callable[[list[str]], Any] | None = None,
 ) -> dict[str, Any]:
     cursor: str | None = None
     identity: tuple[str, str, str, str, str] | None = None
@@ -105,7 +106,7 @@ def collect_pr_file_snapshot(
         ]
         if cursor is not None:
             args[2:2] = ["-F", f"cursor={cursor}"]
-        payload = run_json(args)
+        payload = json_object(run_json(args), "PR files GraphQL response")
         try:
             repository = _mapping(payload["data"]["repository"], "repository")
             pull_request = _mapping(repository["pullRequest"], "pullRequest")
@@ -169,6 +170,39 @@ def collect_pr_file_snapshot(
     if len(set(paths)) != len(paths):
         raise EvidenceError("PR files snapshot contains duplicate paths")
     normalized_paths = sorted(paths)
+    all_paths = set(normalized_paths)
+    if run_array_json is not None:
+        rest_files: list[Any] = []
+        for page in range(1, 1001):
+            response = json_array(
+                run_array_json([
+                    "api", "--method", "GET",
+                    f"repos/{owner}/{name}/pulls/{pr_number}/files",
+                    "-F", "per_page=100", "-F", f"page={page}",
+                ]),
+                "pull files REST response",
+            )
+            rest_files.extend(response)
+            if len(rest_files) >= expected_count or len(response) < 100:
+                break
+        else:
+            raise EvidenceError("pull files REST pagination exceeded 1000 pages")
+        if len(rest_files) != expected_count:
+            raise EvidenceError(
+                f"pull files REST snapshot incomplete: collected {len(rest_files)} of {expected_count}"
+            )
+        rest_current: set[str] = set()
+        for index, raw in enumerate(rest_files, start=1):
+            item = json_object(raw, f"pull files[{index}]")
+            filename = _string(item.get("filename"), f"pull files[{index}].filename")
+            rest_current.add(filename)
+            previous = item.get("previous_filename")
+            if previous is not None:
+                all_paths.add(_string(previous, f"pull files[{index}].previous_filename"))
+            all_paths.add(filename)
+        if rest_current != set(normalized_paths):
+            raise EvidenceError("GraphQL and REST pull file snapshots disagree")
+    normalized_paths = sorted(all_paths)
     digest = hashlib.sha256(
         json.dumps(normalized_paths, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -183,7 +217,8 @@ def collect_pr_file_snapshot(
         "base_sha": base_sha,
         "default_base_ref": default_base_ref,
         "default_base_sha": default_base_sha,
-        "path_count": expected_count,
+        "file_count": expected_count,
+        "path_count": len(normalized_paths),
         "paths": normalized_paths,
         "paths_sha256": digest,
     }

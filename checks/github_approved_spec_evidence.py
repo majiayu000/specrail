@@ -6,18 +6,34 @@ import re
 from datetime import datetime
 from typing import Any, Callable
 
-from github_evidence_common import EvidenceError
+from github_evidence_common import EvidenceError, json_array, json_object
 
 
 APPROVAL_QUERY = """
-query SpecRailApproval(
+query SpecRailApprovalLabels(
   $owner: String!, $name: String!, $number: Int!, $cursor: String
 ) {
   repository(owner: $owner, name: $name) {
     defaultBranchRef { name }
     issue(number: $number) {
       state
-      labels(first: 100) { nodes { name } }
+      labels(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes { name }
+      }
+    }
+  }
+}
+""".strip()
+
+APPROVAL_TIMELINE_QUERY = """
+query SpecRailApprovalTimeline(
+  $owner: String!, $name: String!, $number: Int!, $cursor: String
+) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef { name }
+    issue(number: $number) {
+      state
       timelineItems(first: 100, after: $cursor, itemTypes: [LABELED_EVENT]) {
         pageInfo { hasNextPage endCursor }
         nodes {
@@ -42,60 +58,60 @@ def collect_approval_metadata(
     spec_source_commits: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     owner, name = github_repo.split("/", 1)
-    cursor: str | None = None
-    identity: tuple[str, str, tuple[str, ...]] | None = None
-    events: list[Any] = []
-    seen_cursors: set[str] = set()
-    for _page in range(1000):
-        args = [
-            "api", "graphql", "-F", f"owner={owner}", "-F", f"name={name}",
-            "-F", f"number={issue}", "-f", f"query={APPROVAL_QUERY}",
-        ]
-        if cursor is not None:
-            args[2:2] = ["-F", f"cursor={cursor}"]
-        payload = run_json(args)
-        try:
-            repository = payload["data"]["repository"]
-            issue_data = repository["issue"]
-            default_branch = repository["defaultBranchRef"]["name"]
-            labels = issue_data["labels"]["nodes"]
-            timeline = issue_data["timelineItems"]
-            page_events = timeline["nodes"]
-            page_info = timeline["pageInfo"]
-        except (KeyError, TypeError) as exc:
-            raise EvidenceError("approved-spec query returned malformed issue evidence") from exc
-        if not isinstance(default_branch, str) or not default_branch.strip():
-            raise EvidenceError("approved-spec query lacks a trusted default branch")
-        if not isinstance(labels, list) or not isinstance(page_events, list):
-            raise EvidenceError("approved-spec query returned incomplete timeline evidence")
-        current_labels = tuple(sorted(
-            item.get("name") for item in labels
-            if isinstance(item, dict) and isinstance(item.get("name"), str)
-        ))
-        page_identity = (default_branch.strip(), str(issue_data.get("state")), current_labels)
-        if identity is None:
-            identity = page_identity
-        elif identity != page_identity:
-            raise EvidenceError("approved-spec issue evidence drifted during pagination")
-        events.extend(page_events)
-        has_next = page_info.get("hasNextPage") if isinstance(page_info, dict) else None
-        end_cursor = page_info.get("endCursor") if isinstance(page_info, dict) else None
-        if not isinstance(has_next, bool):
-            raise EvidenceError("approved-spec timeline pageInfo is incomplete")
-        if not has_next:
-            break
-        if not isinstance(end_cursor, str) or not end_cursor.strip() or end_cursor in seen_cursors:
-            raise EvidenceError("approved-spec timeline pagination cursor is invalid")
-        seen_cursors.add(end_cursor)
-        cursor = end_cursor
-    else:
-        raise EvidenceError("approved-spec timeline pagination exceeded 1000 pages")
+    identity: tuple[str, str] | None = None
 
+    def collect_connection(query: str, key: str) -> list[Any]:
+        nonlocal identity
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        collected: list[Any] = []
+        for _page in range(1000):
+            args = [
+                "api", "graphql", "-F", f"owner={owner}", "-F", f"name={name}",
+                "-F", f"number={issue}", "-f", f"query={query}",
+            ]
+            if cursor is not None:
+                args[2:2] = ["-F", f"cursor={cursor}"]
+            payload = json_object(run_json(args), "approved-spec GraphQL response")
+            try:
+                repository = json_object(payload["data"]["repository"], "repository")
+                issue_data = json_object(repository["issue"], "issue")
+                default_branch = repository["defaultBranchRef"]["name"]
+                connection = json_object(issue_data[key], key)
+                nodes = json_array(connection["nodes"], f"{key}.nodes")
+                page_info = json_object(connection["pageInfo"], f"{key}.pageInfo")
+            except (KeyError, TypeError) as exc:
+                raise EvidenceError("approved-spec query returned malformed issue evidence") from exc
+            if not isinstance(default_branch, str) or not default_branch.strip():
+                raise EvidenceError("approved-spec query lacks a trusted default branch")
+            page_identity = (default_branch.strip(), str(issue_data.get("state")))
+            if identity is None:
+                identity = page_identity
+            elif identity != page_identity:
+                raise EvidenceError("approved-spec issue evidence drifted during pagination")
+            collected.extend(nodes)
+            has_next = page_info.get("hasNextPage")
+            end_cursor = page_info.get("endCursor")
+            if not isinstance(has_next, bool):
+                raise EvidenceError(f"approved-spec {key} pageInfo is incomplete")
+            if not has_next:
+                return collected
+            if not isinstance(end_cursor, str) or not end_cursor.strip() or end_cursor in seen_cursors:
+                raise EvidenceError(f"approved-spec {key} pagination cursor is invalid")
+            seen_cursors.add(end_cursor)
+            cursor = end_cursor
+        raise EvidenceError(f"approved-spec {key} pagination exceeded 1000 pages")
+
+    labels = collect_connection(APPROVAL_QUERY, "labels")
+    events = collect_connection(APPROVAL_TIMELINE_QUERY, "timelineItems")
     assert identity is not None
-    default_branch, issue_state, current_labels_tuple = identity
+    default_branch, issue_state = identity
     if issue_state != "OPEN":
         raise EvidenceError("approved-spec issue must remain OPEN")
-    current_labels = set(current_labels_tuple)
+    current_labels = {
+        item.get("name") for item in labels
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
     if "ready_to_implement" not in current_labels:
         raise EvidenceError(
             "approved spec requires current ready_to_implement maintainer label"
@@ -135,14 +151,12 @@ def collect_approval_metadata(
     for path, source_commit in spec_source_commits.items():
         if not re.fullmatch(r"[0-9a-fA-F]{40}", source_commit):
             raise EvidenceError(f"approved spec source commit is invalid: {path}")
-        pulls = run_json(
+        pulls = json_array(run_json(
             [
                 "api", "--method", "GET",
                 f"repos/{owner}/{name}/commits/{source_commit}/pulls",
             ]
-        )
-        if not isinstance(pulls, list):
-            raise EvidenceError(f"associated PR query was malformed for approved spec: {path}")
+        ), f"associated PR response for {path}")
         candidates: list[dict[str, Any]] = []
         for pull in pulls:
             if not isinstance(pull, dict):

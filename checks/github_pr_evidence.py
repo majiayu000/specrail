@@ -631,8 +631,7 @@ def collect_evidence(
     file_snapshot_before = None
     if repo is not None and config is not None and (enforcement_declaration(pr_payload_before.get("body")) is not None or any(sensitive_registry(config).values())):
         file_snapshot_before = collect_pr_file_snapshot(
-            owner, name, pr_number, run_gh_json
-        )
+            owner, name, pr_number, run_gh_json, run_gh_json)
         if file_snapshot_before["head_sha"] != head_sha_before:
             raise EvidenceError("PR view and file snapshot head SHA disagree")
     threads_payload = collect_review_threads(owner, name, pr_number)
@@ -681,8 +680,7 @@ def collect_evidence(
     file_snapshot_after = None
     if file_snapshot_before is not None:
         file_snapshot_after = collect_pr_file_snapshot(
-            owner, name, pr_number, run_gh_json
-        )
+            owner, name, pr_number, run_gh_json, run_gh_json)
         assert file_snapshot_before is not None
         assert_same_pr_file_snapshot(file_snapshot_before, file_snapshot_after)
 

@@ -125,7 +125,10 @@ def approval_query_payload() -> dict[str, object]:
                 "defaultBranchRef": {"name": "main"},
                 "issue": {
                     "state": "OPEN",
-                    "labels": {"nodes": [{"name": "ready_to_implement"}]},
+                    "labels": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [{"name": "ready_to_implement"}],
+                    },
                     "timelineItems": {
                         "pageInfo": {"hasNextPage": False, "endCursor": None},
                         "nodes": [
@@ -152,7 +155,7 @@ def test_approval_metadata_collects_complete_label_timeline() -> None:
     metadata = collect_approval_metadata("example/repo", 97, fake_run_json)
 
     assert metadata["approved_at"] == "2026-07-14T00:00:00Z"
-    assert len(calls) == 1
+    assert len(calls) == 2
 
 
 def test_approval_metadata_blocks_incomplete_timeline_page() -> None:
@@ -166,13 +169,18 @@ def test_approval_metadata_blocks_incomplete_timeline_page() -> None:
 def test_approval_metadata_paginates_more_than_100_events() -> None:
     first = approval_query_payload()
     second = approval_query_payload()
-    first_timeline = first["data"]["repository"]["issue"]["timelineItems"]
-    first_timeline["nodes"] = [{"label": {"name": "other"}}] * 100
-    first_timeline["pageInfo"] = {"hasNextPage": True, "endCursor": "next"}
-    responses = [first, second]
+    first_labels = first["data"]["repository"]["issue"]["labels"]
+    first_labels["nodes"] = [{"name": f"label-{index}"} for index in range(100)]
+    first_labels["pageInfo"] = {"hasNextPage": True, "endCursor": "next"}
+    label_responses = [first, second]
+
+    def fake_run(args: list[str]) -> object:
+        if "SpecRailApprovalLabels" in args[-1]:
+            return label_responses.pop(0)
+        return approval_query_payload()
 
     metadata = collect_approval_metadata(
-        "example/repo", 97, lambda _args: responses.pop(0)
+        "example/repo", 97, fake_run
     )
 
     assert metadata["maintainer_actor"] == "maintainer"
@@ -181,7 +189,7 @@ def test_approval_metadata_paginates_more_than_100_events() -> None:
 def test_approval_metadata_blocks_pagination_drift() -> None:
     first = approval_query_payload()
     second = approval_query_payload()
-    first["data"]["repository"]["issue"]["timelineItems"]["pageInfo"] = {
+    first["data"]["repository"]["issue"]["labels"]["pageInfo"] = {
         "hasNextPage": True, "endCursor": "next"
     }
     second["data"]["repository"]["defaultBranchRef"]["name"] = "other"
@@ -194,7 +202,9 @@ def test_approval_metadata_blocks_pagination_drift() -> None:
 
 
 def test_approval_metadata_requires_merged_pr_for_each_spec() -> None:
-    responses: list[object] = [approval_query_payload(), []]
+    responses: list[object] = [
+        approval_query_payload(), approval_query_payload(), []
+    ]
 
     with pytest.raises(EvidenceError, match="exactly one merged"):
         collect_approval_metadata(
@@ -205,6 +215,7 @@ def test_approval_metadata_requires_merged_pr_for_each_spec() -> None:
 
 def test_approval_metadata_records_merged_spec_pr() -> None:
     responses: list[object] = [
+        approval_query_payload(),
         approval_query_payload(),
         [{
             "number": 7,
@@ -220,6 +231,20 @@ def test_approval_metadata_records_merged_spec_pr() -> None:
     )
 
     assert metadata["spec_revisions"]["specs/GH97/product.md"]["pr_number"] == 7
+
+
+def test_approval_metadata_rejects_wrong_json_shapes() -> None:
+    with pytest.raises(EvidenceError, match="JSON object"):
+        collect_approval_metadata("example/repo", 97, lambda _args: [])
+
+    responses: list[object] = [
+        approval_query_payload(), approval_query_payload(), {"not": "an array"}
+    ]
+    with pytest.raises(EvidenceError, match="JSON array"):
+        collect_approval_metadata(
+            "example/repo", 97, lambda _args: responses.pop(0),
+            spec_source_commits={"specs/GH97/product.md": "a" * 40},
+        )
 
 
 def snapshot_page(
@@ -317,6 +342,38 @@ def test_pr_file_snapshot_rejects_double_snapshot_drift() -> None:
 
     with pytest.raises(EvidenceError, match="snapshot drifted"):
         assert_same_pr_file_snapshot(before, after)
+
+
+def test_pr_file_snapshot_includes_sensitive_rename_source_path() -> None:
+    graph = snapshot_page(["docs/safe.py"], total=1, has_next=False, cursor=None)
+    snapshot = collect_pr_file_snapshot(
+        "majiayu000", "specrail", 10, lambda _args: graph,
+        lambda _args: [{
+            "filename": "docs/safe.py",
+            "previous_filename": "checks/pr_gate.py",
+        }],
+    )
+    base = load_pack(ROOT)
+    workflow = deepcopy(base.workflow)
+    workflow["enforcement"]["sensitive_registry"]["paths"] = ["checks/**"]
+    config = PackConfig(ROOT, workflow, base.states, base.labels)
+
+    classification = classify_sensitive_changes(
+        config, ROOT, snapshot["paths"], [], source="github_changed_files"
+    )
+
+    assert snapshot["file_count"] == 1
+    assert classification["matched_paths"] == ["checks/pr_gate.py"]
+
+
+def test_pr_file_snapshot_rejects_non_array_rest_response() -> None:
+    graph = snapshot_page(["docs/safe.py"], total=1, has_next=False, cursor=None)
+
+    with pytest.raises(EvidenceError, match="JSON array"):
+        collect_pr_file_snapshot(
+            "majiayu000", "specrail", 10, lambda _args: graph,
+            lambda _args: {"filename": "docs/safe.py"},
+        )
 
 
 def test_parse_github_repo_requires_owner_repo() -> None:
