@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from shutil import copyfile
 from pathlib import Path
 
 import pytest
@@ -14,10 +15,185 @@ FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
 from pr_gate import evaluate_pr_gate  # noqa: E402
+from sensitive_enforcement import build_approved_spec_evidence  # noqa: E402
+from specrail_lib import load_pack  # noqa: E402
 
 
 def clean_evidence() -> dict[str, object]:
     return fixture("pr-clean-authorized.json")
+
+
+def sensitive_evidence(tmp_path: Path) -> tuple[dict[str, object], Path, object]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for name in ["workflow.yaml", "states.yaml", "labels.yaml"]:
+        copyfile(ROOT / name, repo / name)
+    packet = repo / "specs" / "GH97"
+    packet.mkdir(parents=True)
+    for name in ["product.md", "tech.md"]:
+        (packet / name).write_text(f"# {name}\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    commit = [
+        "git", "-C", str(repo), "-c", "user.name=SpecRail Test",
+        "-c", "user.email=specrail@example.invalid", "commit", "-qm",
+    ]
+    subprocess.run([*commit, "approved specs"], check=True)
+    base_head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", base_head],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+        check=True,
+    )
+    (repo / "README.md").write_text("implementation\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run([*commit, "implementation"], check=True)
+    checkout_head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    config = load_pack(repo)
+    evidence = clean_evidence()
+    issue = 97
+    evidence["linked_issue"] = issue
+    evidence["head_sha"] = checkout_head
+    evidence["gate_query_head_sha"] = checkout_head
+    evidence.update(
+        {
+            "repository": "majiayu000/specrail",
+            "base_ref": "main",
+            "base_sha": base_head,
+            "changed_files_count": 0,
+            "changed_files_sha256": __import__("hashlib").sha256(b"[]").hexdigest(),
+            "enforcement_sensitive": True,
+            "sensitive_classification": {
+                "source": "github_changed_files",
+                "changed_paths": [],
+                "spec_refs": [],
+            },
+            "approved_spec": build_approved_spec_evidence(
+                config, repo,
+                repository="majiayu000/specrail", issue=issue,
+                spec_revisions={
+                    f"specs/GH97/{name}.md": {
+                        "source_commit_sha": base_head,
+                        "pr_number": 1,
+                        "merged_at": "2029-01-01T00:00:00Z",
+                        "merge_commit_sha": base_head,
+                    }
+                    for name in ["product", "tech"]
+                },
+                approved_at="2030-07-14T00:00:00Z",
+                maintainer_actor="maintainer",
+                gated_head_sha=checkout_head,
+            ),
+        }
+    )
+    return evidence, repo, config
+
+
+def test_pr_gate_revalidates_explicit_sensitive_approved_spec(tmp_path: Path) -> None:
+    evidence, repo, config = sensitive_evidence(tmp_path)
+    result = evaluate_pr_gate(evidence, repo=repo, config=config)
+
+    assert result["decision"] == "allowed"
+    assert result["enforcement_sensitive"] is True
+    assert "approved spec evidence revalidated" in result["satisfied"]
+
+
+def test_pr_gate_blocks_changed_file_snapshot_digest_mismatch(tmp_path: Path) -> None:
+    evidence, repo, config = sensitive_evidence(tmp_path)
+    evidence["changed_files_sha256"] = "0" * 64
+
+    result = evaluate_pr_gate(evidence, repo=repo, config=config)
+
+    assert result["decision"] == "blocked"
+    assert any("changed_files_sha256" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    ["hash", "head", "traversal", "body_hint", "not_ancestor", "base_mismatch"],
+)
+def test_pr_gate_blocks_forged_sensitive_approved_spec(forgery: str, tmp_path: Path) -> None:
+    evidence, repo, config = sensitive_evidence(tmp_path)
+    approval = evidence["approved_spec"]
+    if forgery == "hash":
+        path = approval["spec_paths"][0]
+        approval["content_hashes"][path] = "0" * 64
+    elif forgery == "head":
+        approval["spec_revisions"][approval["spec_paths"][0]]["merge_commit_sha"] = "0" * 40
+    elif forgery == "traversal":
+        approval["spec_paths"][0] = "../product.md"
+    else:
+        if forgery == "not_ancestor":
+            feature_head = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True,
+                capture_output=True, text=True,
+            ).stdout.strip()
+            approval["spec_revisions"][approval["spec_paths"][0]]["merge_commit_sha"] = feature_head
+        elif forgery == "base_mismatch":
+            evidence["base_sha"] = "0" * 40
+        else:
+            approval["state_source"] = "body_hint"
+            approval["state_trusted"] = False
+
+    result = evaluate_pr_gate(evidence, repo=repo, config=config)
+
+    assert result["decision"] == "blocked"
+    assert "sensitive_enforcement" in result["missing"]
+
+
+@pytest.mark.parametrize("stale_kind", ["stale_evidence", "base_checkout"])
+def test_pr_gate_blocks_checkout_that_does_not_match_gated_head(
+    stale_kind: str,
+    tmp_path: Path,
+) -> None:
+    evidence, repo, config = sensitive_evidence(tmp_path)
+    if stale_kind == "stale_evidence":
+        evidence["gate_query_head_sha"] = "f" * 40
+    else:
+        base_head = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "origin/main"], check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        evidence["head_sha"] = base_head
+        evidence["gate_query_head_sha"] = base_head
+
+    result = evaluate_pr_gate(evidence, repo=repo, config=config)
+
+    assert result["decision"] == "blocked"
+    assert any("local checkout HEAD" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_blocks_pr_that_changes_an_approved_spec(tmp_path: Path) -> None:
+    evidence, repo, config = sensitive_evidence(tmp_path)
+    (repo / "specs" / "GH97" / "tech.md").write_text("# changed in PR\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "-c", "user.name=SpecRail Test",
+            "-c", "user.email=specrail@example.invalid", "commit", "-qm", "change spec",
+        ],
+        check=True,
+    )
+    changed_head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    evidence["head_sha"] = changed_head
+    evidence["gate_query_head_sha"] = changed_head
+
+    result = evaluate_pr_gate(evidence, repo=repo, config=config)
+
+    assert result["decision"] == "blocked"
+    assert any("changed since approval" in reason for reason in result["reasons"])
 
 
 def fixture(name: str) -> dict[str, object]:

@@ -465,6 +465,8 @@ def test_runtime_ledger_gate_cli_json_contract(tmp_path: Path) -> None:
             "checks/runtime_ledger_gate.py",
             "--checkpoint",
             str(checkpoint_path),
+            "--repo",
+            str(ROOT),
             "--json",
         ],
         cwd=ROOT,
@@ -482,6 +484,56 @@ def test_runtime_ledger_gate_cli_json_contract(tmp_path: Path) -> None:
         "warnings",
         "satisfied",
     } <= set(payload)
+
+
+def test_runtime_ledger_passes_explicit_repo_for_raw_sensitive_pr_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    item["enforcement_sensitive"] = True
+    raw_path = tmp_path / "raw-pr.json"
+    raw_path.write_text(json.dumps({"pr": 718, "head_sha": item["head_sha"]}), encoding="utf-8")
+    item["pr_gate"]["evidence"] = str(raw_path)
+    observed: dict[str, object] = {}
+
+    def fake_gate(payload: dict[str, object], *, repo: Path, config: object) -> dict[str, object]:
+        observed.update({"payload": payload, "repo": repo, "config": config})
+        return {
+            "decision": "allowed", "pr": 718, "head_sha": item["head_sha"],
+            "enforcement_sensitive": True,
+        }
+
+    monkeypatch.setattr("runtime_ledger_gate.evaluate_pr_gate", fake_gate)
+    config = object()
+
+    result = evaluate_checkpoint(checkpoint, repo=ROOT, config=config)  # type: ignore[arg-type]
+
+    assert result["decision"] == "allowed"
+    assert observed["repo"] == ROOT
+    assert observed["config"] is config
+
+
+def test_runtime_ledger_blocks_raw_sensitive_evidence_without_repo(
+    tmp_path: Path,
+) -> None:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    item["enforcement_sensitive"] = True
+    raw = json.loads(
+        (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    raw["enforcement_sensitive"] = True
+    raw_path = tmp_path / "raw-sensitive-pr.json"
+    raw_path.write_text(json.dumps(raw), encoding="utf-8")
+    item["pr_gate"]["evidence"] = str(raw_path)
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("repository checkout is required" in error for error in result["errors"])
 
 
 def test_full_queue_blocks_implementation_without_spec() -> None:

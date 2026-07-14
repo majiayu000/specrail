@@ -110,7 +110,14 @@ def test_validate_instance_reports_required_enum_additional_and_unsupported() ->
         )
 
     with pytest.raises(SpecRailError, match="unsupported JSON Schema keyword"):
-        validate_instance({"type": "string", "pattern": ".*"}, "value")
+        validate_instance({"type": "string", "maxLength": 3}, "value")
+
+
+def test_validate_instance_enforces_string_pattern() -> None:
+    validate_instance({"type": "string", "pattern": "^[0-9a-f]{40}$"}, "a" * 40)
+
+    with pytest.raises(SpecRailError, match="does not match pattern"):
+        validate_instance({"type": "string", "pattern": "^[0-9a-f]{40}$"}, "xyz")
 
 
 def test_runtime_checkpoint_fixture_instances_validate_against_schema() -> None:

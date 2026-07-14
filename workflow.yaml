@@ -58,6 +58,14 @@ required_human_gates:
   - merge
   - release
 
+# Consumer repositories populate these repo-relative glob registries. Empty
+# registries preserve compatibility; a configured registry makes trusted path
+# evidence mandatory for implement and PR gates.
+enforcement:
+  sensitive_registry:
+    paths: []
+    specs: []
+
 artifacts:
   spec_packet: specs/GH{issue_number}/
   product_spec: specs/GH{issue_number}/product.md
