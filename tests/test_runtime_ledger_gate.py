@@ -394,12 +394,12 @@ def test_runtime_ledger_gate_blocks_string_sensitive_flag_with_remote_evidence()
 
     assert result["decision"] == "blocked"
     assert any(
-        "enforcement_sensitive must be a boolean" in error
+        "enforcement_sensitive must be a boolean or null" in error
         for error in result["errors"]
     )
 
 
-@pytest.mark.parametrize("malformed", ["true", 1, 0, None])
+@pytest.mark.parametrize("malformed", ["true", 1, 0, 1.5, [], {}])
 def test_runtime_ledger_gate_blocks_malformed_sensitive_flag_in_non_merge_state(
     malformed: object,
 ) -> None:
@@ -413,7 +413,7 @@ def test_runtime_ledger_gate_blocks_malformed_sensitive_flag_in_non_merge_state(
 
     assert result["decision"] == "blocked"
     assert any(
-        "enforcement_sensitive must be a boolean" in error
+        "enforcement_sensitive must be a boolean or null" in error
         for error in result["errors"]
     )
 
@@ -454,6 +454,21 @@ def test_runtime_ledger_gate_preserves_remote_evidence_for_explicit_false_flag()
     item = checkpoint["items"][0]  # type: ignore[index]
     assert isinstance(item, dict)
     item["enforcement_sensitive"] = False
+    pr_gate = item["pr_gate"]
+    assert isinstance(pr_gate, dict)
+    pr_gate["evidence"] = "https://github.com/example/repo/actions/runs/1"
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "allowed"
+    assert result["errors"] == []
+
+
+def test_runtime_ledger_gate_preserves_remote_evidence_for_null_flag() -> None:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["enforcement_sensitive"] = None
     pr_gate = item["pr_gate"]
     assert isinstance(pr_gate, dict)
     pr_gate["evidence"] = "https://github.com/example/repo/actions/runs/1"

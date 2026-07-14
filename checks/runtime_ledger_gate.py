@@ -102,9 +102,12 @@ def _validate_enforcement_sensitive(
 ) -> None:
     if "enforcement_sensitive" not in item:
         return
-    if not isinstance(item["enforcement_sensitive"], bool):
+    value = item["enforcement_sensitive"]
+    if value is None:
+        return
+    if not isinstance(value, bool):
         errors.append(
-            f"{label}: enforcement_sensitive must be a boolean when present"
+            f"{label}: enforcement_sensitive must be a boolean or null when present"
         )
 
 
