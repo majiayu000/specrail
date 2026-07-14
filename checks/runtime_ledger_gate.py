@@ -159,6 +159,11 @@ def _validate_pr_gate_artifact(
 ) -> dict[str, Any] | None:
     path = _resolve_local_evidence_path(evidence)
     if path is None:
+        if raw_item.get("enforcement_sensitive") is True:
+            errors.append(
+                f"{label}: sensitive item requires local machine-readable "
+                "pr_gate evidence"
+            )
         return None
     payload = _load_local_json(path, f"{label}: pr_gate", errors)
     if payload is None:

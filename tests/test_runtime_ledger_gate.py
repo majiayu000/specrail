@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
@@ -352,6 +354,62 @@ def test_runtime_ledger_gate_blocks_blocked_pr_gate_artifact(tmp_path: Path) -> 
 
     assert result["decision"] == "blocked"
     assert any("decision must be allowed" in error for error in result["errors"])
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "https://github.com/example/repo/actions/runs/1",
+        "http://example.test/pr-gate.json",
+        "",
+    ],
+)
+def test_runtime_ledger_gate_blocks_non_local_sensitive_pr_gate_evidence(
+    evidence: str,
+) -> None:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["enforcement_sensitive"] = True
+    pr_gate = item["pr_gate"]
+    assert isinstance(pr_gate, dict)
+    pr_gate["evidence"] = evidence
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("pr_gate evidence" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_unreadable_sensitive_pr_gate_evidence(
+    tmp_path: Path,
+) -> None:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["enforcement_sensitive"] = True
+    pr_gate = item["pr_gate"]
+    assert isinstance(pr_gate, dict)
+    pr_gate["evidence"] = str(tmp_path / "missing-pr-gate.json")
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("evidence file does not exist" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_preserves_remote_evidence_for_non_sensitive_item() -> None:
+    checkpoint = clean_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    pr_gate = item["pr_gate"]
+    assert isinstance(pr_gate, dict)
+    pr_gate["evidence"] = "https://github.com/example/repo/actions/runs/1"
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "allowed"
+    assert result["errors"] == []
 
 
 def test_runtime_ledger_gate_blocks_missing_window_tokens() -> None:
