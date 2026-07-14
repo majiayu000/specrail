@@ -36,10 +36,12 @@ Product: `product.md`
 
 ### 2. Evidence adapter 与 thread resolver
 
-- `github_pr_evidence.py` 新增 required `--review-artifact`（merge-ready 路径）及可选
-  `--previous-review-artifact`。读取并 semantic validate，验证 artifact head 等于两次 PR
-  snapshot 的稳定 head，再生成结构化 `independent_review`；移除/拒绝只提供
-  `--review-source independent_lane` 的 merge-ready 用法。
+- `github_pr_evidence.py` 新增 required `--review-manifest`（merge-ready 路径）。manifest 由
+  validated runtime checkpoint/native lane roster 导出，列出全部 lane、head、artifact path、
+  lifecycle 和 producer identity；adapter 必须按 manifest 读取全部候选，不接受调用方任选单个
+  `--review-artifact`。每个 lane/head 最多一个有效 terminal artifact，整个 current head 若出现
+  多个 terminal、重复 terminal，或 clean 与 blocking 并存均 fail closed。stale/superseded
+  artifact 只作为 carry-forward 来源，不能覆盖 current-head truth。
 - GraphQL thread 采集保留 `resolvedBy`；resolver role map 增加 original reviewer 与 successor
   re-review evidence 的结构化输入。resolved actionable thread 只有 allowlisted resolver
   contract 通过才清除。
@@ -52,7 +54,12 @@ Product: `product.md`
   `route_gate.py` 从受信任 plan/diff evidence、`github_pr_evidence.py` 从 GitHub current-head
   changed-file snapshot 取得路径，复用现有 configured-path normalization、symlink/traversal
   防护后自行计算 `matched_paths`/`matched_specs`，不能把 caller boolean 当作 registry truth。
-- evidence object 记录计算得到的 registry matches、声明的 `enforcement_sensitive` 和受信任的
+- approved-spec adapter 从 maintainer-controlled GitHub label/state 与已合并 base tree 生成
+  evidence：repository、issue、normalized spec paths、content hashes、base head、approved_at、
+  maintainer actor、`state_source=label`、`state_trusted=true`。gate 用 repo-safe path resolver
+  重算本地/base 内容 hash 并验证 approval head；body hint、caller boolean、unmerged head、
+  changed-after-approval 或 hash mismatch 一律不可信。
+- evidence object 记录计算得到的 registry matches、声明的 `enforcement_sensitive` 和上述
   approved-spec evidence。`route_gate.py` 的 implement 路径验证一致性；`pr_gate.py` 对
   current-head merge-ready evidence 重复验证，防止 route 后 diff 改变。
 - 缺 registry 时不猜测普通 PR；但显式 `enforcement_sensitive=true` 仍必须有 approved spec。
@@ -61,6 +68,9 @@ Product: `product.md`
 
 - PR evidence 记录 `review_completed_at`、`gate_started_at`、`gate_query_completed_at` 和各自
   head SHA；`pr_gate.py` 使用 timezone-aware ISO-8601 解析并验证顺序与 exact head。
+- `gate_query_completed_at` 是 pre/post-merge 共用的 canonical completion key；不得新增或接受
+  `gate_completed_at` alias。下游 GH813 文本中的 gate completion 概念在同步实现时映射到该
+  canonical key。
 - pre-merge evaluator 不读取或要求 future dispatch；若 evidence 包含 dispatch，仍验证其不
   早于 gate completion，但 post-dispatch 合规由 closure audit 负责。
 
@@ -68,7 +78,8 @@ Product: `product.md`
 
 - 新增 `schemas/closure_audit_result.schema.json` 和 `checks/closure_audit.py`。输入是已完成 PR 的
   final head、merge timestamps、最后一次 allowed gate result/evidence 与 repository identity。
-- 合规链返回 `compliant`。缺失或顺序错误返回 `violation`，并生成稳定
+- 合规链以 `gate_query_completed_at < merge_dispatched_at <= merged_at` 返回 `compliant`。
+  缺失或顺序错误返回 `violation`，并生成稳定
   `required_follow_up`：`violation_code`、`repository`、`pr_number`、`final_head_sha`、
   `idempotency_key`、`summary`。
 - `idempotency_key` 由上述稳定字段规范化连接/哈希得到；不调用 GitHub Issues API。
@@ -86,13 +97,13 @@ Product: `product.md`
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
 | `B-001`,`B-002` | review schema/semantic gate/evidence/pr gate | terminal/empty/verdict/finding table tests |
-| `B-003` | semantic review validator | prior set completeness、ID uniqueness、resolved evidence tests |
-| `B-004` | GraphQL normalization、resolver evidence、PR gate | original/successor/human positives; forbidden roles negatives |
-| `B-005` | workflow registry、path normalization、route/pr gate + evidence schema | missing/conflict/no-spec/path-traversal negatives and valid sensitive positive |
-| `B-006` | PR evidence/pr gate timestamp parser | no-dispatch positive; review-after-gate/head mismatch negatives |
-| `B-007`,`B-008` | closure schema/audit | compliant chain、dispatch-before-gate、external merge missing-chain fixtures |
-| `B-009` | PR gate/runtime-aligned recovery | same-head lane failure/auth/human final review matrix |
-| `B-010` | every file loader/CLI | missing/unreadable/invalid JSON/schema failures are explicit |
+| `B-003`,`B-004` | semantic validator + trusted manifest/roster | prior completeness、concurrent clean+blocking、duplicate terminal、stale/superseded tests |
+| `B-005` | GraphQL normalization、resolver evidence、PR gate | original/successor/human positives; forbidden roles negatives |
+| `B-006`,`B-007` | workflow registry、path normalization、approved-spec adapter、route/pr gate | forged approval、body hint、changed hash/head、path-traversal negatives |
+| `B-008` | PR evidence/pr gate timestamp parser | canonical-key/no-dispatch positive; alias/review-after-gate/head mismatch negatives |
+| `B-009`,`B-010` | closure schema/audit | compliant chain、dispatch-before-gate、external merge missing-chain fixtures |
+| `B-011` | PR gate/runtime-aligned recovery | same-head lane failure/auth/human final review matrix |
+| `B-012` | every file loader/CLI | missing/unreadable/invalid JSON/schema failures are explicit |
 
 ## 数据流
 
@@ -100,7 +111,7 @@ Product: `product.md`
 reviewer lane -> review artifact v2 -> semantic gate -> exact-head PR evidence
 consumer registry + approved spec -> sensitive classification check
 PR head + CI + threads + resolver evidence + review completion
-  -> pre-merge PR gate (review <= gate, no future dispatch required)
+  -> pre-merge PR gate (review <= gate_query_completed_at, no future dispatch required)
   -> authorized merge dispatch
   -> closure audit (gate < dispatch <= merged, same head)
   -> compliant OR violation + required_follow_up payload
