@@ -56,7 +56,12 @@ def collect_approval_metadata(
     run_json: Callable[[list[str]], Any],
     *,
     spec_source_commits: dict[str, str] | None = None,
+    spec_source_commits_provider: Callable[[str, str], dict[str, str]] | None = None,
 ) -> dict[str, Any]:
+    if spec_source_commits is not None and spec_source_commits_provider is not None:
+        raise EvidenceError(
+            "provide spec_source_commits or spec_source_commits_provider, not both"
+        )
     owner, name = github_repo.split("/", 1)
     identity: tuple[str, str, str] | None = None
 
@@ -129,23 +134,42 @@ def collect_approval_metadata(
         raise EvidenceError(
             "approved spec requires current ready_to_implement maintainer label"
         )
-    candidates: list[tuple[str, str]] = []
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
     for event in events:
         if not isinstance(event, dict):
             continue
         label = event.get("label")
-        actor = event.get("actor")
         if not isinstance(label, dict) or label.get("name") != "ready_to_implement":
             continue
         created_at = event.get("createdAt")
-        login = actor.get("login") if isinstance(actor, dict) else None
-        if isinstance(created_at, str) and created_at.strip() and isinstance(login, str) and login.strip():
-            candidates.append((created_at.strip(), login.strip()))
+        if not isinstance(created_at, str) or not created_at.strip():
+            raise EvidenceError(
+                "ready_to_implement label lacks maintainer actor/timestamp evidence"
+            )
+        try:
+            created_time = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise EvidenceError(
+                "ready_to_implement label timestamp is invalid"
+            ) from exc
+        if created_time.tzinfo is None:
+            raise EvidenceError(
+                "ready_to_implement label timestamp must include timezone"
+            )
+        candidates.append((created_time, event))
     if not candidates:
         raise EvidenceError(
             "ready_to_implement label lacks maintainer actor/timestamp evidence"
         )
-    approved_at, maintainer_actor = max(candidates)
+    _approved_time, latest_event = max(candidates, key=lambda item: item[0])
+    actor = latest_event.get("actor")
+    maintainer_actor = actor.get("login") if isinstance(actor, dict) else None
+    approved_at = latest_event["createdAt"].strip()
+    if not isinstance(maintainer_actor, str) or not maintainer_actor.strip():
+        raise EvidenceError(
+            "ready_to_implement label lacks maintainer actor/timestamp evidence"
+        )
+    maintainer_actor = maintainer_actor.strip()
     result: dict[str, Any] = {
         "approved_at": approved_at,
         "maintainer_actor": maintainer_actor,
@@ -154,6 +178,10 @@ def collect_approval_metadata(
         "default_base_ref": default_branch,
         "default_base_sha": default_base_sha,
     }
+    if spec_source_commits_provider is not None:
+        spec_source_commits = spec_source_commits_provider(
+            default_branch, default_base_sha
+        )
     if spec_source_commits is None:
         return result
     try:

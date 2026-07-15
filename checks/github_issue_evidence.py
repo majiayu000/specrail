@@ -11,13 +11,21 @@ from pathlib import Path
 from typing import Any
 
 from github_evidence_common import EvidenceError, json_object
+from github_approved_spec_evidence import collect_approval_metadata
 from github_pr_evidence import (
     _require_positive_int,
     _require_string,
     parse_github_repo,
     run_gh_json,
 )
+from sensitive_enforcement import (
+    approved_spec_source_commits,
+    build_approved_spec_evidence,
+    classification_from_approved_tech,
+    sensitive_registry,
+)
 from specrail_lib import (
+    PackConfig,
     TERMINAL_BLOCKING_STATES,
     SpecRailError,
     load_pack,
@@ -190,17 +198,86 @@ def collect_issue_evidence(
     repo: Path,
 ) -> dict[str, Any]:
     parse_github_repo(github_repo)
-    artifacts = configured_artifacts(repo, issue_number)
+    config = load_pack(repo)
+    paths = spec_packet_artifact_paths(config, issue_number, repo=repo)
+    artifacts = {
+        name: paths[name]
+        for name in ["product_spec", "tech_spec", "task_plan"]
+    }
     issue_payload = collect_issue_view(github_repo, issue_number)
     payload_issue_number = _require_positive_int(issue_payload, "number")
     if payload_issue_number != issue_number:
         raise EvidenceError(
             f"issue number mismatch: expected {issue_number}, got {payload_issue_number}"
         )
-    return build_issue_evidence(
+    evidence = build_issue_evidence(
         issue_payload,
         artifacts,
     )
+    evidence["repository"] = github_repo
+    if (
+        evidence["state"] == "ready_to_implement"
+        and evidence["state_source"] == "label"
+        and evidence["state_trusted"] is True
+        and any(sensitive_registry(config).values())
+    ):
+        evidence.update(
+            collect_sensitive_route_evidence(
+                github_repo, issue_number, repo, config
+            )
+        )
+    return evidence
+
+
+def collect_sensitive_route_evidence(
+    github_repo: str,
+    issue_number: int,
+    repo: Path,
+    config: PackConfig,
+) -> dict[str, Any]:
+    metadata = collect_approval_metadata(
+        github_repo,
+        issue_number,
+        run_gh_json,
+        spec_source_commits_provider=lambda default_ref, default_sha: (
+            approved_spec_source_commits(
+                config,
+                repo,
+                issue_number,
+                default_base_ref=default_ref,
+                default_base_sha=default_sha,
+            )
+        ),
+    )
+    default_ref = metadata.get("default_base_ref")
+    default_sha = metadata.get("default_base_sha")
+    classification = classification_from_approved_tech(
+        config,
+        repo,
+        issue=issue_number,
+        base_sha=str(default_sha or ""),
+    )
+    result: dict[str, Any] = {
+        "base_ref": default_ref,
+        "base_sha": default_sha,
+        "default_base_ref": default_ref,
+        "default_base_sha": default_sha,
+        "enforcement_sensitive": classification["enforcement_sensitive"],
+        "sensitive_classification": classification,
+    }
+    if classification["enforcement_sensitive"]:
+        result["approved_spec"] = build_approved_spec_evidence(
+            config,
+            repo,
+            repository=github_repo,
+            issue=issue_number,
+            spec_revisions=metadata.get("spec_revisions"),
+            approved_at=str(metadata.get("approved_at") or ""),
+            maintainer_actor=str(metadata.get("maintainer_actor") or ""),
+            default_base_ref=default_ref,
+            default_base_sha=default_sha,
+        )
+    return result
 
 
 def main() -> int:

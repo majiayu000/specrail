@@ -480,6 +480,10 @@ def classification_from_approved_tech(
         raise SpecRailError("tech spec manifest version/issue binding is invalid")
     if manifest.get("complete") is not True:
         raise SpecRailError("tech spec manifest must declare complete=true")
+    if not manifest["paths"]:
+        raise SpecRailError(
+            "tech spec manifest complete=true requires at least one planned path"
+        )
     classification = classify_sensitive_changes(
         config,
         repo,

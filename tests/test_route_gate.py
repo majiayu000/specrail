@@ -90,7 +90,9 @@ def write_sensitive_pack(
         "version": 1,
         "issue": 999,
         "complete": True,
-        "paths": planned_paths or ["checks/route_gate.py"],
+        "paths": (
+            ["checks/route_gate.py"] if planned_paths is None else planned_paths
+        ),
         "spec_refs": [],
     }
     template = (ROOT / "templates" / "tech_spec.md").read_text(encoding="utf-8")
@@ -435,6 +437,26 @@ def test_route_gate_ignores_caller_planned_paths(
         "specs/GH999/tech.md"
     )
     assert len(payload["sensitive_classification"]["source_content_hash"]) == 64
+
+
+def test_route_gate_blocks_complete_manifest_with_no_planned_paths(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo, planned_paths=[])
+    evidence = sensitive_route_evidence(repo, head)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("at least one planned path" in reason for reason in payload["reasons"])
 
 
 def test_route_gate_allows_preimplement_without_tasks_md(tmp_path: Path) -> None:

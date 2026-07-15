@@ -169,6 +169,25 @@ def test_approval_metadata_blocks_incomplete_timeline_page() -> None:
         collect_approval_metadata("example/repo", 97, lambda _args: payload)
 
 
+def test_approval_metadata_blocks_incomplete_latest_matching_event() -> None:
+    payload = approval_query_payload()
+    payload["data"]["repository"]["issue"]["timelineItems"]["nodes"] = [
+        {
+            "createdAt": "2026-07-13T00:00:00Z",
+            "actor": {"login": "old-maintainer"},
+            "label": {"name": "ready_to_implement"},
+        },
+        {
+            "createdAt": "2026-07-14T00:00:00Z",
+            "actor": None,
+            "label": {"name": "ready_to_implement"},
+        },
+    ]
+
+    with pytest.raises(EvidenceError, match="actor/timestamp"):
+        collect_approval_metadata("example/repo", 97, lambda _args: payload)
+
+
 def test_approval_metadata_paginates_more_than_100_events() -> None:
     first = approval_query_payload()
     second = approval_query_payload()
