@@ -236,7 +236,7 @@ def test_route_gate_blocks_forged_caller_base_identity(
     assert any(reason in item for item in payload["reasons"])
 
 
-def test_route_gate_allows_missing_origin_head_with_exact_adapter_default(
+def test_route_gate_blocks_missing_origin_head_with_exact_adapter_default(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -255,8 +255,9 @@ def test_route_gate_allows_missing_origin_head_with_exact_adapter_default(
         "--mode", "required", repo=repo,
     )
 
-    assert result.returncode == 0
-    assert payload["decision"] == "allowed"
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("origin/HEAD is missing" in item for item in payload["reasons"])
 
 
 def test_route_gate_blocks_non_origin_default_symbolic_ref(

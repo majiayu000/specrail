@@ -111,7 +111,7 @@ def test_pr_gate_revalidates_explicit_sensitive_approved_spec(tmp_path: Path) ->
     assert "approved spec evidence revalidated" in result["satisfied"]
 
 
-def test_pr_gate_allows_missing_origin_head_with_exact_adapter_default(
+def test_pr_gate_blocks_missing_origin_head_with_exact_adapter_default(
     tmp_path: Path,
 ) -> None:
     evidence, repo, config = sensitive_evidence(tmp_path)
@@ -122,7 +122,8 @@ def test_pr_gate_allows_missing_origin_head_with_exact_adapter_default(
 
     result = evaluate_pr_gate(evidence, repo=repo, config=config)
 
-    assert result["decision"] == "allowed", result["reasons"]
+    assert result["decision"] == "blocked"
+    assert any("origin/HEAD is missing" in reason for reason in result["reasons"])
 
 
 @pytest.mark.parametrize(

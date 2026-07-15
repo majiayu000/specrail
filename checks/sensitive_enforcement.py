@@ -220,8 +220,9 @@ def trusted_default_base(
         )
         if direct.returncode == 0:
             raise SpecRailError("trusted default branch origin/HEAD must be a symbolic ref")
-        if direct.returncode != 1:
-            raise SpecRailError("trusted default branch origin/HEAD could not be checked")
+        if direct.returncode == 1:
+            raise SpecRailError("trusted default branch origin/HEAD is missing")
+        raise SpecRailError("trusted default branch origin/HEAD could not be checked")
     return branch, trusted_sha
 
 
