@@ -11,7 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from github_evidence_common import EvidenceError, json_object
-from github_approved_spec_evidence import collect_approval_metadata
+from github_approved_spec_evidence import (
+    collect_approval_metadata,
+    collect_default_base_identity,
+)
 from github_pr_evidence import (
     _require_positive_int,
     _require_string,
@@ -23,6 +26,7 @@ from sensitive_enforcement import (
     build_approved_spec_evidence,
     classification_from_approved_tech,
     sensitive_registry,
+    trusted_default_base,
 )
 from specrail_lib import (
     PackConfig,
@@ -235,22 +239,14 @@ def collect_sensitive_route_evidence(
     repo: Path,
     config: PackConfig,
 ) -> dict[str, Any]:
-    metadata = collect_approval_metadata(
-        github_repo,
-        issue_number,
-        run_gh_json,
-        spec_source_commits_provider=lambda default_ref, default_sha: (
-            approved_spec_source_commits(
-                config,
-                repo,
-                issue_number,
-                default_base_ref=default_ref,
-                default_base_sha=default_sha,
-            )
-        ),
+    github_default_ref, github_default_sha = collect_default_base_identity(
+        github_repo, run_gh_json
     )
-    default_ref = metadata.get("default_base_ref")
-    default_sha = metadata.get("default_base_sha")
+    default_ref, default_sha = trusted_default_base(
+        repo,
+        default_base_ref=github_default_ref,
+        default_base_sha=github_default_sha,
+    )
     classification = classification_from_approved_tech(
         config,
         repo,
@@ -266,6 +262,27 @@ def collect_sensitive_route_evidence(
         "sensitive_classification": classification,
     }
     if classification["enforcement_sensitive"]:
+        metadata = collect_approval_metadata(
+            github_repo,
+            issue_number,
+            run_gh_json,
+            spec_source_commits_provider=lambda approval_ref, approval_sha: (
+                approved_spec_source_commits(
+                    config,
+                    repo,
+                    issue_number,
+                    default_base_ref=approval_ref,
+                    default_base_sha=approval_sha,
+                )
+            ),
+        )
+        if (
+            metadata.get("default_base_ref"),
+            metadata.get("default_base_sha"),
+        ) != (default_ref, default_sha):
+            raise EvidenceError(
+                "default-base identity drifted while collecting approval evidence"
+            )
         result["approved_spec"] = build_approved_spec_evidence(
             config,
             repo,

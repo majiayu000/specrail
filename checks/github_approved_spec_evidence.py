@@ -26,6 +26,14 @@ query SpecRailApprovalLabels(
 }
 """.strip()
 
+DEFAULT_BASE_QUERY = """
+query SpecRailDefaultBase($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef { name target { oid } }
+  }
+}
+""".strip()
+
 APPROVAL_TIMELINE_QUERY = """
 query SpecRailApprovalTimeline(
   $owner: String!, $name: String!, $number: Int!, $cursor: String
@@ -48,6 +56,40 @@ query SpecRailApprovalTimeline(
   }
 }
 """.strip()
+
+
+def collect_default_base_identity(
+    github_repo: str,
+    run_json: Callable[[list[str]], Any],
+) -> tuple[str, str]:
+    owner, name = github_repo.split("/", 1)
+    payload = json_object(
+        run_json(
+            [
+                "api", "graphql", "-F", f"owner={owner}", "-F", f"name={name}",
+                "-f", f"query={DEFAULT_BASE_QUERY}",
+            ]
+        ),
+        "default-base GraphQL response",
+    )
+    try:
+        repository = json_object(payload["data"]["repository"], "repository")
+        default_branch_ref = json_object(
+            repository["defaultBranchRef"], "defaultBranchRef"
+        )
+        default_branch = default_branch_ref["name"]
+        default_base_sha = json_object(
+            default_branch_ref["target"], "defaultBranchRef.target"
+        )["oid"]
+    except (KeyError, TypeError) as exc:
+        raise EvidenceError("default-base query returned malformed evidence") from exc
+    if not isinstance(default_branch, str) or not default_branch.strip():
+        raise EvidenceError("default-base query lacks a trusted default branch")
+    if not isinstance(default_base_sha, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{40}", default_base_sha
+    ):
+        raise EvidenceError("default-base query lacks a trusted default base SHA")
+    return default_branch.strip(), default_base_sha.lower()
 
 
 def collect_approval_metadata(
