@@ -85,6 +85,13 @@ baseline; it never selects or authorizes auto mode.
   tranche in the same session. Hand off to a fresh session only on compaction
   budget reached, context soft stop, user interrupt, or a queue that is empty
   or fully blocked.
+- When the runtime exposes Codex goal capability, create a thread goal for
+  the drain per the Goal Use auto-drain branch in
+  `skills/specrail-implement-queue/SKILL.md`. While the goal is active,
+  compaction does not interrupt the run (re-anchor from the checkpoint and
+  fresh remote truth after each compaction); the run ends only on queue
+  empty or fully blocked (goal complete), goal token budget exhausted, user
+  interrupt, or when only `human_decisions` items remain.
 
 In both modes, never force-push, delete unmerged branches, replace a
 maintainer-writable PR without cause, publish releases, or act outside the
