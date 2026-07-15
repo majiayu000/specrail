@@ -68,6 +68,14 @@ Spec-drafting authorization depends on `auth_mode`:
 - `auth_mode: review`: draft the spec, then wait for human confirmation
   before implementing from it.
 
+Readiness labels in auto mode: when `auth_mode: auto` and an issue's
+`spec_status` is `complete` or `umbrella_covered`, a missing readiness
+label (for example `ready_to_implement`) is not a blocker. Add the label,
+record `readiness_label_source: auto_drain` on the checkpoint item, list
+every auto-applied label in the report, and continue routing. Issues with
+`needs_spec` or `needs_tasks` must never receive an auto readiness label.
+In `auth_mode: review`, readiness labels remain a human gate.
+
 For `queue_mode: full_queue_drain`, `needs_spec` and `needs_tasks` are
 actionable planning work, not completion. If no implementation-ready tranche is
 available, select the smallest spec-writing or task-planning tranche instead of
@@ -90,6 +98,13 @@ When gating a partial slice, pass that expected issue to the read-only evidence
 adapter with `--issue <issue>`. This verifies the live open issue and keeps any
 other bounded closing references auditable without treating the partial target
 as final or authorizing its closure.
+
+Deprecation windows in auto mode: when a queue item requires a deprecation
+or removal window and the user did not specify a starting version, default
+to the next minor release after the current latest release, record
+`deprecation_default: true` with the chosen version on the checkpoint item
+and in the PR description, and continue. The removal itself stays subject
+to the existing gates; the user can veto the default afterwards.
 
 Record the plan as:
 
@@ -476,7 +491,16 @@ license to continue:
 Silent self-review substitution is forbidden. `review.review_source:
 self_review` never satisfies the independent-review requirement on its own;
 merging on self-review requires explicit `self_review_authorization` on the
-item, recording the quoted user scope and a conversation marker. Declare the
+item, recording the quoted user scope and a conversation marker.
+
+Auto-mode exception: when `auth_mode: auto` and two distinct independent
+reviewer lanes have failed on the same PR, each recorded in
+`lane_failures[]`, the implx auto invocation itself constitutes the scoped
+self-review authorization. Record `self_review_authorization` as usual
+with `actor: user`, `source: implx auto invocation`, and a `scope` naming
+the PR and the double-lane-failure path. A single lane failure still
+requires the retry lane; this exception never applies in
+`auth_mode: review`. Declare the
 review source when collecting evidence
 (`python3 checks/github_pr_evidence.py ... --review-source independent_lane`);
 `pr_gate.py` blocks evidence without `review_source` and
