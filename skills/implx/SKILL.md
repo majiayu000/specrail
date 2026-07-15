@@ -74,21 +74,40 @@ baseline; it never selects or authorizes auto mode.
 - `needs_spec` / `needs_tasks` issues are actionable: auto-draft the spec or
   task packet via the focused SpecRail skills, then implement. Do not park
   them waiting for human spec approval.
+- Auto-mode standing authorizations (all scoped to this run; see
+  `skills/specrail-implement-queue/SKILL.md` for the exact conditions):
+  add readiness labels to issues whose spec coverage is complete; use
+  scoped coordinator self-review after two distinct independent reviewer
+  lanes failed on the same PR with recorded `lane_failures[]`; work in
+  same-owner repositories explicitly referenced by queue issues; and
+  default a deprecation window to the next minor release when the user
+  did not specify one. None of these go to `human_decisions`.
 - Items that genuinely need a human decision (duplicate-ownership conflicts,
   maintainer waivers, probe or time-window gates, destructive or irreversible
-  actions, conflicting review feedback, architecture-level rewrites) never
-  block the queue: skip them, keep draining, and report them once in a final
-  `human_decisions` list with a recommended action each.
+  actions, conflicting review feedback, architecture-level rewrites,
+  cross-owner repository work, specs the issue lacks evidence to draft)
+  never block the queue: skip them, keep draining, and report them once in
+  a final `human_decisions` list with a recommended action each.
 - Budget exhaustion without a degradation signal does not pause the run:
   follow the Same-Session Tranche Rollover rule in
   `skills/specrail-implement-queue/SKILL.md` and continue with the next
   tranche in the same session. Hand off to a fresh session only on compaction
   budget reached, context soft stop, user interrupt, or a queue that is empty
   or fully blocked.
+- When the runtime exposes Codex goal capability, create a thread goal for
+  the drain per the Goal Use auto-drain branch in
+  `skills/specrail-implement-queue/SKILL.md`. While the goal is active,
+  compaction does not interrupt the run (re-anchor from the checkpoint and
+  fresh remote truth after each compaction); the run ends only on queue
+  empty or fully blocked (goal complete), goal token budget exhausted, user
+  interrupt, or when only `human_decisions` items remain.
 
 In both modes, never force-push, delete unmerged branches, replace a
 maintainer-writable PR without cause, publish releases, or act outside the
-repository without explicit instruction. Auto mode does not weaken the
+repository without explicit instruction. In auto mode, a same-owner
+repository explicitly referenced by a queue issue counts as inside the
+authorized scope; cross-owner repositories always require explicit human
+instruction. Auto mode does not weaken the
 Bounded Tranche Hard Stop, reviewer-lane, or self-review authorization rules.
 
 `full_queue_drain` means the objective spans the whole actionable queue, not

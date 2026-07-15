@@ -68,6 +68,14 @@ Spec-drafting authorization depends on `auth_mode`:
 - `auth_mode: review`: draft the spec, then wait for human confirmation
   before implementing from it.
 
+Readiness labels in auto mode: when `auth_mode: auto` and an issue's
+`spec_status` is `complete` or `umbrella_covered`, a missing readiness
+label (for example `ready_to_implement`) is not a blocker. Add the label,
+record `readiness_label_source: auto_drain` on the checkpoint item, list
+every auto-applied label in the report, and continue routing. Issues with
+`needs_spec` or `needs_tasks` must never receive an auto readiness label.
+In `auth_mode: review`, readiness labels remain a human gate.
+
 For `queue_mode: full_queue_drain`, `needs_spec` and `needs_tasks` are
 actionable planning work, not completion. If no implementation-ready tranche is
 available, select the smallest spec-writing or task-planning tranche instead of
@@ -90,6 +98,13 @@ When gating a partial slice, pass that expected issue to the read-only evidence
 adapter with `--issue <issue>`. This verifies the live open issue and keeps any
 other bounded closing references auditable without treating the partial target
 as final or authorizing its closure.
+
+Deprecation windows in auto mode: when a queue item requires a deprecation
+or removal window and the user did not specify a starting version, default
+to the next minor release after the current latest release, record
+`deprecation_default: true` with the chosen version on the checkpoint item
+and in the PR description, and continue. The removal itself stays subject
+to the existing gates; the user can veto the default afterwards.
 
 Record the plan as:
 
@@ -305,6 +320,17 @@ branches:
   blocked, or `auth_mode: review`), hand off to a fresh session. The handoff
   report must lead with the copy-paste `resume_prompt` as its first line.
 
+Goal-active compaction exemption: while a thread goal created under Goal Use
+is active, an observed compaction is not a handoff trigger. Keep recording
+`compaction_count`, declare a `compaction_budget` that matches the expected
+compaction behavior of the goal-active tranche (with the reason recorded in
+the checkpoint), and after each compaction re-anchor before further queue
+work: re-read the runtime checkpoint and refresh remote truth instead of
+trusting the compaction summary's memory of the queue. Tranche accounting is
+unchanged — every tranche still declares its budget, writes the checkpoint,
+and passes `checks/runtime_ledger_gate.py`. Without an active goal, the
+rules above apply unchanged.
+
 Continuing past a compaction budget still requires an explicit user
 `budget_override` recorded with quoted scope and a conversation marker;
 `checks/runtime_ledger_gate.py` blocks over-budget continuation without one
@@ -366,12 +392,35 @@ recover queue state from old parent transcripts.
 
 ## Goal Use
 
-Codex Goal can control the current tranche only when the user explicitly asks
-for goal-controlled work, gives a token or time budget, or explicitly frames the
-run as long-running goal work. Otherwise record a `goal_candidate` in the
-checkpoint but do not silently create a goal.
+Two branches:
+
+- Auto drain (default when ALL hold: `auth_mode: auto`,
+  `queue_mode: full_queue_drain`, and the runtime exposes Codex goal
+  capability): create a thread goal at startup. The goal objective must
+  state the whole drain objective (not just the current tranche), the four
+  termination conditions (queue empty or fully blocked, token budget
+  exhausted, user interrupt, only `human_decisions` remaining), and the
+  instruction to re-anchor every turn from the runtime checkpoint plus
+  fresh remote truth. Set a token budget: use the user-provided budget when
+  given, otherwise a conservative default recorded in the checkpoint `goal`
+  object together with the objective and status.
+- Every other case (goal capability unavailable, `auth_mode: review`, or
+  `queue_mode: bounded_tranche`): do not create a goal. Record a
+  `goal_candidate` in the checkpoint as before.
+
+Goal termination protocol:
+
+- Queue empty, or every remaining item is in `human_decisions`: mark the
+  goal complete and emit the final report. Never mark the goal complete
+  while actionable queue items remain.
+- Token budget exhausted: stop, write the checkpoint, and hand off; the
+  handoff report leads with the copy-paste `resume_prompt`.
+- User interrupt follows native Codex behavior.
+- Goal status never substitutes for the runtime checkpoint.
 
 Goal never replaces the runtime checkpoint, GitHub truth, or SpecRail gates.
+Reviewer-lane, self-review authorization, ledger-gate, spec-coverage, and
+merge-evidence rules apply verbatim while a goal is active.
 
 ## Implementation
 
@@ -442,7 +491,16 @@ license to continue:
 Silent self-review substitution is forbidden. `review.review_source:
 self_review` never satisfies the independent-review requirement on its own;
 merging on self-review requires explicit `self_review_authorization` on the
-item, recording the quoted user scope and a conversation marker. Declare the
+item, recording the quoted user scope and a conversation marker.
+
+Auto-mode exception: when `auth_mode: auto` and two distinct independent
+reviewer lanes have failed on the same PR, each recorded in
+`lane_failures[]`, the implx auto invocation itself constitutes the scoped
+self-review authorization. Record `self_review_authorization` as usual
+with `actor: user`, `source: implx auto invocation`, and a `scope` naming
+the PR and the double-lane-failure path. A single lane failure still
+requires the retry lane; this exception never applies in
+`auth_mode: review`. Declare the
 review source when collecting evidence
 (`python3 checks/github_pr_evidence.py ... --review-source independent_lane`);
 `pr_gate.py` blocks evidence without `review_source` and
