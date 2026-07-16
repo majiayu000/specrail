@@ -11,10 +11,10 @@ GH-108
 
 ## 实现任务
 
-- [ ] `SP108-T001` 提取唯一 runtime ledger 测试 helper，并按 core、full-queue/budget、review/lane-failure 边界拆分测试模块。 Covers: B-001, B-002, B-003, B-004 | Owner: implementation | Dependencies: none | Done when: helper 无重复定义、全部 66 个测试函数只出现一次、每个相关文件低于 800 行、生产与 fixture 文件未修改 | Verify: `wc -l tests/test_runtime_ledger*.py && rg --no-filename '^def test_' tests/test_runtime_ledger*.py | sort`
-- [ ] `SP108-T002` 对比拆分前后的函数集合、参数化收集数与断言迁移。 Covers: B-001, B-004 | Owner: verification | Dependencies: SP108-T001 | Done when: 基线与工作树 `test_*` 名称集合无差异、pytest 收集 73 cases、没有新增 skip/xfail 或弱化断言 | Verify: `/usr/bin/python3 -m pytest --collect-only -q tests/test_runtime_ledger*.py && git diff --word-diff=plain f3251fe -- tests/test_runtime_ledger*.py`
-- [ ] `SP108-T003` 运行 focused 与 repository 全量验证并记录 fresh 输出。 Covers: B-005 | Owner: verification | Dependencies: SP108-T001, SP108-T002 | Done when: focused tests、421+ 全量 tests、all-spec workflow check 与 whitespace check 全部通过 | Verify: `/usr/bin/python3 -m pytest -q tests/test_runtime_ledger*.py && /usr/bin/python3 -m pytest -q && python3 checks/check_workflow.py --repo . --all-specs && git diff --check`
-- [ ] `SP108-T004` 完成 scope 审计与 SpecRail implementation handoff。 Covers: B-002, B-003, B-004, B-005 | Owner: coordinator | Dependencies: SP108-T003 | Done when: implementation PR 只含批准的 test-only 范围、验证证据与风险说明完整、未越过 final review/merge gate | Verify: `git diff --name-only f3251fe...HEAD && python3 checks/check_workflow.py --repo . --spec-dir specs/GH108`
+- [ ] `SP108-T001` 从最新 `origin/main` 创建 implementation 分支，记录 `impl_base_sha`，并在任何编辑前保存 runtime normalized node multiset 与全库 collection count；随后提取唯一 helper，按 core、full-queue/budget、review/lane-failure 拆分。 Covers: B-001, B-002, B-003 | Owner: implementation | Dependencies: spec PR merged, issue `ready_to_implement` | Done when: 实际 runtime 基线仍为 66 functions / 73 cases（否则停止更新 spec）、helper 无重复定义、每个相关文件低于 800 行 | Verify: 按 `tech.md` Deterministic Parity Procedure 步骤 1-2 生成 pre-edit evidence，再运行 `wc -l tests/test_runtime_ledger*.py`
+- [ ] `SP108-T002` 对比拆分前后的完整 runtime collection 与测试函数 AST。 Covers: B-001, B-004 | Owner: verification | Dependencies: SP108-T001 | Done when: 去模块路径的 node ID sorted multiset 无差异；按函数名生成的 `ast.dump(include_attributes=False)` mapping 完全相等，覆盖 decorators、参数化值、函数体和断言 | Verify: 执行 `tech.md` Deterministic Parity Procedure 步骤 3-4，两个 `diff -u` 均为空且 AST parity 输出 66 functions
+- [ ] `SP108-T003` 运行 focused 与 repository 全量验证并记录 fresh 输出。 Covers: B-005 | Owner: verification | Dependencies: SP108-T001, SP108-T002 | Done when: focused tests 全通过、全库 collected count 与 `impl_base_sha` 基线相等、全量 pytest、all-spec workflow check 与 whitespace check 全部通过 | Verify: `/usr/bin/python3 -m pytest -q tests/test_runtime_ledger*.py && /usr/bin/python3 -m pytest -q && python3 checks/check_workflow.py --repo . --all-specs && git diff --check`
+- [ ] `SP108-T004` 完成 committed scope 审计与 SpecRail implementation handoff。 Covers: B-002, B-003, B-004, B-005 | Owner: coordinator | Dependencies: SP108-T003 | Done when: implementation PR 只含批准的 test-only 范围、protected paths 相对 `impl_base_sha` 无 committed diff、验证证据与风险说明完整、未越过 final review/merge gate | Verify: 执行 `tech.md` Deterministic Parity Procedure 步骤 5，再运行 `python3 checks/check_workflow.py --repo . --spec-dir specs/GH108`
 
 ## 并行拆分
 
@@ -24,7 +24,9 @@ T002-T004。
 
 ## 验证
 
-- `/usr/bin/python3 -m pytest --collect-only -q tests/test_runtime_ledger*.py`
+- 编辑前后 normalized runtime node multiset diff（预期为空）
+- `impl_base_sha` 与工作树的逐测试函数 AST mapping equality check
+- 编辑前后全库 collected test count equality check
 - `/usr/bin/python3 -m pytest -q tests/test_runtime_ledger*.py`
 - `/usr/bin/python3 -m pytest -q`
 - `python3 checks/check_workflow.py --repo . --all-specs`
@@ -34,7 +36,8 @@ T002-T004。
 ## Handoff Notes
 
 - Spec 编写基线：`origin/main@f3251fe`；原文件 1063 行、66 个 `test_*` 函数、
-  pytest 收集 73 cases；全库基线为 421 passed。
+  pytest 收集 73 cases；全库初始基线为 421 passed。implementation 以其实际
+  `impl_base_sha` fresh collection 为权威，固定 421 不能作为未来下限。
 - tasks 按用户要求与 product/tech 同一 spec PR 提交；当前 issue 仍为
   `ready_to_spec`，不得把 task plan 视为 `ready_to_implement` 或 spec approval。
 - spec PR 合并并由维护者设置 `ready_to_implement` 后，implementation 必须重新

@@ -23,7 +23,7 @@ Link to `product.md`.
 
 ## 设计方案
 
-1. 在 `tests/` 下增加一个非 `test_` 命名的 runtime ledger 共享 helper 模块，
+1. 增加 `tests/runtime_ledger_test_support.py` 作为非 `test_` 命名的共享 helper，
    集中保留 `ROOT`、checks import bootstrap、`clean_checkpoint()`、
    `full_queue_checkpoint()`、fixture JSON loader 与 schema enum walker。测试数据只保留
    一份；helper 不包含可被 pytest 收集的 `test_*` 函数。
@@ -33,20 +33,102 @@ Link to `product.md`.
    保持函数名、参数化装饰器、输入 mutation 与断言逐项等价。
 4. 新建具名测试模块承载 review source、self-review authorization 与 lane-failure
    recovery 测试；同样保持函数名与断言语义不变。
-5. implementation 前后分别收集测试函数名和 pytest node IDs：函数名集合必须
-   完全一致，收集数必须保持 73；随后运行 focused 与全量测试。
+5. implementation 分支创建后立即记录 `impl_base_sha=$(git rev-parse HEAD)`；在
+   编辑前保存 runtime ledger 与全库的 fresh collection 基线。若 runtime ledger
+   基线不再是 66 functions / 73 cases，先停止并更新 spec。
+6. 编辑后把 runtime node IDs 去除模块路径前缀、排序并与基线逐项 diff；同时从
+   `git show "$impl_base_sha":tests/test_runtime_ledger_gate.py` 解析基线 AST，按测试
+   函数名比较 `ast.dump(include_attributes=False)`，确保 decorators、参数值、函数体
+   与断言完全一致。最后要求全库 collected count 与实际基线相等并运行全量测试。
 
 不使用复制 helper、动态生成测试、批量改写断言或 pytest skip/xfail 来达到行数目标。
+
+## Deterministic Parity Procedure
+
+以下命令由 implementation owner 在同一个干净 worktree 中按顺序执行。步骤 1-2
+必须发生在任何测试文件编辑之前；`/tmp` 证据同时摘要到 implementation PR，且不提交。
+
+1. 记录实际 implementation base：
+
+   ```sh
+   git rev-parse HEAD > /tmp/gh108-impl-base-sha.txt
+   ```
+
+2. 保存编辑前的 normalized runtime nodes 与全库 collected count：
+
+   ```sh
+   /usr/bin/python3 -m pytest --collect-only -q tests/test_runtime_ledger_gate.py \
+     | sed -n '/::/s/^[^:]*:://p' | LC_ALL=C sort \
+     > /tmp/gh108-before-runtime-nodes.txt
+   /usr/bin/python3 -m pytest --collect-only -q \
+     | awk '/::/{count++} END{print count+0}' \
+     > /tmp/gh108-before-all-count.txt
+   ```
+
+3. 拆分后保存同形证据并逐项比较：
+
+   ```sh
+   /usr/bin/python3 -m pytest --collect-only -q tests/test_runtime_ledger*.py \
+     | sed -n '/::/s/^[^:]*:://p' | LC_ALL=C sort \
+     > /tmp/gh108-after-runtime-nodes.txt
+   /usr/bin/python3 -m pytest --collect-only -q \
+     | awk '/::/{count++} END{print count+0}' \
+     > /tmp/gh108-after-all-count.txt
+   diff -u /tmp/gh108-before-runtime-nodes.txt /tmp/gh108-after-runtime-nodes.txt
+   diff -u /tmp/gh108-before-all-count.txt /tmp/gh108-after-all-count.txt
+   ```
+
+4. 比较每个测试函数的完整 AST（decorators 与函数体均包含；重复函数名也阻断）：
+
+   ```sh
+   impl_base_sha=$(cat /tmp/gh108-impl-base-sha.txt)
+   /usr/bin/python3 - "$impl_base_sha" <<'PY'
+   import ast
+   import glob
+   import subprocess
+   import sys
+
+   def test_map(trees):
+       result = {}
+       for tree in trees:
+           for node in tree.body:
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
+                   assert node.name not in result, f"duplicate test function: {node.name}"
+                   result[node.name] = ast.dump(node, include_attributes=False)
+       return result
+
+   baseline = subprocess.check_output(
+       ["git", "show", f"{sys.argv[1]}:tests/test_runtime_ledger_gate.py"],
+       text=True,
+   )
+   current_paths = sorted(glob.glob("tests/test_runtime_ledger*.py"))
+   before = test_map([ast.parse(baseline)])
+   after = test_map(
+       [ast.parse(open(path, encoding="utf-8").read()) for path in current_paths]
+   )
+   assert before == after, "runtime ledger test FunctionDef AST mapping changed"
+   print(f"AST parity passed: {len(after)} test functions")
+   PY
+   ```
+
+5. 用同一 SHA 审计 committed scope：
+
+   ```sh
+   impl_base_sha=$(cat /tmp/gh108-impl-base-sha.txt)
+   git diff --name-only "$impl_base_sha"...HEAD
+   git diff --exit-code "$impl_base_sha"...HEAD -- \
+     checks schemas examples/fixtures .github/workflows specs
+   ```
 
 ## Product-to-Test Mapping
 
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
-| B-001 | runtime ledger 各测试模块 | 对比 `f3251fe:tests/test_runtime_ledger_gate.py` 与工作树的 `test_*` 函数名集合；`/usr/bin/python3 -m pytest --collect-only -q tests/test_runtime_ledger*.py` 显示 73 collected |
+| B-001 | runtime ledger 各测试模块 | 编辑前后保存 `pytest --collect-only -q` 输出，去除首个 `::` 前的模块路径后排序，`diff -u /tmp/gh108-before-runtime-nodes.txt /tmp/gh108-after-runtime-nodes.txt` 必须为空；实际基线偏离 66 functions / 73 cases 时先更新 spec |
 | B-002 | runtime ledger shared helper 与拆分模块 | `wc -l tests/test_runtime_ledger*.py`；每个文件严格小于 800 行，并人工确认 helper 只有一个定义来源 |
-| B-003 | implementation diff scope | `git diff --name-only f3251fe...HEAD` 仅包含 GH108 spec 与 `tests/` 下 runtime ledger 相关文件；`git diff -- checks schemas examples/fixtures .github/workflows` 为空 |
-| B-004 | 所有迁移后的测试函数 | 人工逐块 diff 确认断言/参数等价；focused pytest 全通过且没有新增 `skip` / `xfail` |
-| B-005 | repository validation | `/usr/bin/python3 -m pytest -q tests/test_runtime_ledger*.py`、`/usr/bin/python3 -m pytest -q`、`python3 checks/check_workflow.py --repo . --all-specs`、`git diff --check` 全部通过 |
+| B-003 | implementation diff scope | `git diff --name-only "$impl_base_sha"...HEAD` 仅包含 `tests/` 下批准的 runtime ledger 文件；`git diff --exit-code "$impl_base_sha"...HEAD -- checks schemas examples/fixtures .github/workflows specs` 必须为空 |
+| B-004 | 所有迁移后的测试函数 | 执行 Deterministic Parity Procedure 步骤 4；`ast.parse` + `ast.dump(include_attributes=False)` mapping 必须完全相等 |
+| B-005 | repository validation | 编辑前后全库 `pytest --collect-only` 总数相等；`/usr/bin/python3 -m pytest -q tests/test_runtime_ledger*.py`、`/usr/bin/python3 -m pytest -q`、`python3 checks/check_workflow.py --repo . --all-specs`、`git diff --check` 全部通过 |
 
 ## 数据流
 
@@ -63,8 +145,8 @@ pytest 收集各 `test_runtime_ledger*.py` 模块；测试从唯一共享 helper
 
 ## 风险
 
-- Security: 不改变生产或安全 gate；主要风险是漏迁移负例，使用函数集合与 collected
-  case 对比阻断。
+- Security: 不改变生产或安全 gate；主要风险是漏迁移或替换负例，使用 normalized
+  node multiset 与逐函数 AST equality 双重阻断。
 - Compatibility: pytest 模块路径会变化，但测试函数与生产 API 不变；仓库没有声明
   外部消费者依赖测试 node ID 全路径。
 - Performance: 模块导入略有变化；全量测试时间不应显著回归，不设未经基准支持的
@@ -74,9 +156,11 @@ pytest 收集各 `test_runtime_ledger*.py` 模块；测试从唯一共享 helper
 
 ## 测试计划
 
-- [ ] Unit tests: runtime ledger focused suite 收集 73 cases 并全部通过。
-- [ ] Integration tests: 全量 421+ tests 与 workflow validation 全部通过。
-- [ ] Manual verification: 对比函数名集合、assert/parametrize diff、文件行数和改动路径。
+- [ ] Unit tests: runtime ledger normalized node multiset 与逐函数 AST 相对
+  `impl_base_sha` 完全相等，focused suite 全部通过。
+- [ ] Integration tests: 全量 collected count 与实际 implementation base 相等，
+  全量 pytest 与 workflow validation 全部通过。
+- [ ] Manual verification: 核对 `impl_base_sha` 记录、文件行数和 committed diff 路径。
 
 ## 回滚方案
 

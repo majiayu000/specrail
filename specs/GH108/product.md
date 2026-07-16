@@ -28,23 +28,29 @@ complexity: trivial
 
 ## Behavior Invariants
 
-1. B-001 拆分后的 runtime ledger 测试必须保留基线中的全部 66 个
-   `test_*` 函数及其参数化案例；`pytest --collect-only` 的收集总数保持 73，
-   仅允许 node ID 的模块路径前缀因文件拆分而变化。
+1. B-001 implementation 开始时必须记录实际 `impl_base_sha`，并在任何编辑前
+   保存该基线的 runtime ledger 完整 pytest node ID multiset。拆分后的 normalized
+   node ID multiset（去除模块路径前缀）必须逐项相同；在当前 spec 基线
+   `f3251fe` 上对应 66 个 `test_*` 函数和 73 个 collected cases。若实际基线已
+   改变该测试集合，必须先停下更新 spec，不得继续套用旧计数。
 2. B-002 `tests/test_runtime_ledger_gate.py` 及本次新增的每个 runtime ledger
    测试模块必须严格少于 800 行；共享 helper 不得通过复制测试数据来换取行数下降。
 3. B-003 implementation diff 不得修改 `checks/`、`schemas/`、
    `examples/fixtures/`、`.github/workflows/` 或既有 spec packet；生产行为、fixture
    内容与 CI 命令保持不变。
-4. B-004 每个既有测试的断言语义和参数集合必须保持等价；禁止删除断言、放宽
-   期望值、增加跳过标记或把失败路径改成静默成功。
+4. B-004 每个既有测试函数（含 decorators、参数化值、函数体和断言）的
+   `ast.dump(..., include_attributes=False)` 必须与 `impl_base_sha` 中的同名函数
+   完全一致；禁止删除断言、放宽期望值、增加跳过标记或把失败路径改成静默成功。
 5. B-005 拆分后，runtime ledger focused tests、全量 pytest、SpecRail workflow
-   校验和 whitespace 检查必须全部通过，且测试总数不得低于基线 421。
+   校验和 whitespace 检查必须全部通过；全库 collected test 数必须等于实际
+   `impl_base_sha` 的 fresh 基线，不得仅用当前已知的 421 passed 作为未来下限。
 
 ## 验收标准
 
 - [ ] 所有相关测试模块均低于 800 行，且主题边界在文件名和内容中可识别。
-- [ ] 基线 66 个测试函数、73 个 collected cases、421 个全量测试均被保留。
+- [ ] 相对实际 `impl_base_sha`，normalized runtime node ID multiset、测试函数 AST
+  与全库 collected test 数均完全一致；`f3251fe` 的初始证据为 66 functions、
+  73 runtime cases、421 passed。
 - [ ] 生产代码、schema、fixture、CI 和其他 spec packet 没有改动。
 - [ ] focused tests、全量 pytest、workflow checks 与 `git diff --check` 全部通过。
 
