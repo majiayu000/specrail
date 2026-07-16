@@ -146,7 +146,7 @@ def audit_closure(
     repository = evidence.get("repository")
     if not _nonempty(repository) or not REPOSITORY_RE.fullmatch(str(repository)):
         raise ClosureAuditError("repository must use OWNER/REPO format")
-    repository = str(repository).strip()
+    repository = str(repository).strip().lower()
     pr_number = evidence.get("pr_number")
     if not _positive_int(pr_number):
         raise ClosureAuditError("pr_number must be a positive integer")

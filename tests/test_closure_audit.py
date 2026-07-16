@@ -120,6 +120,31 @@ def test_external_merge_missing_chain_returns_stable_follow_up() -> None:
     assert_schema_valid(first)
 
 
+def test_repository_identity_is_normalized_for_stable_follow_up() -> None:
+    mixed_case = compliant_evidence()
+    mixed_case["repository"] = "Example/SpecRail"
+    mixed_case["gate"] = None
+    mixed_merge = mixed_case["merge"]
+    assert isinstance(mixed_merge, dict)
+    mixed_merge["merge_path"] = "merged_by_other"
+    mixed_merge.pop("merge_dispatched_at")
+    mixed_merge.pop("merge_head_sha")
+    canonical = json.loads(json.dumps(mixed_case))
+    canonical["repository"] = "example/specrail"
+
+    mixed_result = audit_closure(
+        mixed_case, checked_at="2026-07-16T14:39:00Z"
+    )
+    canonical_result = audit_closure(
+        canonical, checked_at="2026-07-16T14:39:00Z"
+    )
+
+    assert mixed_result["repository"] == "example/specrail"
+    assert mixed_result["required_follow_up"]["repository"] == "example/specrail"  # type: ignore[index]
+    assert mixed_result["required_follow_up"]["idempotency_key"] == canonical_result["required_follow_up"]["idempotency_key"]  # type: ignore[index]
+    assert_schema_valid(mixed_result)
+
+
 def test_non_external_missing_gate_is_explicit_violation() -> None:
     evidence = compliant_evidence()
     evidence["gate"] = None
