@@ -15,20 +15,10 @@ from typing import Any
 
 SCHEMA_ANNOTATION_KEYS = {"$id", "$schema", "description", "title"}
 SUPPORTED_SCHEMA_KEYS = SCHEMA_ANNOTATION_KEYS | {
-    "additionalProperties",
-    "const",
-    "enum",
-    "exclusiveMaximum",
-    "exclusiveMinimum",
-    "items",
-    "minItems",
-    "minLength",
-    "minProperties",
-    "minimum",
-    "pattern",
-    "properties",
-    "required",
-    "type",
+    "additionalProperties", "allOf", "anyOf", "const", "else", "enum",
+    "exclusiveMaximum", "exclusiveMinimum", "if", "items", "minItems",
+    "minLength", "minProperties", "minimum", "pattern", "properties",
+    "required", "then", "type",
 }
 DECISIONS = {"allowed", "warn", "needs_human", "blocked"}
 SPEC_STATUSES = frozenset(
@@ -63,10 +53,7 @@ RUNTIME_STATE_MAPPING = {
     "waiting_ci": ("human_review", "ci_green"),
 }
 TERMINAL_BLOCKING_STATES = {
-    "abandoned",
-    "duplicate",
-    "reserved_internal",
-    "security_private",
+    "abandoned", "duplicate", "reserved_internal", "security_private",
 }
 
 
@@ -213,12 +200,16 @@ def _json_type_matches(data: Any, expected_type: str) -> bool:
     raise SpecRailError(f"unsupported JSON Schema type {expected_type!r}")
 
 
-def _schema_path(path: str, key: str) -> str:
-    return f"{path}.{key}" if path else key
-
-
 def _data_path(path: str, key: str) -> str:
     return f"{path}.{key}" if path else key
+
+
+def _schema_matches(schema: dict[str, Any], data: Any, path: str) -> bool:
+    try:
+        validate_instance(schema, data, path)
+    except SpecRailError:
+        return False
+    return True
 
 
 def validate_instance(schema: dict[str, Any], data: Any, path: str = "$") -> None:
@@ -230,9 +221,24 @@ def validate_instance(schema: dict[str, Any], data: Any, path: str = "$") -> Non
 
     unsupported = sorted(set(schema) - SUPPORTED_SCHEMA_KEYS)
     if unsupported:
-        raise SpecRailError(
-            f"{path}: unsupported JSON Schema keyword {unsupported[0]!r}"
-        )
+        raise SpecRailError(f"{path}: unsupported JSON Schema keyword {unsupported[0]!r}")
+
+    for keyword in ["allOf", "anyOf"]:
+        value = schema.get(keyword)
+        if value is not None and (not isinstance(value, list) or not value or any(not isinstance(item, dict) for item in value)):
+            raise SpecRailError(f"{path}: {keyword} must be a non-empty list of objects")
+    for keyword in ["if", "then", "else"]:
+        if keyword in schema and not isinstance(schema[keyword], dict):
+            raise SpecRailError(f"{path}: {keyword} must be an object")
+    for child in schema.get("allOf", []):
+        validate_instance(child, data, path)
+    any_of = schema.get("anyOf")
+    if any_of and not any(_schema_matches(child, data, path) for child in any_of):
+        raise SpecRailError(f"{path}: instance does not match anyOf")
+    if "if" in schema:
+        branch = "then" if _schema_matches(schema["if"], data, path) else "else"
+        if branch in schema:
+            validate_instance(schema[branch], data, path)
 
     if "type" in schema:
         expected = schema["type"]
@@ -280,11 +286,7 @@ def validate_instance(schema: dict[str, Any], data: Any, path: str = "$") -> Non
 
     if "minProperties" in schema:
         threshold = schema["minProperties"]
-        if (
-            isinstance(threshold, bool)
-            or not isinstance(threshold, int)
-            or threshold < 0
-        ):
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 0:
             raise SpecRailError(
                 f"{path}: minProperties must be a non-negative integer"
             )
@@ -331,7 +333,7 @@ def validate_instance(schema: dict[str, Any], data: Any, path: str = "$") -> Non
             if key not in data:
                 continue
             if not isinstance(child_schema, dict):
-                raise SpecRailError(f"{_schema_path(path, key)}: property schema must be an object")
+                raise SpecRailError(f"{_data_path(path, key)}: property schema must be an object")
             validate_instance(child_schema, data[key], _data_path(path, key))
 
         additional = schema.get("additionalProperties", True)

@@ -35,29 +35,8 @@ def issue_schema() -> dict[str, Any]:
     )
 
 
-def condition_matches(condition: dict[str, Any], evidence: dict[str, Any]) -> bool:
-    alternatives = condition.get("anyOf")
-    if isinstance(alternatives, list):
-        return any(
-            condition_matches(item, evidence)
-            for item in alternatives
-            if isinstance(item, dict)
-        )
-    try:
-        validate_instance(condition, evidence)
-    except SpecRailError:
-        return False
-    return True
-
-
 def validate_issue_evidence(evidence: dict[str, Any]) -> None:
-    schema = issue_schema()
-    conditions = schema.pop("allOf")
-    validate_instance(schema, evidence)
-    for rule in conditions:
-        branch = "then" if condition_matches(rule["if"], evidence) else "else"
-        if branch in rule:
-            validate_instance(rule[branch], evidence)
+    validate_instance(issue_schema(), evidence)
 
 
 def ordinary_evidence(

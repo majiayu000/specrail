@@ -92,6 +92,35 @@ def test_validate_instance_supports_local_schema_subset() -> None:
     )
 
 
+def test_validate_instance_supports_schema_composition_and_conditionals() -> None:
+    schema = {
+        "allOf": [
+            {
+                "anyOf": [
+                    {"required": ["mode"]},
+                    {"required": ["legacy"]},
+                ]
+            },
+            {
+                "if": {
+                    "properties": {"mode": {"const": "sensitive"}},
+                    "required": ["mode"],
+                },
+                "then": {"required": ["approval"]},
+                "else": {"properties": {"approval": {"const": None}}},
+            },
+        ]
+    }
+
+    validate_instance(schema, {"mode": "sensitive", "approval": "maintainer"})
+    validate_instance(schema, {"legacy": True})
+
+    with pytest.raises(SpecRailError, match="approval: missing required field"):
+        validate_instance(schema, {"mode": "sensitive"})
+    with pytest.raises(SpecRailError, match="expected const None"):
+        validate_instance(schema, {"legacy": True, "approval": "forged"})
+
+
 def test_validate_instance_supports_min_properties_for_approved_spec_revisions() -> None:
     approved_spec_schema = pr_review_gate_schema()["properties"]["approved_spec"]
     revisions_schema = approved_spec_schema["properties"]["spec_revisions"]
