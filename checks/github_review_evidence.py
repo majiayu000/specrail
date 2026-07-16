@@ -9,6 +9,7 @@ from github_evidence_common import EvidenceError
 
 
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
+THREAD_ROLE_PREFIX = "thread:"
 
 
 def _read_json_file(path: str, field: str) -> Any:
@@ -120,6 +121,7 @@ def _resolver_role_map(payload: Any) -> dict[str, dict[str, Any]]:
             roles[login.strip()] = _normalize_resolver_entry(
                 value, f"resolver role map {login.strip()}"
             )
+        _add_thread_resolver_roles(payload, roles)
         return roles
 
     if isinstance(source, list):
@@ -132,8 +134,42 @@ def _resolver_role_map(payload: Any) -> dict[str, dict[str, Any]]:
             roles[login.strip()] = _normalize_resolver_entry(
                 lane, f"resolver role lane_roster item #{index}"
             )
+        _add_thread_resolver_roles(payload, roles)
         return roles
     raise EvidenceError("resolver role map must be an object or lane roster list")
+
+
+def _add_thread_resolver_roles(
+    payload: Any,
+    roles: dict[str, dict[str, Any]],
+) -> None:
+    if not isinstance(payload, dict) or "thread_resolver_roles" not in payload:
+        return
+    thread_roles = payload["thread_resolver_roles"]
+    if not isinstance(thread_roles, dict):
+        raise EvidenceError("thread_resolver_roles must be an object")
+    for thread_id, value in thread_roles.items():
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise EvidenceError(
+                "thread_resolver_roles thread id must be a non-empty string"
+            )
+        normalized_id = thread_id.strip()
+        if not isinstance(value, dict):
+            raise EvidenceError(
+                f"thread_resolver_roles {normalized_id} must be an object"
+            )
+        resolver_login = value.get("resolver_login")
+        if not isinstance(resolver_login, str) or not resolver_login.strip():
+            raise EvidenceError(
+                f"thread_resolver_roles {normalized_id}.resolver_login "
+                "must be a non-empty string"
+            )
+        normalized = _normalize_resolver_entry(
+            value,
+            f"thread_resolver_roles {normalized_id}",
+        )
+        normalized["resolver_login"] = resolver_login.strip()
+        roles[f"{THREAD_ROLE_PREFIX}{normalized_id}"] = normalized
 
 
 def load_resolver_role_map(path: str | None) -> dict[str, dict[str, Any]]:
@@ -179,8 +215,22 @@ def normalize_review_threads(
             thread["resolved_by"] = resolver
         role = _resolver_role(item)
         metadata: dict[str, Any] = {}
-        if resolver and resolver_roles and resolver in resolver_roles:
-            raw_metadata = resolver_roles[resolver]
+        if resolver and resolver_roles:
+            raw_metadata = None
+            if isinstance(thread_id, str) and thread_id.strip():
+                thread_metadata = resolver_roles.get(
+                    f"{THREAD_ROLE_PREFIX}{thread_id.strip()}"
+                )
+                if (
+                    isinstance(thread_metadata, dict)
+                    and thread_metadata.get("resolver_login") == resolver
+                ):
+                    raw_metadata = thread_metadata
+            if raw_metadata is None:
+                raw_metadata = resolver_roles.get(resolver)
+        else:
+            raw_metadata = None
+        if raw_metadata is not None:
             metadata = (
                 {"resolver_role": raw_metadata}
                 if isinstance(raw_metadata, str)

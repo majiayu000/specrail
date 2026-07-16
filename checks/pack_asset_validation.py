@@ -12,6 +12,7 @@ from specrail_lib import SpecRailError
 SPEC_SCHEMA_FILES = frozenset(
     {
         "adoption_matrix.schema.json",
+        "closure_audit_result.schema.json",
         "duplicate_work_evidence.schema.json",
         "evaluation_result.schema.json",
         "flow_manifest.schema.json",

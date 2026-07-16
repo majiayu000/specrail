@@ -21,7 +21,9 @@ from github_pr_evidence import (  # noqa: E402
     build_human_authorization,
     collect_issue_view,
     collect_evidence,
+    load_resolver_role_map,
     normalize_issue_reference,
+    normalize_review_threads,
     parse_github_repo,
     references_partial_issue,
     run_gh_json,
@@ -821,6 +823,108 @@ def test_build_evidence_maps_resolver_role_from_lane_roster() -> None:
     assert evidence["review_threads"][0]["original_author"] == "reviewer"
     assert evidence["review_threads"][0]["original_comment_id"] == "PRRC_kwDOExampleRoot"
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
+
+
+def test_resolver_role_map_supports_thread_specific_lane_override(
+    tmp_path: Path,
+) -> None:
+    payload = threads_payload()
+    nodes = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]  # type: ignore[index]
+    assert isinstance(nodes, list)
+    first = nodes[0]
+    assert isinstance(first, dict)
+    first.pop("resolverRole")
+    second = deepcopy(first)
+    second["id"] = "PRRT_kwDOSecond"
+    second["comments"]["nodes"][0]["id"] = "PRRC_kwDOSecondRoot"  # type: ignore[index]
+    second["comments"]["nodes"][0]["author"] = {"login": "bot"}  # type: ignore[index]
+    nodes.append(second)
+    role_map = tmp_path / "resolver-map.json"
+    role_map.write_text(
+        json.dumps(
+            {
+                "resolver_roles": {
+                    "reviewer": {
+                        "resolver_role": "reviewer_lane",
+                        "lane_id": "reviewer-root",
+                    }
+                },
+                "thread_resolver_roles": {
+                    "PRRT_kwDOSecond": {
+                        "resolver_login": "reviewer",
+                        "resolver_role": "reviewer_lane",
+                        "lane_id": "reviewer-successor",
+                        "successor_of": "bot-root",
+                        "re_review_artifact_id": "current-clean",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    normalized = normalize_review_threads(
+        payload,
+        load_resolver_role_map(str(role_map)),
+    )
+
+    assert normalized[0]["lane_id"] == "reviewer-root"
+    assert normalized[1]["lane_id"] == "reviewer-successor"
+    assert normalized[1]["successor_of"] == "bot-root"
+    assert normalized[1]["re_review_artifact_id"] == "current-clean"
+
+    role_map.write_text(
+        json.dumps(
+            {
+                "resolver_roles": {
+                    "reviewer": {
+                        "resolver_role": "reviewer_lane",
+                        "lane_id": "reviewer-root",
+                    }
+                },
+                "thread_resolver_roles": {
+                    "PRRT_kwDOSecond": {
+                        "resolver_login": "someone-else",
+                        "resolver_role": "human",
+                        "authorized_human_maintainer": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mismatched = normalize_review_threads(
+        payload,
+        load_resolver_role_map(str(role_map)),
+    )
+
+    assert mismatched[1]["resolver_role"] == "reviewer_lane"
+    assert mismatched[1]["lane_id"] == "reviewer-root"
+    assert "authorized_human_maintainer" not in mismatched[1]
+
+
+def test_thread_specific_resolver_override_requires_resolver_login(
+    tmp_path: Path,
+) -> None:
+    role_map = tmp_path / "resolver-map.json"
+    role_map.write_text(
+        json.dumps(
+            {
+                "resolver_roles": {},
+                "thread_resolver_roles": {
+                    "PRRT_kwDOExample": {
+                        "resolver_role": "human",
+                        "authorized_human_maintainer": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EvidenceError, match="resolver_login"):
+        load_resolver_role_map(str(role_map))
 
 
 @pytest.mark.parametrize(

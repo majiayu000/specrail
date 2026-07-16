@@ -69,6 +69,10 @@ def test_required_files_include_schema_validation_runtime_dependency() -> None:
     assert "checks/schema_validation.py" in REQUIRED_FILES
 
 
+def test_required_files_include_closure_audit() -> None:
+    assert "checks/closure_audit.py" in REQUIRED_FILES
+
+
 def test_trusted_pack_asset_validation_ignores_target_helper(tmp_path: Path) -> None:
     target = tmp_path / "target"
     shutil.copytree(

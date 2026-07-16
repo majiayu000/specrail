@@ -57,6 +57,7 @@ checks/github_issue_evidence.py
 checks/github_pr_evidence.py
 checks/review_json_gate.py
 checks/runtime_ledger_gate.py
+checks/closure_audit.py
 .github/workflows/workflow-check.yml
 ```
 
@@ -126,6 +127,18 @@ python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 
 `checks/github_pr_evidence.py` is a read-only collector for GitHub CLI output.
 `checks/pr_gate.py` owns the offline merge-readiness decision.
+
+After a merge, audit that the allowed gate query, merge dispatch, and confirmed
+remote merge all refer to the final head and satisfy `gate < dispatch <= merged`:
+
+```sh
+python3 checks/closure_audit.py --repo . --evidence closure-evidence.json --json
+```
+
+The closure audit is offline and advisory-only. It performs no GitHub writes,
+returns `0` for a compliant chain, `1` for a schema-valid violation, and `2`
+for malformed input. Violations include a stable `required_follow_up` payload
+that a consumer may persist or route without granting the audit write access.
 
 Validate an optional local runtime checkpoint for long agent runs:
 

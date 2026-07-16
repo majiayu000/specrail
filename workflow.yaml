@@ -73,6 +73,7 @@ artifacts:
   task_plan: specs/GH{issue_number}/tasks.md
   impl_branch: "{agent}/gh{issue_number}-{slug}"
   agent_review: artifacts/review/pr-{pr_number}.json
+  closure_audit_result: artifacts/closure/pr-{pr_number}.json
   triage_result: artifacts/triage/issue-{issue_number}.json
 
 action_policy:
