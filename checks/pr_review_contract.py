@@ -63,6 +63,8 @@ def _verified_reviewer_resolver(
 ) -> bool:
     resolved_by = thread.get("resolved_by")
     lane_id = thread.get("lane_id")
+    if not _nonempty(lane_id):
+        return False
     roster = review_evidence.get("lane_roster", [])
     current_ids = review_evidence.get("current_artifact_ids", [])
     raw_artifacts = review_evidence.get("artifacts", [])
@@ -72,7 +74,7 @@ def _verified_reviewer_resolver(
             continue
         if lane.get("producer_identity") != resolved_by:
             continue
-        if lane_id is not None and lane.get("lane_id") != lane_id:
+        if lane.get("lane_id") != lane_id:
             continue
         if not lane.get("successor_of"):
             return True

@@ -155,14 +155,15 @@ def normalize_review_threads(
             thread["resolved_by"] = resolver
         role = _resolver_role(item)
         metadata: dict[str, Any] = {}
-        if not role and resolver and resolver_roles and resolver in resolver_roles:
+        if resolver and resolver_roles and resolver in resolver_roles:
             raw_metadata = resolver_roles[resolver]
             metadata = (
                 {"resolver_role": raw_metadata}
                 if isinstance(raw_metadata, str)
                 else dict(raw_metadata)
             )
-            role = metadata.get("resolver_role")
+            if not role:
+                role = metadata.get("resolver_role")
         if role:
             thread["resolver_role"] = role
         for key in [

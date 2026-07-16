@@ -47,6 +47,16 @@ def test_review_contract_requires_exact_self_review_pr_scope() -> None:
     assert "self_review_authorization.scope must bind the same PR and head_sha" in reasons
 
 
+def test_review_contract_requires_resolver_lane_proof() -> None:
+    evidence = _pr_evidence("pr-clean-authorized.json")
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    thread.pop("lane_id")  # type: ignore[union-attr]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
 def test_runtime_ledger_gate_blocks_merge_ready_without_review_source() -> None:
     checkpoint = clean_checkpoint()
     del checkpoint["items"][0]["review"]["review_source"]  # type: ignore[index]

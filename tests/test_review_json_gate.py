@@ -19,6 +19,7 @@ from review_json_gate import evaluate_review_gate  # noqa: E402
 from pr_review_contract import evaluate_review_contract  # noqa: E402
 from review_result_semantics import (  # noqa: E402
     ReviewSemanticError,
+    evaluate_review_evidence,
     load_review_manifest,
     validate_review_artifact,
 )
@@ -633,6 +634,47 @@ def test_review_manifest_blocks_concurrent_clean_and_blocking_verdicts(tmp_path:
 
     assert any("verdict is not merge-ready" in item for item in result["blocking_reasons"])
     assert any("blocking current-head finding" in item for item in result["blocking_reasons"])
+
+
+def test_review_manifest_rejects_multiple_current_head_terminal_artifacts(
+    tmp_path: Path,
+) -> None:
+    manifest_path = write_review_manifest(
+        tmp_path,
+        [
+            clean_terminal_artifact(lane="reviewer-1", producer="agent-reviewer-1"),
+            clean_terminal_artifact(
+                artifact_id="current-clean-2",
+                lane="reviewer-2",
+                producer="agent-reviewer-2",
+            ),
+        ],
+    )
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert "review manifest has multiple terminal artifacts for the current head" in result["errors"]
+
+
+def test_embedded_review_evidence_blocks_non_object_artifact() -> None:
+    result = evaluate_review_evidence(
+        {
+            "pr": 489,
+            "head_sha": "a" * 40,
+            "errors": [],
+            "blocking_reasons": [],
+            "artifacts": [None],
+        },
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("review artifact must be an object" in item for item in result["errors"])
 
 
 def test_review_manifest_rejects_artifact_path_traversal(tmp_path: Path) -> None:

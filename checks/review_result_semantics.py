@@ -365,6 +365,8 @@ def load_review_manifest(
     ]
     if not current:
         errors.append("review manifest has no terminal artifact for the current head")
+    elif len(current) > 1:
+        errors.append("review manifest has multiple terminal artifacts for the current head")
 
     stale_findings: dict[tuple[str, str], dict[str, Any]] = {}
     required_carry: set[tuple[str, str]] = set()
@@ -491,6 +493,8 @@ def evaluate_review_evidence(
         for index, artifact in enumerate(artifacts):
             result = validate_review_artifact(artifact, expected_pr=expected_pr)
             errors.extend(f"review_evidence.artifacts[{index}]: {item}" for item in result["errors"])
+            if not isinstance(artifact, dict):
+                continue
             if artifact.get("head_sha") == expected_head_sha and artifact.get("status") in TERMINAL_STATUSES:
                 current += 1
                 blockers.extend(result["blocking_reasons"])

@@ -63,6 +63,7 @@
       "is_resolved": true,
       "resolved_by": "reviewer-1",
       "resolver_role": "reviewer_lane",
+      "lane_id": "merge-reviewer-2",
       "url": "https://example.invalid/resolved-thread"
     }
   ],

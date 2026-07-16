@@ -136,6 +136,15 @@ def clean_review_evidence() -> dict[str, object]:
     }
 
 
+def reviewer_resolver_roles() -> dict[str, dict[str, str]]:
+    return {
+        "reviewer": {
+            "resolver_role": "reviewer_lane",
+            "lane_id": "reviewer-1",
+        }
+    }
+
+
 def base_sha() -> str:
     return "b" * 40
 
@@ -502,6 +511,7 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
         },
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
+        resolver_roles=reviewer_resolver_roles(),
     )
 
     assert evidence["pr"] == 10
@@ -544,6 +554,7 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
                 "actionable": True,
                 "resolved_by": "reviewer",
             "resolver_role": "reviewer_lane",
+            "lane_id": "reviewer-1",
         }
     ]
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
@@ -580,6 +591,7 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec(
         {"actor": "user", "source": "chat"},
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
+        resolver_roles=reviewer_resolver_roles(),
         repo=ROOT,
         config=config,
         repository="majiayu000/specrail",
@@ -704,6 +716,7 @@ def test_build_evidence_records_other_closing_issues_without_reclassifying_expec
         {"actor": "user", "source": "chat"},
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
+        resolver_roles=reviewer_resolver_roles(),
         expected_issue=671,
         issue_payload={
             "number": 671,
@@ -797,10 +810,11 @@ def test_build_evidence_maps_resolver_role_from_lane_roster() -> None:
         },
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
-        resolver_roles={"reviewer": "reviewer_lane"},
+        resolver_roles=reviewer_resolver_roles(),
     )
 
     assert evidence["review_threads"][0]["resolver_role"] == "reviewer_lane"
+    assert evidence["review_threads"][0]["lane_id"] == "reviewer-1"
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
 
 
@@ -810,6 +824,7 @@ def test_build_evidence_without_authorization_needs_human() -> None:
         threads_payload(),
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
+        resolver_roles=reviewer_resolver_roles(),
     )
 
     assert "human_authorization" not in evidence
@@ -830,6 +845,7 @@ def test_build_evidence_can_record_merge_dispatch_ordering() -> None:
         "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
+        resolver_roles=reviewer_resolver_roles(),
     )
 
     assert evidence["merge_dispatched_at"] == "2026-07-04T00:00:10Z"
@@ -878,6 +894,11 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
     )
     fake_gh.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    resolver_map = tmp_path / "resolver-map.json"
+    resolver_map.write_text(
+        json.dumps({"reviewer": reviewer_resolver_roles()["reviewer"]}),
+        encoding="utf-8",
+    )
 
     result = subprocess.run(
         [
@@ -897,6 +918,8 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
             "independent_lane",
             "--review-manifest",
             "examples/fixtures/review-manifest-pr10.json",
+            "--resolver-role-map",
+            str(resolver_map),
             "--json",
         ],
         cwd=ROOT,

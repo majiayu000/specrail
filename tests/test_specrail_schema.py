@@ -311,6 +311,26 @@ def test_review_result_schema_requires_paired_round_fields(missing: str) -> None
         validate_instance(review_result_schema(), review)
 
 
+@pytest.mark.parametrize("status", ["resolved", "obsolete"])
+def test_review_result_schema_requires_prior_closure_evidence(status: str) -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review["prior_findings"] = [
+        {
+            "id": "prior-finding",
+            "source_head_sha": "a" * 40,
+            "summary": "Closed without proof.",
+            "status": status,
+        }
+    ]
+
+    with pytest.raises(InstanceMismatch, match="closure_evidence.*missing required field"):
+        validate_instance(review_result_schema(), review)
+
+
 def test_review_result_schema_rejects_legacy_source_only_artifact() -> None:
     legacy = {
         "verdict": "REJECT",
