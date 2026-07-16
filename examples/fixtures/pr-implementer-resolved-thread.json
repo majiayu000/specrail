@@ -59,6 +59,8 @@
     {
       "is_outdated": false,
       "is_resolved": true,
+      "original_author": "reviewer-1",
+      "original_comment_id": "PRRC_fixture-root",
       "resolved_by": "implementer-lane",
       "resolver_role": "implementer",
       "url": "https://example.invalid/implementer-resolved-thread"

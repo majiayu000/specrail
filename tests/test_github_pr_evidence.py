@@ -85,6 +85,7 @@ def threads_payload() -> dict[str, object]:
                                 "comments": {
                                     "nodes": [
                                         {
+                                            "id": "PRRC_kwDOExampleRoot",
                                             "url": "https://github.com/example/specrail/pull/10#discussion_r1",
                                             "author": {"login": "reviewer"},
                                         }
@@ -549,10 +550,12 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
         {
             "id": "PRRT_kwDOExample",
             "url": "https://github.com/example/specrail/pull/10#discussion_r1",
-                "is_resolved": True,
-                "is_outdated": False,
-                "actionable": True,
-                "resolved_by": "reviewer",
+            "is_resolved": True,
+            "is_outdated": False,
+            "actionable": True,
+            "original_comment_id": "PRRC_kwDOExampleRoot",
+            "original_author": "reviewer",
+            "resolved_by": "reviewer",
             "resolver_role": "reviewer_lane",
             "lane_id": "reviewer-1",
         }
@@ -815,7 +818,34 @@ def test_build_evidence_maps_resolver_role_from_lane_roster() -> None:
 
     assert evidence["review_threads"][0]["resolver_role"] == "reviewer_lane"
     assert evidence["review_threads"][0]["lane_id"] == "reviewer-1"
+    assert evidence["review_threads"][0]["original_author"] == "reviewer"
+    assert evidence["review_threads"][0]["original_comment_id"] == "PRRC_kwDOExampleRoot"
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
+
+
+@pytest.mark.parametrize(
+    ("root_mutation", "message"),
+    [
+        ({"id": None}, "requires id"),
+        ({"author": None}, "requires author.login"),
+    ],
+)
+def test_build_evidence_requires_root_comment_identity(
+    root_mutation: dict[str, object],
+    message: str,
+) -> None:
+    payload = threads_payload()
+    root = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"]["nodes"][0]  # type: ignore[index]
+    root.update(root_mutation)  # type: ignore[union-attr]
+
+    with pytest.raises(EvidenceError, match=message):
+        build_evidence(
+            pr_payload(),
+            payload,
+            review_source="independent_lane",
+            review_evidence=clean_review_evidence(),
+            resolver_roles=reviewer_resolver_roles(),
+        )
 
 
 def test_build_evidence_without_authorization_needs_human() -> None:

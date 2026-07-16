@@ -76,6 +76,16 @@ def test_review_json_gate_allows_valid_review() -> None:
     assert "body includes ## Verdict" in result["satisfied"]
 
 
+def test_review_json_gate_blocks_clean_verdict_with_findings() -> None:
+    review = load_review("review-valid.json")
+    review["verdict"] = "clean"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert "clean verdict requires zero findings" in result["reasons"]
+
+
 def test_review_json_gate_blocks_invalid_line() -> None:
     result = evaluate_review_gate(load_review("review-invalid-line.json"), load_diff())
 
@@ -488,6 +498,34 @@ def test_review_manifest_allows_clean_current_head(tmp_path: Path) -> None:
 
     assert result["errors"] == []
     assert result["blocking_reasons"] == []
+
+
+def test_review_manifest_blocks_pending_current_head_alongside_clean_terminal(
+    tmp_path: Path,
+) -> None:
+    pending = clean_terminal_artifact(
+        artifact_id="current-pending",
+        lane="reviewer-pending",
+        producer="agent-reviewer-pending",
+    )
+    pending["status"] = "pending"
+    pending["review_completed_at"] = None
+    manifest_path = write_review_manifest(
+        tmp_path,
+        [pending, clean_terminal_artifact()],
+    )
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any(
+        "review status is not completed: pending" in item
+        for item in result["blocking_reasons"]
+    )
 
 
 @pytest.mark.parametrize(

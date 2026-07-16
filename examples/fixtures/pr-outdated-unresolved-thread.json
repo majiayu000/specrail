@@ -59,6 +59,8 @@
     {
       "is_outdated": true,
       "is_resolved": false,
+      "original_author": "reviewer-1",
+      "original_comment_id": "PRRC_fixture-root",
       "resolved_by": "reviewer-1",
       "resolver_role": "reviewer_lane",
       "url": "https://example.invalid/outdated-unresolved-thread"

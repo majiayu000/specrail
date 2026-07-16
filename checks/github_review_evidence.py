@@ -43,6 +43,27 @@ def _first_comment_url(thread: dict[str, Any]) -> str | None:
     return None
 
 
+def _first_comment_identity(thread: dict[str, Any], index: int) -> tuple[str, str]:
+    comments = thread.get("comments")
+    if not isinstance(comments, dict) or not isinstance(comments.get("nodes"), list):
+        raise EvidenceError(f"review thread item #{index} requires root comment evidence")
+    nodes = comments["nodes"]
+    if not nodes or not isinstance(nodes[0], dict):
+        raise EvidenceError(f"review thread item #{index} requires a root comment")
+    root = nodes[0]
+    comment_id = root.get("id")
+    author = root.get("author")
+    if not isinstance(comment_id, str) or not comment_id.strip():
+        raise EvidenceError(f"review thread item #{index} root comment requires id")
+    if (
+        not isinstance(author, dict)
+        or not isinstance(author.get("login"), str)
+        or not author["login"].strip()
+    ):
+        raise EvidenceError(f"review thread item #{index} root comment requires author.login")
+    return comment_id.strip(), author["login"].strip()
+
+
 def _resolver_login(thread: dict[str, Any]) -> str | None:
     for key in ["resolvedBy", "resolved_by"]:
         value = thread.get(key)
@@ -150,6 +171,9 @@ def normalize_review_threads(
         url = _first_comment_url(item)
         if url:
             thread["url"] = url
+        original_comment_id, original_author = _first_comment_identity(item, index)
+        thread["original_comment_id"] = original_comment_id
+        thread["original_author"] = original_author
         resolver = _resolver_login(item)
         if resolver:
             thread["resolved_by"] = resolver

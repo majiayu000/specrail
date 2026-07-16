@@ -358,10 +358,13 @@ def load_review_manifest(
                 f"duplicate terminal artifacts for lane {lane_id} at head {head_sha}"
             )
 
+    current_head = [
+        item for item in artifacts if item.get("head_sha") == expected_head_sha
+    ]
     current = [
         item
-        for item in artifacts
-        if item.get("head_sha") == expected_head_sha and item.get("status") in TERMINAL_STATUSES
+        for item in current_head
+        if item.get("status") in TERMINAL_STATUSES
     ]
     if not current:
         errors.append("review manifest has no terminal artifact for the current head")
@@ -410,9 +413,10 @@ def load_review_manifest(
     blockers: list[str] = []
     review_sources: set[str] = set()
     completed_times: list[str] = []
-    for artifact in current:
+    for artifact in current_head:
         result = validate_review_artifact(artifact, expected_pr=expected_pr, expected_head_sha=expected_head_sha)
         blockers.extend(result["blocking_reasons"])
+    for artifact in current:
         if artifact.get("human_final_review_required") != manifest.get(
             "human_final_review_required"
         ):

@@ -57,6 +57,16 @@ def test_review_contract_requires_resolver_lane_proof() -> None:
     assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
 
 
+def test_review_contract_rejects_unrelated_root_reviewer_resolver() -> None:
+    evidence = _pr_evidence("pr-clean-authorized.json")
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    thread["original_author"] = "different-reviewer"  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
 def test_runtime_ledger_gate_blocks_merge_ready_without_review_source() -> None:
     checkpoint = clean_checkpoint()
     del checkpoint["items"][0]["review"]["review_source"]  # type: ignore[index]

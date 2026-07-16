@@ -29,6 +29,13 @@
     {
       "if": {"required": ["review_mode"]},
       "then": {"required": ["review_round"]}
+    },
+    {
+      "if": {
+        "properties": {"review_completed_at": {"type": "null"}},
+        "required": ["review_completed_at"]
+      },
+      "then": {"properties": {"status": {"const": "pending"}}}
     }
   ],
   "properties": {

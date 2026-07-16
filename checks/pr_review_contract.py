@@ -62,8 +62,14 @@ def _verified_reviewer_resolver(
     review_evidence: dict[str, Any],
 ) -> bool:
     resolved_by = thread.get("resolved_by")
+    original_author = thread.get("original_author")
+    original_comment_id = thread.get("original_comment_id")
     lane_id = thread.get("lane_id")
-    if not _nonempty(lane_id):
+    if (
+        not _nonempty(lane_id)
+        or not _nonempty(original_author)
+        or not _nonempty(original_comment_id)
+    ):
         return False
     roster = review_evidence.get("lane_roster", [])
     current_ids = review_evidence.get("current_artifact_ids", [])
@@ -77,7 +83,17 @@ def _verified_reviewer_resolver(
         if lane.get("lane_id") != lane_id:
             continue
         if not lane.get("successor_of"):
-            return True
+            return resolved_by == original_author
+        original_lanes = [
+            candidate
+            for candidate in roster
+            if isinstance(candidate, dict)
+            and not candidate.get("successor_of")
+            and candidate.get("producer_identity") == original_author
+        ]
+        if len(original_lanes) != 1:
+            return False
+        original_lane_id = original_lanes[0].get("lane_id")
         re_review_artifact_id = thread.get("re_review_artifact_id")
         verified_re_review = any(
             isinstance(artifact, dict)
@@ -90,7 +106,7 @@ def _verified_reviewer_resolver(
             for artifact in artifacts
         )
         return (
-            lane.get("successor_of") == thread.get("successor_of")
+            original_lane_id == thread.get("successor_of")
             and re_review_artifact_id in current_ids
             and verified_re_review
         )

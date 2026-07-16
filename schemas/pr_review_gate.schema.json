@@ -309,7 +309,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["is_resolved", "is_outdated", "resolved_by", "resolver_role"],
+        "required": ["is_resolved", "is_outdated", "resolved_by", "resolver_role", "original_author", "original_comment_id"],
         "additionalProperties": true,
         "properties": {
           "id": {
@@ -329,6 +329,14 @@
             "type": "boolean"
           },
           "resolved_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "original_author": {
+            "type": "string",
+            "minLength": 1
+          },
+          "original_comment_id": {
             "type": "string",
             "minLength": 1
           },

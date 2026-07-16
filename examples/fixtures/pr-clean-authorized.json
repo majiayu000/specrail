@@ -59,6 +59,8 @@
     {
       "is_outdated": false,
       "is_resolved": true,
+      "original_author": "reviewer-1",
+      "original_comment_id": "PRRC_fixture-root",
       "resolved_by": "reviewer-1",
       "resolver_role": "reviewer_lane",
       "lane_id": "merge-reviewer-2",

@@ -52,9 +52,9 @@ query SpecRailReviewThreads($owner: String!, $name: String!, $number: Int!) {
         nodes {
           id isResolved isOutdated
           resolvedBy { login }
-          comments(first: 5) {
+          comments(first: 1) {
             nodes {
-              url author { login }
+              id url author { login }
             }
           }
         }

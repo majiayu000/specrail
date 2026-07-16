@@ -551,6 +551,11 @@ def evaluate_review_gate(review: dict[str, Any], diff_text: str) -> dict[str, An
     reasons.extend(top_reasons)
     semantic_result = validate_review_artifact(review)
     reasons.extend(semantic_result["errors"])
+    reasons.extend(
+        item
+        for item in semantic_result["blocking_reasons"]
+        if item == "clean verdict requires zero findings"
+    )
     if semantic_result["valid"]:
         satisfied.append("review artifact v2 semantics valid")
     reasons.extend(_find_forbidden_language(review))
