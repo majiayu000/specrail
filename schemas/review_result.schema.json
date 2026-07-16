@@ -21,6 +21,16 @@
     "comments"
   ],
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"required": ["review_round"]},
+      "then": {"required": ["review_mode"]}
+    },
+    {
+      "if": {"required": ["review_mode"]},
+      "then": {"required": ["review_round"]}
+    }
+  ],
   "properties": {
     "artifact_id": {"type": "string", "minLength": 1},
     "pr": {"type": "integer", "minimum": 1},

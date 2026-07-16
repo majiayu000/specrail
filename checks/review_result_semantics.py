@@ -367,6 +367,7 @@ def load_review_manifest(
         errors.append("review manifest has no terminal artifact for the current head")
 
     stale_findings: dict[tuple[str, str], dict[str, Any]] = {}
+    required_carry: set[tuple[str, str]] = set()
     for artifact in artifacts:
         source_head = artifact.get("head_sha")
         if source_head == expected_head_sha:
@@ -377,6 +378,17 @@ def load_review_manifest(
                 if key in stale_findings and stale_findings[key] != finding:
                     errors.append(f"conflicting stale finding definition: {key[0]} at {key[1]}")
                 stale_findings[key] = finding
+                required_carry.add(key)
+        for finding in artifact.get("prior_findings", []):
+            if (
+                isinstance(finding, dict)
+                and finding.get("status") == "unresolved"
+                and _nonempty(finding.get("id"))
+                and _nonempty(finding.get("source_head_sha"))
+            ):
+                required_carry.add(
+                    (str(finding["id"]), str(finding["source_head_sha"]))
+                )
 
     carried: dict[tuple[str, str], dict[str, Any]] = {}
     for artifact in current:
@@ -386,10 +398,10 @@ def load_review_manifest(
                 if key in carried and carried[key] != finding:
                     errors.append(f"conflicting prior finding carry-forward: {key[0]} at {key[1]}")
                 carried[key] = finding
-    missing_carry = sorted(set(stale_findings) - set(carried))
+    missing_carry = sorted(required_carry - set(carried))
     for finding_id, source_head in missing_carry:
         errors.append(f"missing prior finding carry-forward: {finding_id} from {source_head}")
-    extra_carry = sorted(set(carried) - set(stale_findings))
+    extra_carry = sorted(set(carried) - required_carry)
     for finding_id, source_head in extra_carry:
         errors.append(f"prior finding has no manifest source artifact: {finding_id} from {source_head}")
 

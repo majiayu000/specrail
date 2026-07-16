@@ -576,6 +576,34 @@ def test_review_manifest_requires_stale_finding_carry_forward(tmp_path: Path) ->
     assert any("missing prior finding carry-forward" in item for item in result["errors"])
 
 
+def test_review_manifest_requires_transitive_unresolved_prior_finding(
+    tmp_path: Path,
+) -> None:
+    stale = clean_terminal_artifact(head_sha="b" * 40)
+    stale["prior_findings"] = [
+        {
+            "id": "finding-transitive",
+            "source_head_sha": "c" * 40,
+            "summary": "Still unresolved from an omitted source artifact.",
+            "status": "unresolved",
+        }
+    ]
+    current = clean_terminal_artifact()
+    manifest_path = write_review_manifest(tmp_path, [stale, current])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any(
+        "missing prior finding carry-forward: finding-transitive" in item
+        for item in result["errors"]
+    )
+
+
 def test_review_manifest_blocks_concurrent_clean_and_blocking_verdicts(tmp_path: Path) -> None:
     blocking = clean_terminal_artifact(
         artifact_id="current-blocking",

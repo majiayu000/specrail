@@ -297,6 +297,20 @@ def test_review_result_v2_fixture_validates_against_schema() -> None:
     validate_instance(review_result_schema(), review)
 
 
+@pytest.mark.parametrize("missing", ["review_round", "review_mode"])
+def test_review_result_schema_requires_paired_round_fields(missing: str) -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review.update({"review_round": 2, "review_mode": "resumed"})
+    review.pop(missing)
+
+    with pytest.raises(InstanceMismatch, match=rf"{missing}.*missing required field"):
+        validate_instance(review_result_schema(), review)
+
+
 def test_review_result_schema_rejects_legacy_source_only_artifact() -> None:
     legacy = {
         "verdict": "REJECT",

@@ -1,11 +1,50 @@
 from __future__ import annotations
 
+import json
+
 from runtime_ledger_test_support import (  # noqa: E402
     ROOT,
     _fixture_checkpoint,
     clean_checkpoint,
 )
+from pr_review_contract import evaluate_review_contract  # noqa: E402
 from runtime_ledger_gate import evaluate_checkpoint  # noqa: E402
+
+
+def _pr_evidence(name: str) -> dict[str, object]:
+    return json.loads(
+        (ROOT / "examples" / "fixtures" / name).read_text(encoding="utf-8")
+    )
+
+
+def test_review_contract_rejects_forged_non_actionable_thread_override() -> None:
+    evidence = _pr_evidence("pr-clean-authorized.json")
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    thread.update(  # type: ignore[union-attr]
+        {
+            "is_resolved": True,
+            "actionable": False,
+            "resolved_by": "implementer",
+            "resolver_role": "implementer",
+        }
+    )
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("forbidden implementer" in reason for reason in reasons)
+
+
+def test_review_contract_requires_exact_self_review_pr_scope() -> None:
+    evidence = _pr_evidence("pr-self-review-unauthorized.json")
+    evidence["self_review_authorization"] = {
+        "actor": "maintainer",
+        "source": "chat",
+        "scope": f"PR #1718 exact head {evidence['head_sha']}",
+    }
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert "self_review_authorization.scope must bind the same PR and head_sha" in reasons
 
 
 def test_runtime_ledger_gate_blocks_merge_ready_without_review_source() -> None:

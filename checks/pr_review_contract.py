@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import re
 from typing import Any
 
 from review_result_semantics import (
@@ -31,6 +32,12 @@ def _parse_timestamp(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else None
+
+
+def _scope_binds_pr(scope: Any, pr: Any) -> bool:
+    if not _nonempty(scope) or not isinstance(pr, int) or isinstance(pr, bool):
+        return False
+    return re.search(rf"\bPR\s*#?\s*{pr}(?!\d)", str(scope), re.IGNORECASE) is not None
 
 
 def _github_review_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
@@ -107,9 +114,6 @@ def _thread_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[
         if thread.get("is_resolved") is not True:
             unresolved.append(identifier)
             continue
-        if thread.get("actionable") is False:
-            satisfied.append(f"non-actionable review thread resolved: {identifier}")
-            continue
         if not _nonempty(thread.get("resolved_by")):
             missing.append(f"review_threads[{index}].resolved_by")
         role = thread.get("resolver_role")
@@ -169,7 +173,7 @@ def _self_review_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], 
             missing.append(f"self_review_authorization.{key}")
     scope = authorization.get("scope")
     if _nonempty(scope) and (
-        str(evidence.get("pr")) not in str(scope)
+        not _scope_binds_pr(scope, evidence.get("pr"))
         or not _nonempty(evidence.get("head_sha"))
         or str(evidence["head_sha"]) not in str(scope)
     ):
