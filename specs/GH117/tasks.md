@@ -30,7 +30,7 @@ implementation 串行执行。四个文件共享同一 helper 集合和同一 pa
 - `python_bin=$(cat /tmp/gh117-python-bin.txt) && "$python_bin" -m pytest -q`
 - `python3 checks/check_workflow.py --repo . --all-specs`
 - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH117`
-- `git diff --check`
+- `impl_base_sha=$(cat /tmp/gh117-impl-base-sha.txt) && git diff --check "$impl_base_sha"...HEAD`
 
 ## Handoff Notes
 
