@@ -851,6 +851,7 @@ def test_resolver_role_map_supports_thread_specific_lane_override(
                 },
                 "thread_resolver_roles": {
                     "PRRT_kwDOSecond": {
+                        "resolver_login": "reviewer",
                         "resolver_role": "reviewer_lane",
                         "lane_id": "reviewer-successor",
                         "successor_of": "bot-root",
@@ -871,6 +872,59 @@ def test_resolver_role_map_supports_thread_specific_lane_override(
     assert normalized[1]["lane_id"] == "reviewer-successor"
     assert normalized[1]["successor_of"] == "bot-root"
     assert normalized[1]["re_review_artifact_id"] == "current-clean"
+
+    role_map.write_text(
+        json.dumps(
+            {
+                "resolver_roles": {
+                    "reviewer": {
+                        "resolver_role": "reviewer_lane",
+                        "lane_id": "reviewer-root",
+                    }
+                },
+                "thread_resolver_roles": {
+                    "PRRT_kwDOSecond": {
+                        "resolver_login": "someone-else",
+                        "resolver_role": "human",
+                        "authorized_human_maintainer": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mismatched = normalize_review_threads(
+        payload,
+        load_resolver_role_map(str(role_map)),
+    )
+
+    assert mismatched[1]["resolver_role"] == "reviewer_lane"
+    assert mismatched[1]["lane_id"] == "reviewer-root"
+    assert "authorized_human_maintainer" not in mismatched[1]
+
+
+def test_thread_specific_resolver_override_requires_resolver_login(
+    tmp_path: Path,
+) -> None:
+    role_map = tmp_path / "resolver-map.json"
+    role_map.write_text(
+        json.dumps(
+            {
+                "resolver_roles": {},
+                "thread_resolver_roles": {
+                    "PRRT_kwDOExample": {
+                        "resolver_role": "human",
+                        "authorized_human_maintainer": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EvidenceError, match="resolver_login"):
+        load_resolver_role_map(str(role_map))
 
 
 @pytest.mark.parametrize(

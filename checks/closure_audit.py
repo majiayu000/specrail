@@ -33,6 +33,15 @@ MERGE_FIELDS = {
     "merged_at",
     "merged_head_sha",
 }
+GATE_FIELD_TYPES = {field: str for field in GATE_FIELDS}
+MERGE_FIELD_TYPES = {
+    "merge_path": str,
+    "remote_confirmed": bool,
+    "merge_dispatched_at": str,
+    "merge_head_sha": str,
+    "merged_at": str,
+    "merged_head_sha": str,
+}
 VIOLATION_PRIORITY = [
     "external_merge_missing_chain",
     "closure_missing_gate_evidence",
@@ -83,6 +92,21 @@ def _optional_object(value: Any, label: str) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         raise ClosureAuditError(f"{label} must be an object or null")
     return value
+
+
+def _validate_optional_field_types(
+    value: dict[str, Any],
+    field_types: dict[str, type],
+    label: str,
+) -> None:
+    for field, expected_type in field_types.items():
+        item = value.get(field)
+        if item is None or isinstance(item, expected_type):
+            continue
+        expected_name = "boolean" if expected_type is bool else "string"
+        raise ClosureAuditError(
+            f"{label}.{field} must be a {expected_name} or null"
+        )
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -159,8 +183,10 @@ def audit_closure(
     merge = _optional_object(evidence.get("merge"), "merge")
     if gate is not None:
         _unsupported_fields(gate, GATE_FIELDS, "gate")
+        _validate_optional_field_types(gate, GATE_FIELD_TYPES, "gate")
     if merge is not None:
         _unsupported_fields(merge, MERGE_FIELDS, "merge")
+        _validate_optional_field_types(merge, MERGE_FIELD_TYPES, "merge")
         merge_path = merge.get("merge_path")
         if merge_path is not None and (
             not isinstance(merge_path, str) or merge_path not in MERGE_PATHS

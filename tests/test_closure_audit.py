@@ -202,6 +202,32 @@ def test_non_string_merge_path_fails_explicitly(merge_path: object) -> None:
 
 
 @pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("gate", "decision", []),
+        ("gate", "head_sha", {}),
+        ("gate", "gate_query_completed_at", []),
+        ("gate", "gate_query_head_sha", {}),
+        ("merge", "remote_confirmed", "true"),
+        ("merge", "merge_dispatched_at", []),
+        ("merge", "merge_head_sha", {}),
+        ("merge", "merged_at", []),
+        ("merge", "merged_head_sha", {}),
+    ],
+)
+def test_nested_field_wrong_type_fails_explicitly(
+    section: str, field: str, value: object
+) -> None:
+    evidence = compliant_evidence()
+    nested = evidence[section]
+    assert isinstance(nested, dict)
+    nested[field] = value
+
+    with pytest.raises(ClosureAuditError, match=rf"{section}\.{field}"):
+        audit_closure(evidence, checked_at="2026-07-16T14:39:00Z")
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [
         ("repository", "not-a-repository"),
@@ -350,6 +376,45 @@ def test_cli_non_string_merge_path_is_malformed_input(
 
     assert completed.returncode == 2
     assert "merge.merge_path" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert completed.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("gate", "gate_query_completed_at", []),
+        ("merge", "merge_head_sha", {}),
+    ],
+)
+def test_cli_wrong_nested_type_is_malformed_input(
+    tmp_path: Path, section: str, field: str, value: object
+) -> None:
+    repo = make_cli_repo(tmp_path)
+    payload = compliant_evidence()
+    nested = payload[section]
+    assert isinstance(nested, dict)
+    nested[field] = value
+    evidence = write_evidence(repo, payload)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "checks/closure_audit.py",
+            "--repo",
+            str(repo),
+            "--evidence",
+            evidence.name,
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert f"{section}.{field}" in completed.stderr
     assert "Traceback" not in completed.stderr
     assert completed.stdout == ""
 

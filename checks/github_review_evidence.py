@@ -154,10 +154,22 @@ def _add_thread_resolver_roles(
                 "thread_resolver_roles thread id must be a non-empty string"
             )
         normalized_id = thread_id.strip()
-        roles[f"{THREAD_ROLE_PREFIX}{normalized_id}"] = _normalize_resolver_entry(
+        if not isinstance(value, dict):
+            raise EvidenceError(
+                f"thread_resolver_roles {normalized_id} must be an object"
+            )
+        resolver_login = value.get("resolver_login")
+        if not isinstance(resolver_login, str) or not resolver_login.strip():
+            raise EvidenceError(
+                f"thread_resolver_roles {normalized_id}.resolver_login "
+                "must be a non-empty string"
+            )
+        normalized = _normalize_resolver_entry(
             value,
             f"thread_resolver_roles {normalized_id}",
         )
+        normalized["resolver_login"] = resolver_login.strip()
+        roles[f"{THREAD_ROLE_PREFIX}{normalized_id}"] = normalized
 
 
 def load_resolver_role_map(path: str | None) -> dict[str, dict[str, Any]]:
@@ -206,9 +218,14 @@ def normalize_review_threads(
         if resolver and resolver_roles:
             raw_metadata = None
             if isinstance(thread_id, str) and thread_id.strip():
-                raw_metadata = resolver_roles.get(
+                thread_metadata = resolver_roles.get(
                     f"{THREAD_ROLE_PREFIX}{thread_id.strip()}"
                 )
+                if (
+                    isinstance(thread_metadata, dict)
+                    and thread_metadata.get("resolver_login") == resolver
+                ):
+                    raw_metadata = thread_metadata
             if raw_metadata is None:
                 raw_metadata = resolver_roles.get(resolver)
         else:
