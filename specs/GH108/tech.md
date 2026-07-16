@@ -125,7 +125,7 @@ Link to `product.md`.
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
 | B-001 | runtime ledger 各测试模块 | 编辑前后保存 `pytest --collect-only -q` 输出，去除首个 `::` 前的模块路径后排序，`diff -u /tmp/gh108-before-runtime-nodes.txt /tmp/gh108-after-runtime-nodes.txt` 必须为空；实际基线偏离 66 functions / 73 cases 时先更新 spec |
-| B-002 | runtime ledger shared helper 与拆分模块 | `wc -l tests/test_runtime_ledger*.py`；每个文件严格小于 800 行，并人工确认 helper 只有一个定义来源 |
+| B-002 | runtime ledger shared helper 与拆分模块 | `wc -l tests/test_runtime_ledger*.py tests/runtime_ledger_test_support.py`；每个文件严格小于 800 行，并人工确认 helper 只有一个定义来源 |
 | B-003 | implementation diff scope | `git diff --name-only "$impl_base_sha"...HEAD` 仅包含 `tests/` 下批准的 runtime ledger 文件；`git diff --exit-code "$impl_base_sha"...HEAD -- checks schemas examples/fixtures .github/workflows specs` 必须为空 |
 | B-004 | 所有迁移后的测试函数 | 执行 Deterministic Parity Procedure 步骤 4；`ast.parse` + `ast.dump(include_attributes=False)` mapping 必须完全相等 |
 | B-005 | repository validation | 编辑前后全库 `pytest --collect-only` 总数相等；`/usr/bin/python3 -m pytest -q tests/test_runtime_ledger*.py`、`/usr/bin/python3 -m pytest -q`、`python3 checks/check_workflow.py --repo . --all-specs`、`git diff --check` 全部通过 |

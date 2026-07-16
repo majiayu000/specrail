@@ -33,8 +33,9 @@ complexity: trivial
    node ID multiset（去除模块路径前缀）必须逐项相同；在当前 spec 基线
    `f3251fe` 上对应 66 个 `test_*` 函数和 73 个 collected cases。若实际基线已
    改变该测试集合，必须先停下更新 spec，不得继续套用旧计数。
-2. B-002 `tests/test_runtime_ledger_gate.py` 及本次新增的每个 runtime ledger
-   测试模块必须严格少于 800 行；共享 helper 不得通过复制测试数据来换取行数下降。
+2. B-002 `tests/test_runtime_ledger_gate.py`、本次新增的每个 runtime ledger
+   测试模块及 `tests/runtime_ledger_test_support.py` 必须分别严格少于 800 行；
+   共享 helper 不得成为规避行数门禁的转移目标，也不得复制测试数据。
 3. B-003 implementation diff 不得修改 `checks/`、`schemas/`、
    `examples/fixtures/`、`.github/workflows/` 或既有 spec packet；生产行为、fixture
    内容与 CI 命令保持不变。
