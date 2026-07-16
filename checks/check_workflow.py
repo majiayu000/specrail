@@ -72,6 +72,7 @@ REQUIRED_FILES = [
     "policies/maintainer_escalation.md",
     "checks/runtime_ledger_gate.py",
     "checks/runtime_gate_rules.py",
+    "checks/schema_validation.py",
     "checks/sensitive_enforcement.py",
     "templates/tranche_checkpoint.md",
 ]
@@ -79,6 +80,8 @@ REQUIRED_FILE_GLOBS = [
     "examples/fixtures/*",
     "schemas/*.schema.json",
 ]
+
+PLANNED_CHANGES_REQUIRED_MARKER = "specrail-requires-planned-changes-v1"
 
 VALID_AUTH_MODES = ("auto", "review")
 
@@ -113,6 +116,7 @@ REQUIRED_TOKENS = {
         "## Proposed Design",
         "## Test Plan",
         "## Rollback Plan",
+        PLANNED_CHANGES_REQUIRED_MARKER,
     ],
     "templates/tasks.md": [
         "## Implementation Tasks",
@@ -290,7 +294,10 @@ def validate_spec_packet(spec_dir: Path) -> list[str]:
             errors.append(f"{path}: must not be empty")
         if issue_tokens and not any(token in text for token in issue_tokens):
             errors.append(f"{path}: missing linked issue token {' or '.join(issue_tokens)}")
-        if name == "tech.md" and "specrail-planned-changes" in text:
+        if name == "tech.md" and (
+            PLANNED_CHANGES_REQUIRED_MARKER in text
+            or "specrail-planned-changes" in text
+        ):
             try:
                 manifest = parse_planned_changes_manifest(
                     text.encode("utf-8"), label=str(path)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -62,6 +63,10 @@ def test_required_files_include_duplicate_work_checks() -> None:
 def test_required_files_include_pr_issue_reference_module() -> None:
     assert "checks/github_evidence_common.py" in REQUIRED_FILES
     assert "checks/github_issue_reference.py" in REQUIRED_FILES
+
+
+def test_required_files_include_schema_validation_runtime_dependency() -> None:
+    assert "checks/schema_validation.py" in REQUIRED_FILES
 
 
 def test_trusted_pack_asset_validation_ignores_target_helper(tmp_path: Path) -> None:
@@ -734,6 +739,68 @@ def test_spec_packet_rejects_unrendered_tech_manifest_template(tmp_path: Path) -
     assert f"{spec_dir / 'tech.md'}: manifest issue must match GH1" in errors
     assert f"{spec_dir / 'tech.md'}: manifest must declare complete=true" in errors
     assert f"{spec_dir / 'tech.md'}: manifest paths must not be empty" in errors
+
+
+def test_spec_packet_requires_planned_changes_manifest(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "repo" / "specs" / "GH1"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "product.md").write_text("GitHub issue: `#1`\n", encoding="utf-8")
+    (spec_dir / "tech.md").write_text(
+        "GitHub issue: `#1`\n"
+        "<!-- specrail-requires-planned-changes-v1 -->\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] `SP1-T001` Owner: test | Done when: done | Verify: test\n",
+        encoding="utf-8",
+    )
+
+    errors = validate_spec_packet(spec_dir)
+
+    assert (
+        f"{spec_dir / 'tech.md'} must contain exactly one "
+        "specrail-planned-changes manifest"
+    ) in errors
+
+
+def test_cli_explicit_spec_requires_planned_changes_manifest(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    shutil.copytree(
+        ROOT,
+        repo,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", ".coverage*"),
+    )
+    tech_path = repo / "specs" / "GH97" / "tech.md"
+    text = tech_path.read_text(encoding="utf-8")
+    text = re.sub(
+        r"<!-- specrail-planned-changes\n.*?\n-->",
+        "",
+        text,
+        count=1,
+        flags=re.DOTALL,
+    )
+    tech_path.write_text(text, encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/check_workflow.py",
+            "--repo",
+            ".",
+            "--spec-dir",
+            "specs/GH97",
+        ],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "tech.md must contain exactly one specrail-planned-changes manifest"
+        in result.stdout
+    )
 
 
 def test_spec_packet_rejects_task_identity_redirect(tmp_path: Path) -> None:

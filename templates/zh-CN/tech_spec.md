@@ -4,6 +4,7 @@
 
 GH-
 
+<!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
 {"version":1,"issue":0,"complete":false,"paths":[],"spec_refs":[]}
 -->
