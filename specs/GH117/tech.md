@@ -84,33 +84,165 @@ implementation owner 在同一干净 worktree 中按顺序执行；步骤 1-2 �
    diff -u /tmp/gh117-before-all-count.txt /tmp/gh117-after-all-count.txt
    ```
 
-4. 用 `git show "$impl_base_sha":tests/test_github_pr_evidence.py` 解析基线，并对
-   四个允许文件运行 AST mapping：拒绝重复函数名、support 中的 `test_*`、任何
-   `pytestmark` 赋值以及 `pytest.skip`/`pytest.xfail` 调用；要求编辑前后 mapping
-   完全相等并输出 `AST parity passed: 50 top-level functions`。
+4. 比较全部顶层函数的完整 AST，拒绝重复函数名、support 中的 `test_*`、任何
+   `pytestmark` 赋值以及 `pytest.skip`/`pytest.xfail` 调用：
 
-5. 导入三个测试模块和 support，逐项确认以下全局名称仍以 `is` 绑定到对应 production
-   module 对象：
+   ```sh
+   impl_base_sha=$(cat /tmp/gh117-impl-base-sha.txt)
+   python_bin=$(cat /tmp/gh117-python-bin.txt)
+   "$python_bin" - "$impl_base_sha" <<'PY'
+   import ast
+   import subprocess
+   import sys
 
-   - `github_pr_evidence`: `EvidenceError`, `REVIEW_THREADS_QUERY`, `build_evidence`,
-     `build_human_authorization`, `collect_issue_view`, `collect_evidence`,
-     `load_resolver_role_map`, `normalize_issue_reference`, `normalize_review_threads`,
-     `parse_github_repo`, `references_partial_issue`, `run_gh_json`
-   - `github_approved_spec_evidence`: `collect_approval_metadata`
-   - `github_pr_snapshot`: `assert_same_pr_file_snapshot`, `collect_pr_file_snapshot`,
-     `derive_spec_refs`
-   - `pr_gate`: `evaluate_pr_gate`
-   - `sensitive_enforcement`: `classify_sensitive_changes`
-   - `specrail_lib`: `PackConfig`, `load_pack`
+   def function_map(trees):
+       result = {}
+       for tree in trees:
+           for node in ast.walk(tree):
+               if isinstance(node, ast.Call):
+                   func = node.func
+                   if isinstance(func, ast.Attribute) and func.attr in {"skip", "xfail"}:
+                       raise AssertionError(f"forbidden skip/xfail call: {ast.dump(node)}")
+           for node in tree.body:
+               targets = []
+               if isinstance(node, ast.Assign):
+                   targets = node.targets
+               elif isinstance(node, ast.AnnAssign):
+                   targets = [node.target]
+               if any(isinstance(target, ast.Name) and target.id == "pytestmark" for target in targets):
+                   raise AssertionError("module-level pytestmark is forbidden")
+           for node in tree.body:
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                   assert node.name not in result, f"duplicate function: {node.name}"
+                   result[node.name] = ast.dump(node, include_attributes=False)
+       return result
 
-   同时要求全部测试模块与 support 的 `ROOT == Path.cwd().resolve()`。
+   baseline = subprocess.check_output(
+       ["git", "show", f"{sys.argv[1]}:tests/test_github_pr_evidence.py"],
+       text=True,
+   )
+   current_paths = [
+       "tests/test_github_pr_evidence.py",
+       "tests/test_github_pr_evidence_approval.py",
+       "tests/test_github_pr_evidence_cli.py",
+       "tests/github_pr_evidence_test_support.py",
+   ]
+   current_trees = {
+       path: ast.parse(open(path, encoding="utf-8").read())
+       for path in current_paths
+   }
+   support_tests = [
+       node.name
+       for node in current_trees["tests/github_pr_evidence_test_support.py"].body
+       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+       and node.name.startswith("test_")
+   ]
+   assert not support_tests, f"support module owns test functions: {support_tests}"
+   before = function_map([ast.parse(baseline)])
+   after = function_map(list(current_trees.values()))
+   assert len(before) == 50, f"unexpected baseline function count: {len(before)}"
+   assert before == after, "GitHub PR evidence top-level FunctionDef AST mapping changed"
+   print(f"AST parity passed: {len(after)} top-level functions")
+   PY
+   ```
 
-6. 提交后以 `impl_base_sha...HEAD` 计算 changed paths，要求它减去 B-003 四路径
-   allowlist 后为空；逐文件执行 `test "$(wc -l < "$file")" -lt 800`，并要求
-   `checks/ schemas/ examples/fixtures/ .github/workflows/ specs/` 无 committed diff。
+5. 导入三个测试模块和 support，逐项确认全局名称仍绑定到真实 production objects：
 
-7. focused run 必须实际执行全部 79 cases，且 `-r a` summary 中不得出现非零
-   skipped/xfailed/xpassed；随后执行全量 pytest、workflow checks 与 whitespace check。
+   ```sh
+   python_bin=$(cat /tmp/gh117-python-bin.txt)
+   "$python_bin" - <<'PY'
+   import importlib
+   import sys
+   from pathlib import Path
+
+   root = Path.cwd().resolve()
+   sys.path.insert(0, str(root / "tests"))
+   sys.path.insert(0, str(root / "checks"))
+   test_modules = [
+       importlib.import_module("test_github_pr_evidence"),
+       importlib.import_module("test_github_pr_evidence_approval"),
+       importlib.import_module("test_github_pr_evidence_cli"),
+   ]
+   support = importlib.import_module("github_pr_evidence_test_support")
+   symbol_groups = {
+       importlib.import_module("github_pr_evidence"): (
+           "EvidenceError", "REVIEW_THREADS_QUERY", "build_evidence",
+           "build_human_authorization", "collect_issue_view", "collect_evidence",
+           "load_resolver_role_map", "normalize_issue_reference",
+           "normalize_review_threads", "parse_github_repo",
+           "references_partial_issue", "run_gh_json",
+       ),
+       importlib.import_module("github_approved_spec_evidence"): (
+           "collect_approval_metadata",
+       ),
+       importlib.import_module("github_pr_snapshot"): (
+           "assert_same_pr_file_snapshot", "collect_pr_file_snapshot", "derive_spec_refs",
+       ),
+       importlib.import_module("pr_gate"): ("evaluate_pr_gate",),
+       importlib.import_module("sensitive_enforcement"): ("classify_sensitive_changes",),
+       importlib.import_module("specrail_lib"): ("PackConfig", "load_pack"),
+   }
+   for production_module, names in symbol_groups.items():
+       for name in names:
+           owners = [module for module in test_modules if hasattr(module, name)]
+           assert owners, f"production symbol is no longer bound: {name}"
+           assert all(
+               getattr(module, name) is getattr(production_module, name)
+               for module in owners
+           ), f"production symbol identity changed: {name}"
+           assert not hasattr(support, name), f"support unexpectedly wraps production symbol: {name}"
+   for module in [*test_modules, support]:
+       assert module.ROOT == root
+   print("production symbol identity passed")
+   PY
+   ```
+
+6. 用同一 SHA 和精确 allowlist 审计 committed scope 与逐文件行数：
+
+   ```sh
+   set -eu
+   impl_base_sha=$(cat /tmp/gh117-impl-base-sha.txt)
+   git diff --name-only "$impl_base_sha"...HEAD | LC_ALL=C sort \
+     > /tmp/gh117-changed-paths.txt
+   printf '%s\n' \
+     tests/github_pr_evidence_test_support.py \
+     tests/test_github_pr_evidence.py \
+     tests/test_github_pr_evidence_approval.py \
+     tests/test_github_pr_evidence_cli.py \
+     | LC_ALL=C sort > /tmp/gh117-allowed-paths.txt
+   diff -u /tmp/gh117-allowed-paths.txt /tmp/gh117-changed-paths.txt
+   while IFS= read -r file; do
+     lines=$(wc -l < "$file" | tr -d ' ')
+     if [ "$lines" -ge 800 ]; then
+       printf '%s has %s lines; expected < 800\n' "$file" "$lines" >&2
+       exit 1
+     fi
+   done < /tmp/gh117-allowed-paths.txt
+   git diff --exit-code "$impl_base_sha"...HEAD -- \
+     checks schemas examples/fixtures .github/workflows specs
+   ```
+
+7. focused run 必须执行全部 79 cases、拒绝非零 skip/xfail/xpass，然后运行全量验证：
+
+   ```sh
+   set -eu
+   python_bin=$(cat /tmp/gh117-python-bin.txt)
+   if ! "$python_bin" -m pytest -q -r a tests/test_github_pr_evidence*.py \
+     > /tmp/gh117-focused-pytest.txt 2>&1; then
+     tail -n 20 /tmp/gh117-focused-pytest.txt
+     exit 1
+   fi
+   tail -n 20 /tmp/gh117-focused-pytest.txt
+   rg -q '79 passed' /tmp/gh117-focused-pytest.txt
+   if rg -n '(^|, )[1-9][0-9]* (skipped|xfailed|xpassed)' \
+     /tmp/gh117-focused-pytest.txt; then
+     exit 1
+   fi
+   "$python_bin" -m pytest -q
+   python3 checks/check_workflow.py --repo . --all-specs
+   python3 checks/check_workflow.py --repo . --spec-dir specs/GH117
+   git diff --check
+   ```
 
 ## Product-to-Test Mapping
 

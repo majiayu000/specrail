@@ -26,8 +26,8 @@ implementation 串行执行。四个文件共享同一 helper 集合和同一 pa
 
 - 编辑前后 normalized node multiset 与全库 collected count diff 为空
 - 50-function AST mapping 与 production symbol identity 通过
-- `/usr/bin/python3 -m pytest -q -r a tests/test_github_pr_evidence*.py`
-- `/usr/bin/python3 -m pytest -q`
+- `python_bin=$(cat /tmp/gh117-python-bin.txt) && "$python_bin" -m pytest -q -r a tests/test_github_pr_evidence*.py`
+- `python_bin=$(cat /tmp/gh117-python-bin.txt) && "$python_bin" -m pytest -q`
 - `python3 checks/check_workflow.py --repo . --all-specs`
 - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH117`
 - `git diff --check`
