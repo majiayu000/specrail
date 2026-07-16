@@ -50,6 +50,15 @@
         "status": "passed",
         "review_source": "self_review",
         "evidence": "artifacts/reviews/t01/self-review.md",
+        "manifest": "artifacts/reviews/t01/self-manifest.json",
+        "artifact_id": "pr718-head1-self-review",
+        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "review_completed_at": "2026-06-30T12:00:00Z",
+        "terminal_status": "completed",
+        "verdict": "clean",
+        "human_final_review_required": true,
+        "findings": [],
+        "prior_findings": [],
         "blocking_findings": []
       },
       "review_threads": {

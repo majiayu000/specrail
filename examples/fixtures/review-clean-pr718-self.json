@@ -1,0 +1,17 @@
+{
+  "artifact_id": "pr718-head1-self-review",
+  "pr": 718,
+  "reviewer_lane": "self-review-recovery",
+  "producer_identity": "reviewer-1",
+  "review_source": "self_review",
+  "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "review_started_at": "2026-07-03T23:57:00Z",
+  "review_completed_at": "2026-07-03T23:58:00Z",
+  "status": "completed",
+  "verdict": "clean",
+  "human_final_review_required": true,
+  "findings": [],
+  "prior_findings": [],
+  "body": "## Summary\nScoped self-review recovery evidence.\n\n## Verdict\nclean; human final review remains required.",
+  "comments": []
+}

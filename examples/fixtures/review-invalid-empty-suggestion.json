@@ -1,5 +1,24 @@
 {
-  "verdict": "REJECT",
+  "artifact_id": "fixture-review-invalid-empty-suggestion",
+  "pr": 489,
+  "head_sha": "aaaa000000000000000000000000000000000001",
+  "prior_findings": [],
+  "reviewer_lane": "reviewer-1",
+  "producer_identity": "agent-reviewer-1",
+  "review_source": "independent_lane",
+  "review_started_at": "2026-07-16T00:00:00Z",
+  "review_completed_at": "2026-07-16T00:01:00Z",
+  "status": "completed",
+  "verdict": "blocking",
+  "human_final_review_required": false,
+  "findings": [
+    {
+      "id": "fixture-finding",
+      "severity": "important",
+      "actionable": true,
+      "summary": "Fixture review finding."
+    }
+  ],
   "body": "## Summary\nAdvisory review artifact with an empty fenced suggestion block.\n\n## Verdict\nREJECT: suggestion content is empty.",
   "comments": [
     {

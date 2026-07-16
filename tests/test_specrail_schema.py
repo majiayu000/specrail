@@ -32,6 +32,12 @@ def pr_review_gate_schema() -> dict[str, object]:
     )
 
 
+def review_result_schema() -> dict[str, object]:
+    return json.loads(
+        (ROOT / "schemas" / "review_result.schema.json").read_text(encoding="utf-8")
+    )
+
+
 def valid_checkpoint() -> dict[str, object]:
     return {
         "checkpoint_version": 1,
@@ -261,6 +267,19 @@ def test_pr_gate_schema_rejects_missing_thread_resolver_fixture() -> None:
         validate_instance(schema, json.loads(fixture.read_text(encoding="utf-8")))
 
 
+@pytest.mark.parametrize("missing", ["original_author", "original_comment_id"])
+def test_pr_gate_schema_requires_root_comment_identity(missing: str) -> None:
+    evidence = json.loads(
+        (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    evidence["review_threads"][0].pop(missing)
+
+    with pytest.raises(InstanceMismatch, match=rf"{missing}.*missing required field"):
+        validate_instance(pr_review_gate_schema(), evidence)
+
+
 def test_pr_gate_schema_accepts_structured_partial_issue_reference() -> None:
     evidence = json.loads(
         (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
@@ -279,6 +298,77 @@ def test_pr_gate_schema_accepts_structured_partial_issue_reference() -> None:
     }
 
     validate_instance(pr_review_gate_schema(), evidence)
+
+
+def test_review_result_v2_fixture_validates_against_schema() -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    validate_instance(review_result_schema(), review)
+
+
+@pytest.mark.parametrize("missing", ["review_round", "review_mode"])
+def test_review_result_schema_requires_paired_round_fields(missing: str) -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review.update({"review_round": 2, "review_mode": "resumed"})
+    review.pop(missing)
+
+    with pytest.raises(InstanceMismatch, match=rf"{missing}.*missing required field"):
+        validate_instance(review_result_schema(), review)
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled", "superseded"])
+def test_review_result_schema_rejects_null_completion_for_non_pending(
+    status: str,
+) -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review["status"] = status
+    review["review_completed_at"] = None
+
+    with pytest.raises(InstanceMismatch, match="status.*const"):
+        validate_instance(review_result_schema(), review)
+
+
+@pytest.mark.parametrize("status", ["resolved", "obsolete"])
+def test_review_result_schema_requires_prior_closure_evidence(status: str) -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review["prior_findings"] = [
+        {
+            "id": "prior-finding",
+            "source_head_sha": "a" * 40,
+            "summary": "Closed without proof.",
+            "status": status,
+        }
+    ]
+
+    with pytest.raises(InstanceMismatch, match="closure_evidence.*missing required field"):
+        validate_instance(review_result_schema(), review)
+
+
+def test_review_result_schema_rejects_legacy_source_only_artifact() -> None:
+    legacy = {
+        "verdict": "REJECT",
+        "body": "## Summary\nlegacy\n\n## Verdict\nREJECT",
+        "comments": [],
+    }
+
+    with pytest.raises(SpecRailError, match="artifact_id"):
+        validate_instance(review_result_schema(), legacy)
 
 
 def test_runtime_checkpoint_inline_valid_instance_matches_schema() -> None:
