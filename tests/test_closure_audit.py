@@ -192,6 +192,15 @@ def test_unknown_input_fields_fail_explicitly(mutation: object) -> None:
         audit_closure(evidence, checked_at="2026-07-16T14:39:00Z")
 
 
+@pytest.mark.parametrize("merge_path", [[], {}])
+def test_non_string_merge_path_fails_explicitly(merge_path: object) -> None:
+    evidence = compliant_evidence()
+    evidence["merge"]["merge_path"] = merge_path  # type: ignore[index]
+
+    with pytest.raises(ClosureAuditError, match="merge.merge_path"):
+        audit_closure(evidence, checked_at="2026-07-16T14:39:00Z")
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -311,6 +320,37 @@ def test_cli_invalid_json_is_error(tmp_path: Path) -> None:
 
     assert completed.returncode == 2
     assert "invalid closure evidence JSON" in completed.stderr
+    assert completed.stdout == ""
+
+
+@pytest.mark.parametrize("merge_path", [[], {}])
+def test_cli_non_string_merge_path_is_malformed_input(
+    tmp_path: Path, merge_path: object
+) -> None:
+    repo = make_cli_repo(tmp_path)
+    payload = compliant_evidence()
+    payload["merge"]["merge_path"] = merge_path  # type: ignore[index]
+    evidence = write_evidence(repo, payload)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "checks/closure_audit.py",
+            "--repo",
+            str(repo),
+            "--evidence",
+            evidence.name,
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "merge.merge_path" in completed.stderr
+    assert "Traceback" not in completed.stderr
     assert completed.stdout == ""
 
 

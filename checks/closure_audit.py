@@ -162,7 +162,9 @@ def audit_closure(
     if merge is not None:
         _unsupported_fields(merge, MERGE_FIELDS, "merge")
         merge_path = merge.get("merge_path")
-        if merge_path is not None and merge_path not in MERGE_PATHS:
+        if merge_path is not None and (
+            not isinstance(merge_path, str) or merge_path not in MERGE_PATHS
+        ):
             raise ClosureAuditError(
                 "merge.merge_path must be one of: " + ", ".join(sorted(MERGE_PATHS))
             )
