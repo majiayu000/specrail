@@ -90,7 +90,7 @@ def write_sensitive_pack(
         "version": 1,
         "issue": 999,
         "complete": True,
-        "paths": planned_paths or ["checks/route_gate.py"],
+        "paths": planned_paths if planned_paths is not None else ["checks/route_gate.py"],
         "spec_refs": [],
     }
     template = (ROOT / "templates" / "tech_spec.md").read_text(encoding="utf-8")
@@ -206,6 +206,24 @@ def test_route_gate_revalidates_sensitive_registry_and_approved_spec(
     ]
 
 
+def test_route_gate_blocks_complete_manifest_with_empty_paths(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_pack(repo, planned_paths=[])
+    evidence = sensitive_route_evidence(repo, head)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route", "implement", "--issue", "999", "--evidence",
+        str(evidence_path), "--duplicate-evidence", str(write_duplicate_evidence(tmp_path)),
+        "--mode", "required", repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("manifest paths must be non-empty" in item for item in payload["reasons"])
+
+
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
@@ -236,7 +254,7 @@ def test_route_gate_blocks_forged_caller_base_identity(
     assert any(reason in item for item in payload["reasons"])
 
 
-def test_route_gate_allows_missing_origin_head_with_exact_adapter_default(
+def test_route_gate_blocks_missing_origin_head_even_with_adapter_default(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
@@ -255,8 +273,9 @@ def test_route_gate_allows_missing_origin_head_with_exact_adapter_default(
         "--mode", "required", repo=repo,
     )
 
-    assert result.returncode == 0
-    assert payload["decision"] == "allowed"
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("origin/HEAD is missing" in item for item in payload["reasons"])
 
 
 def test_route_gate_blocks_non_origin_default_symbolic_ref(

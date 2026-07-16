@@ -167,6 +167,54 @@ def test_check_workflow_rejects_invalid_sensitive_registry_provider_config(
     assert "sensitive_registry.paths must be a list" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("replacement", "expected"),
+    [
+        ("enforcement: null", "enforcement must be a mapping"),
+        (
+            "enforcement:\n  sensitive_registry: null",
+            "enforcement.sensitive_registry must be a mapping",
+        ),
+        (
+            "enforcement:\n  sensitive_regsitry:\n    paths: []\n    specs: []",
+            "enforcement contains unsupported fields: sensitive_regsitry",
+        ),
+    ],
+)
+def test_check_workflow_rejects_malformed_enforcement_config(
+    tmp_path: Path,
+    replacement: str,
+    expected: str,
+) -> None:
+    target = tmp_path / "target"
+    shutil.copytree(
+        ROOT,
+        target,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", ".coverage*"),
+    )
+    workflow = target / "workflow.yaml"
+    block = (
+        "enforcement:\n"
+        "  sensitive_registry:\n"
+        "    paths: []\n"
+        "    specs: []"
+    )
+    text = workflow.read_text(encoding="utf-8")
+    assert text.count(block) == 1
+    workflow.write_text(text.replace(block, replacement), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "checks/check_workflow.py", "--repo", "."],
+        cwd=target,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert expected in result.stdout
+
+
 def test_impl_branch_template_requires_issue_number_placeholder() -> None:
     class Config:
         workflow = {"artifacts": {"impl_branch": "{agent}/branch-{slug}"}}

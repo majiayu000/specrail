@@ -44,13 +44,15 @@ PLANNED_CHANGES_MANIFEST_RE = re.compile(
 
 def sensitive_registry(config: PackConfig) -> dict[str, list[str]]:
     enforcement = config.workflow.get("enforcement", {})
-    if enforcement is None:
-        enforcement = {}
     if not isinstance(enforcement, dict):
         raise SpecRailError("workflow.yaml: enforcement must be a mapping")
+    unknown_enforcement = sorted(set(enforcement) - {"sensitive_registry"})
+    if unknown_enforcement:
+        raise SpecRailError(
+            "workflow.yaml: enforcement contains unsupported fields: "
+            f"{', '.join(unknown_enforcement)}"
+        )
     registry = enforcement.get("sensitive_registry", {})
-    if registry is None:
-        registry = {}
     if not isinstance(registry, dict):
         raise SpecRailError(
             "workflow.yaml: enforcement.sensitive_registry must be a mapping"
@@ -207,21 +209,15 @@ def trusted_default_base(
         ["git", "-C", str(repo), "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
         check=False, capture_output=True,
     )
-    if symbolic.returncode == 0:
-        symbolic_ref = symbolic.stdout.decode("utf-8", errors="strict").strip()
-        if symbolic_ref != origin_ref:
-            raise SpecRailError(
-                "trusted default branch origin/HEAD does not match the adapter default base"
-            )
-    else:
-        direct = subprocess.run(
-            ["git", "-C", str(repo), "show-ref", "--verify", "--quiet", "refs/remotes/origin/HEAD"],
-            check=False, capture_output=True,
+    if symbolic.returncode != 0:
+        raise SpecRailError(
+            "trusted default branch origin/HEAD is missing or is not a symbolic ref"
         )
-        if direct.returncode == 0:
-            raise SpecRailError("trusted default branch origin/HEAD must be a symbolic ref")
-        if direct.returncode != 1:
-            raise SpecRailError("trusted default branch origin/HEAD could not be checked")
+    symbolic_ref = symbolic.stdout.decode("utf-8", errors="strict").strip()
+    if symbolic_ref != origin_ref:
+        raise SpecRailError(
+            "trusted default branch origin/HEAD does not match the adapter default base"
+        )
     return branch, trusted_sha
 
 
@@ -479,6 +475,8 @@ def classification_from_approved_tech(
         raise SpecRailError("tech spec manifest version/issue binding is invalid")
     if manifest.get("complete") is not True:
         raise SpecRailError("tech spec manifest must declare complete=true")
+    if not manifest.get("paths"):
+        raise SpecRailError("tech spec manifest paths must be non-empty")
     classification = classify_sensitive_changes(
         config,
         repo,
