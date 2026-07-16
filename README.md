@@ -99,12 +99,23 @@ python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO --issu
 python3 checks/route_gate.py --repo . --route write_spec --issue 123 --evidence issue-evidence.json --json
 ```
 
-`checks/github_issue_evidence.py` only reshapes `gh issue view` output into
-local route evidence. It does not write labels, comments, issues, or PRs. Issue
-states inferred from labels are trusted readiness evidence; states inferred from
-requester-editable body hints are marked `state_trusted: false` and cannot
-replace maintainer readiness labels for human-gated routes.
-Artifact paths are rendered from the selected repo's `workflow.yaml`.
+`checks/github_issue_evidence.py` is read-only. It uses `gh issue view` for issue
+state and labels. For a trusted `ready_to_implement` issue in a repository with
+a sensitive registry, it first queries the GitHub default-base identity, checks
+that identity against the local `origin` ref and symbolic `origin/HEAD`, and
+classifies the approved tech manifest from that exact base. A non-sensitive
+plan stops there. A sensitive plan additionally queries the current approval
+label and latest matching label event through GraphQL, then uses the REST
+associated-PR endpoint to prove each approved spec source came from exactly one
+merged default-branch PR.
+
+The adapter does not write labels, comments, issues, or PRs. Body hints remain
+untrusted. Missing or non-symbolic `origin/HEAD`, default-base drift, an empty
+completed planned-path list, incomplete latest approval actor/timestamp, missing
+merged-spec provenance, or approved-spec content drift fails closed. Ordinary,
+classified non-sensitive, and classified sensitive outputs conform to
+`schemas/issue_evidence.schema.json`. Artifact paths are rendered from the
+selected repo's `workflow.yaml`.
 
 Evaluate whether PR merge evidence is complete before a maintainer merges:
 

@@ -123,7 +123,7 @@ def approval_query_payload() -> dict[str, object]:
     return {
         "data": {
             "repository": {
-                "defaultBranchRef": {"name": "main"},
+                "defaultBranchRef": {"name": "main", "target": {"oid": base_sha()}},
                 "issue": {
                     "state": "OPEN",
                     "labels": {
@@ -156,6 +156,8 @@ def test_approval_metadata_collects_complete_label_timeline() -> None:
     metadata = collect_approval_metadata("example/repo", 97, fake_run_json)
 
     assert metadata["approved_at"] == "2026-07-14T00:00:00Z"
+    assert metadata["default_base_ref"] == "main"
+    assert metadata["default_base_sha"] == base_sha()
     assert len(calls) == 2
 
 
@@ -164,6 +166,25 @@ def test_approval_metadata_blocks_incomplete_timeline_page() -> None:
     payload["data"]["repository"]["issue"]["timelineItems"]["pageInfo"] = {}
 
     with pytest.raises(EvidenceError, match="pageInfo is incomplete"):
+        collect_approval_metadata("example/repo", 97, lambda _args: payload)
+
+
+def test_approval_metadata_blocks_incomplete_latest_matching_event() -> None:
+    payload = approval_query_payload()
+    payload["data"]["repository"]["issue"]["timelineItems"]["nodes"] = [
+        {
+            "createdAt": "2026-07-13T00:00:00Z",
+            "actor": {"login": "old-maintainer"},
+            "label": {"name": "ready_to_implement"},
+        },
+        {
+            "createdAt": "2026-07-14T00:00:00Z",
+            "actor": None,
+            "label": {"name": "ready_to_implement"},
+        },
+    ]
+
+    with pytest.raises(EvidenceError, match="actor/timestamp"):
         collect_approval_metadata("example/repo", 97, lambda _args: payload)
 
 
@@ -194,6 +215,21 @@ def test_approval_metadata_blocks_pagination_drift() -> None:
         "hasNextPage": True, "endCursor": "next"
     }
     second["data"]["repository"]["defaultBranchRef"]["name"] = "other"
+    responses = [first, second]
+
+    with pytest.raises(EvidenceError, match="drifted"):
+        collect_approval_metadata(
+            "example/repo", 97, lambda _args: responses.pop(0)
+        )
+
+
+def test_approval_metadata_blocks_default_base_sha_drift() -> None:
+    first = approval_query_payload()
+    second = approval_query_payload()
+    first["data"]["repository"]["issue"]["labels"]["pageInfo"] = {
+        "hasNextPage": True, "endCursor": "next"
+    }
+    second["data"]["repository"]["defaultBranchRef"]["target"]["oid"] = "c" * 40
     responses = [first, second]
 
     with pytest.raises(EvidenceError, match="drifted"):
@@ -513,6 +549,8 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec(
             "maintainer_actor": "maintainer",
             "state_source": "label",
             "state_trusted": True,
+            "default_base_ref": "main",
+            "default_base_sha": head,
         },
         pr_snapshot=file_snapshot(
             ["checks/pr_gate.py"], head_sha=checkout_head
@@ -524,6 +562,8 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec(
     ]
     assert evidence["approved_spec"]["issue"] == 97
     assert evidence["approved_spec"] == {"issue": 97}
+    assert evidence["default_base_ref"] == "main"
+    assert evidence["default_base_sha"] == head
 
 
 def test_build_evidence_rejects_body_hint_approval_metadata() -> None:

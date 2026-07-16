@@ -32,6 +32,8 @@ APPROVED_SPEC_FIELDS = {
     "maintainer_actor",
     "state_source",
     "state_trusted",
+    "default_base_ref",
+    "default_base_sha",
 }
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -42,13 +44,15 @@ PLANNED_CHANGES_MANIFEST_RE = re.compile(
 
 def sensitive_registry(config: PackConfig) -> dict[str, list[str]]:
     enforcement = config.workflow.get("enforcement", {})
-    if enforcement is None:
-        enforcement = {}
     if not isinstance(enforcement, dict):
         raise SpecRailError("workflow.yaml: enforcement must be a mapping")
+    unknown_enforcement = sorted(set(enforcement) - {"sensitive_registry"})
+    if unknown_enforcement:
+        raise SpecRailError(
+            "workflow.yaml: enforcement contains unsupported fields: "
+            f"{', '.join(unknown_enforcement)}"
+        )
     registry = enforcement.get("sensitive_registry", {})
-    if registry is None:
-        registry = {}
     if not isinstance(registry, dict):
         raise SpecRailError(
             "workflow.yaml: enforcement.sensitive_registry must be a mapping"
@@ -175,38 +179,57 @@ def _hash_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def trusted_default_base(repo: Path) -> tuple[str, str]:
-    """Resolve the local, fetch-backed origin default branch and commit."""
+def trusted_default_base(
+    repo: Path, *, default_base_ref: Any, default_base_sha: Any
+) -> tuple[str, str]:
+    """Revalidate adapter-provided GitHub default-base identity against origin."""
 
-    symbolic_ref = _git(
-        repo,
-        ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-        "trusted default branch",
-    ).decode("utf-8", errors="strict").strip()
-    prefix = "refs/remotes/origin/"
-    if not symbolic_ref.startswith(prefix):
+    if not isinstance(default_base_ref, str) or not default_base_ref.strip():
+        raise SpecRailError("trusted default base ref must be a non-empty string")
+    branch = default_base_ref.strip()
+    if branch == "HEAD" or branch.startswith("refs/"):
+        raise SpecRailError("trusted default base ref must be an unqualified branch name")
+    origin_ref = f"refs/remotes/origin/{branch}"
+    check_ref = subprocess.run(
+        ["git", "-C", str(repo), "check-ref-format", origin_ref],
+        check=False, capture_output=True,
+    )
+    if check_ref.returncode != 0:
+        raise SpecRailError("trusted default base ref is not a valid origin branch")
+    if not isinstance(default_base_sha, str) or not COMMIT_RE.fullmatch(default_base_sha):
+        raise SpecRailError("trusted default base SHA must be a full commit SHA")
+    trusted_sha = default_base_sha.lower()
+    local_sha = _git(
+        repo, ["rev-parse", "--verify", f"{origin_ref}^{{commit}}"],
+        "trusted default base origin ref",
+    ).decode("utf-8", errors="strict").strip().lower()
+    if local_sha != trusted_sha:
+        raise SpecRailError("trusted default base SHA does not match the fetched origin branch")
+    symbolic = subprocess.run(
+        ["git", "-C", str(repo), "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        check=False, capture_output=True,
+    )
+    if symbolic.returncode != 0:
         raise SpecRailError(
-            "trusted default branch origin/HEAD must target refs/remotes/origin/<branch>"
+            "trusted default branch origin/HEAD is missing or is not a symbolic ref"
         )
-    branch = symbolic_ref.removeprefix(prefix)
-    if not branch or branch == "HEAD":
-        raise SpecRailError("trusted default branch origin/HEAD target is ambiguous")
-    sha = _git(
-        repo,
-        ["rev-parse", "--verify", f"{symbolic_ref}^{{commit}}"],
-        "trusted default branch commit",
-    ).decode("utf-8", errors="strict").strip()
-    if not COMMIT_RE.fullmatch(sha):
-        raise SpecRailError("trusted default branch did not resolve to a full commit SHA")
-    return branch, sha.lower()
+    symbolic_ref = symbolic.stdout.decode("utf-8", errors="strict").strip()
+    if symbolic_ref != origin_ref:
+        raise SpecRailError(
+            "trusted default branch origin/HEAD does not match the adapter default base"
+        )
+    return branch, trusted_sha
 
 
 def approved_spec_source_commits(
-    config: PackConfig, repo: Path, issue: int
+    config: PackConfig, repo: Path, issue: int, *,
+    default_base_ref: Any, default_base_sha: Any,
 ) -> dict[str, str]:
     """Return each approved spec path's last source commit on trusted default."""
 
-    _branch, trusted_base_sha = trusted_default_base(repo)
+    _branch, trusted_base_sha = trusted_default_base(
+        repo, default_base_ref=default_base_ref, default_base_sha=default_base_sha
+    )
     configured = spec_packet_artifact_paths(config, issue, repo=repo)
     result: dict[str, str] = {}
     for path in [configured["product_spec"], configured["tech_spec"]]:
@@ -231,6 +254,8 @@ def build_approved_spec_evidence(
     approved_at: str,
     maintainer_actor: str,
     gated_head_sha: str | None = None,
+    default_base_ref: Any,
+    default_base_sha: Any,
 ) -> dict[str, Any]:
     paths = spec_packet_artifact_paths(config, issue, repo=repo)
     spec_paths = [paths["product_spec"], paths["tech_spec"]]
@@ -255,6 +280,8 @@ def build_approved_spec_evidence(
         "maintainer_actor": maintainer_actor,
         "state_source": "label",
         "state_trusted": True,
+        "default_base_ref": default_base_ref,
+        "default_base_sha": default_base_sha,
     }
     validate_approved_spec_evidence(
         config,
@@ -323,7 +350,11 @@ def validate_approved_spec_evidence(
         )
 
     approved_at = _timestamp(evidence.get("approved_at"), "approved_spec.approved_at")
-    _trusted_base_ref, trusted_base_sha = trusted_default_base(repo)
+    _trusted_base_ref, trusted_base_sha = trusted_default_base(
+        repo,
+        default_base_ref=evidence.get("default_base_ref"),
+        default_base_sha=evidence.get("default_base_sha"),
+    )
 
     configured = spec_packet_artifact_paths(config, issue, repo=repo)
     expected_paths = [configured["product_spec"], configured["tech_spec"]]
@@ -397,6 +428,35 @@ def validate_approved_spec_evidence(
             )
 
 
+def parse_planned_changes_manifest(
+    content: bytes, *, label: str = "tech spec"
+) -> dict[str, Any]:
+    matches = PLANNED_CHANGES_MANIFEST_RE.findall(content)
+    if len(matches) != 1:
+        raise SpecRailError(
+            f"{label} must contain exactly one specrail-planned-changes manifest"
+        )
+    try:
+        manifest = json.loads(matches[0])
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SpecRailError(f"{label} manifest must be valid UTF-8 JSON") from exc
+    required = {"version", "issue", "complete", "paths", "spec_refs"}
+    if not isinstance(manifest, dict) or set(manifest) != required:
+        raise SpecRailError(f"{label} manifest has unsupported or missing fields")
+    if (
+        not isinstance(manifest.get("version"), int)
+        or isinstance(manifest.get("version"), bool)
+        or not isinstance(manifest.get("issue"), int)
+        or isinstance(manifest.get("issue"), bool)
+        or manifest["issue"] < 0
+        or not isinstance(manifest.get("complete"), bool)
+        or not isinstance(manifest.get("paths"), list)
+        or not isinstance(manifest.get("spec_refs"), list)
+    ):
+        raise SpecRailError(f"{label} manifest field types are invalid")
+    return manifest
+
+
 def classification_from_approved_tech(
     config: PackConfig,
     repo: Path,
@@ -410,23 +470,16 @@ def classification_from_approved_tech(
     base_content = _git(
         repo, ["show", f"{base_sha}:{tech_path}"], "trusted approved tech spec"
     )
-    matches = PLANNED_CHANGES_MANIFEST_RE.findall(base_content)
-    if len(matches) != 1:
-        raise SpecRailError(
-            "configured tech.md must contain exactly one specrail-planned-changes manifest"
-        )
-    try:
-        manifest = json.loads(matches[0])
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SpecRailError("tech spec manifest must be valid UTF-8 JSON") from exc
-    if not isinstance(manifest, dict) or set(manifest) != {
-        "version", "issue", "complete", "paths", "spec_refs"
-    }:
-        raise SpecRailError("tech spec manifest has unsupported or missing fields")
+    manifest = parse_planned_changes_manifest(base_content, label="configured tech.md")
     if manifest.get("version") != 1 or manifest.get("issue") != issue:
         raise SpecRailError("tech spec manifest version/issue binding is invalid")
     if manifest.get("complete") is not True:
         raise SpecRailError("tech spec manifest must declare complete=true")
+    if not manifest.get("paths"):
+        raise SpecRailError(
+            "tech spec manifest paths must be non-empty; "
+            "complete=true requires at least one planned path"
+        )
     classification = classify_sensitive_changes(
         config,
         repo,
@@ -533,7 +586,11 @@ def evaluate_sensitive_evidence(
         trusted_base_ref: str | None = None
         trusted_base_sha: str | None = None
         try:
-            trusted_base_ref, trusted_base_sha = trusted_default_base(repo)
+            trusted_base_ref, trusted_base_sha = trusted_default_base(
+                repo,
+                default_base_ref=evidence.get("default_base_ref"),
+                default_base_sha=evidence.get("default_base_sha"),
+            )
         except SpecRailError as exc:
             reasons.append(str(exc))
         if trusted_base_ref is not None and expected_base_ref != trusted_base_ref:

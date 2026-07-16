@@ -57,6 +57,165 @@ def write_custom_pack(repo: Path) -> None:
         )
 
 
+def run_git(repo: Path, *args: str, output: bool = False) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo), *args], check=True,
+        capture_output=output, text=output,
+    )
+    return completed.stdout.strip() if output else ""
+
+def commit_all(repo: Path, message: str) -> None:
+    run_git(repo, "add", ".")
+    run_git(
+        repo, "-c", "user.name=SpecRail Test",
+        "-c", "user.email=specrail@example.invalid",
+        "commit", "-qm", message,
+    )
+
+def update_origin_main(repo: Path) -> str:
+    head = run_git(repo, "rev-parse", "HEAD", output=True)
+    run_git(repo, "update-ref", "refs/remotes/origin/main", head)
+    return head
+
+def write_sensitive_implement_pack(repo: Path, issue: int = 16) -> str:
+    repo.mkdir()
+    workflow = (ROOT / "workflow.yaml").read_text(encoding="utf-8").replace(
+        "    paths: []", "    paths:\n      - checks/**"
+    )
+    (repo / "workflow.yaml").write_text(workflow, encoding="utf-8")
+    for name in ["states.yaml", "labels.yaml"]:
+        (repo / name).write_text(
+            (ROOT / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir()
+    (schema_dir / "duplicate_work_evidence.schema.json").write_text(
+        (ROOT / "schemas" / "duplicate_work_evidence.schema.json").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    packet = repo / "specs" / f"GH{issue}"
+    packet.mkdir(parents=True)
+    (packet / "product.md").write_text(
+        f"# Product\n\nGitHub issue: `#{issue}`\n", encoding="utf-8"
+    )
+    manifest = {
+        "version": 1,
+        "issue": issue,
+        "complete": True,
+        "paths": ["checks/route_gate.py"],
+        "spec_refs": [],
+    }
+    (packet / "tech.md").write_text(
+        "# Tech\n\n"
+        f"GitHub issue: `#{issue}`\n\n"
+        "<!-- specrail-planned-changes\n"
+        + json.dumps(manifest, separators=(",", ":"))
+        + "\n-->\n",
+        encoding="utf-8",
+    )
+    run_git(repo, "init", "-q")
+    commit_all(repo, "approved specs")
+    head = update_origin_main(repo)
+    run_git(
+        repo, "symbolic-ref",
+        "refs/remotes/origin/HEAD", "refs/remotes/origin/main",
+    )
+    return head
+
+def approval_query_payload(head: str) -> dict[str, object]:
+    connection = {"pageInfo": {"hasNextPage": False, "endCursor": None}}
+    labels = dict(connection, nodes=[{"name": "ready_to_implement"}])
+    timeline = dict(
+        connection,
+        nodes=[{
+            "createdAt": "2030-07-14T00:00:00Z",
+            "actor": {"login": "maintainer"},
+            "label": {"name": "ready_to_implement"},
+        }],
+    )
+    return {
+        "data": {
+            "repository": {
+                "defaultBranchRef": {"name": "main", "target": {"oid": head}},
+                "issue": {
+                    "state": "OPEN",
+                    "labels": labels,
+                    "timelineItems": timeline,
+                },
+            }
+        }
+    }
+
+def mock_sensitive_github(
+    monkeypatch: pytest.MonkeyPatch,
+    head: str,
+    *,
+    labels: list[object] | None = None,
+    body: str = "",
+) -> None:
+    github_issue = issue_payload(
+        labels=[{"name": "ready_to_implement"}] if labels is None else labels,
+        body=body,
+    )
+
+    def fake_run_json(args: list[str]) -> object:
+        if args[:2] == ["issue", "view"]:
+            return github_issue
+        if args[:2] == ["api", "graphql"]:
+            return approval_query_payload(head)
+        if args[:3] == ["api", "--method", "GET"]:
+            return [
+                {
+                    "number": 7,
+                    "merged_at": "2029-07-13T00:00:00Z",
+                    "merge_commit_sha": head,
+                    "base": {"ref": "main"},
+                }
+            ]
+        raise AssertionError(f"unexpected GitHub call: {args}")
+
+    monkeypatch.setattr("github_issue_evidence.run_gh_json", fake_run_json)
+
+
+def write_duplicate_evidence(path: Path, issue: int = 16) -> Path:
+    payload = {
+        "issue": issue,
+        "collected_at": "2030-07-14T00:00:00Z",
+        "open_prs_complete": True,
+        "open_pr_limit": 100,
+        "open_prs": [],
+        "remote_branches": [],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def run_implement_route(
+    repo: Path, evidence: dict[str, object], tmp_path: Path,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
+    evidence_path = tmp_path / "issue-evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable, "checks/route_gate.py",
+            "--repo", str(repo),
+            "--route", "implement",
+            "--issue", "16",
+            "--evidence", str(evidence_path),
+            "--duplicate-evidence",
+            str(write_duplicate_evidence(tmp_path / "duplicate-evidence.json")),
+            "--mode", "required", "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result, json.loads(result.stdout)
+
+
 def test_parse_github_repo_and_issue_number_require_valid_input() -> None:
     assert parse_github_repo("majiayu000/specrail") == ("majiayu000", "specrail")
     assert parse_issue_number("16") == 16
@@ -549,3 +708,93 @@ def test_route_gate_blocks_closed_issue_evidence(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["decision"] == "blocked"
     assert "GitHub issue state must be OPEN; got CLOSED" in payload["reasons"]
+
+
+def test_sensitive_issue_adapter_serializes_allowed_implement_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_implement_pack(repo)
+    mock_sensitive_github(monkeypatch, head)
+
+    evidence = collect_issue_evidence("example/consumer", 16, repo)
+    result, payload = run_implement_route(repo, evidence, tmp_path)
+
+    assert evidence["repository"] == "example/consumer"
+    assert evidence["base_ref"] == "main"
+    assert evidence["default_base_sha"] == head
+    assert evidence["enforcement_sensitive"] is True
+    assert evidence["approved_spec"]["maintainer_actor"] == "maintainer"
+    assert result.returncode == 0, result.stderr
+    assert payload["decision"] == "allowed"
+    assert "approved spec evidence revalidated" in payload["satisfied"]
+
+
+@pytest.mark.parametrize(
+    ("labels", "body", "expected_missing"),
+    [
+        ([], "state: ready_to_implement", "trusted_state"),
+        ([{"name": "area_runtime"}], "", "current_state"),
+    ],
+)
+def test_sensitive_issue_adapter_does_not_upgrade_untrusted_or_missing_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    labels: list[object],
+    body: str,
+    expected_missing: str,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_implement_pack(repo)
+    mock_sensitive_github(monkeypatch, head, labels=labels, body=body)
+
+    evidence = collect_issue_evidence("example/consumer", 16, repo)
+    result, payload = run_implement_route(repo, evidence, tmp_path)
+
+    assert "approved_spec" not in evidence
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert expected_missing in payload["missing"]
+
+
+def test_sensitive_issue_adapter_evidence_blocks_default_base_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_implement_pack(repo)
+    mock_sensitive_github(monkeypatch, head)
+    evidence = collect_issue_evidence("example/consumer", 16, repo)
+    (repo / "README.md").write_text("base advanced\n", encoding="utf-8")
+    commit_all(repo, "advance base")
+    update_origin_main(repo)
+
+    result, payload = run_implement_route(repo, evidence, tmp_path)
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("default base SHA" in reason for reason in payload["reasons"])
+
+
+def test_sensitive_issue_adapter_evidence_blocks_spec_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_implement_pack(repo)
+    mock_sensitive_github(monkeypatch, head)
+    evidence = collect_issue_evidence("example/consumer", 16, repo)
+    product = repo / "specs" / "GH16" / "product.md"
+    product.write_text(product.read_text(encoding="utf-8") + "\ndrift\n", encoding="utf-8")
+    commit_all(repo, "change approved spec")
+    current_head = update_origin_main(repo)
+    evidence["base_sha"] = current_head
+    evidence["default_base_sha"] = current_head
+    evidence["approved_spec"]["default_base_sha"] = current_head
+
+    result, payload = run_implement_route(repo, evidence, tmp_path)
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("content changed" in reason for reason in payload["reasons"])

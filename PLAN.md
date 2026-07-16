@@ -92,10 +92,18 @@ but the policy decision should stay in the evaluator.
 
 The first issue evidence adapter is `checks/github_issue_evidence.py`. It uses
 `gh issue view` to collect issue state, labels, title, URL, default artifact
-paths, and state trust metadata, then prints JSON that `checks/route_gate.py`
-can evaluate. It does not write labels, comments, issues, PRs, or branches.
-States inferred from requester-editable body hints remain untrusted and cannot
-replace maintainer readiness labels for human-gated routes.
+paths, and state trust metadata, then prints schema-valid JSON that
+`checks/route_gate.py` can evaluate. For trusted implement evidence with a
+configured sensitive registry, it collects the GitHub default-base identity,
+revalidates it against local `origin` and symbolic `origin/HEAD`, and classifies
+the exact-base tech manifest before requesting approval provenance. Plans that
+do not match the registry need no approval timeline or merged-spec PR evidence.
+Sensitive plans additionally require the current approval label, the latest
+matching label event's actor/timestamp, and exactly one merged default-branch PR
+for each approved spec source. Drift or incomplete evidence fails closed. The
+adapter remains read-only and does not write labels, comments, issues, PRs, or
+branches. States inferred from requester-editable body hints remain untrusted
+and cannot replace maintainer readiness labels for human-gated routes.
 
 The first PR evidence adapter is `checks/github_pr_evidence.py`. It uses `gh pr
 view` and `gh api graphql` to collect PR merge-readiness evidence and prints

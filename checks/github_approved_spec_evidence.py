@@ -14,7 +14,7 @@ query SpecRailApprovalLabels(
   $owner: String!, $name: String!, $number: Int!, $cursor: String
 ) {
   repository(owner: $owner, name: $name) {
-    defaultBranchRef { name }
+    defaultBranchRef { name target { oid } }
     issue(number: $number) {
       state
       labels(first: 100, after: $cursor) {
@@ -26,12 +26,20 @@ query SpecRailApprovalLabels(
 }
 """.strip()
 
+DEFAULT_BASE_QUERY = """
+query SpecRailDefaultBase($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef { name target { oid } }
+  }
+}
+""".strip()
+
 APPROVAL_TIMELINE_QUERY = """
 query SpecRailApprovalTimeline(
   $owner: String!, $name: String!, $number: Int!, $cursor: String
 ) {
   repository(owner: $owner, name: $name) {
-    defaultBranchRef { name }
+    defaultBranchRef { name target { oid } }
     issue(number: $number) {
       state
       timelineItems(first: 100, after: $cursor, itemTypes: [LABELED_EVENT]) {
@@ -50,15 +58,54 @@ query SpecRailApprovalTimeline(
 """.strip()
 
 
+def collect_default_base_identity(
+    github_repo: str,
+    run_json: Callable[[list[str]], Any],
+) -> tuple[str, str]:
+    owner, name = github_repo.split("/", 1)
+    payload = json_object(
+        run_json(
+            [
+                "api", "graphql", "-F", f"owner={owner}", "-F", f"name={name}",
+                "-f", f"query={DEFAULT_BASE_QUERY}",
+            ]
+        ),
+        "default-base GraphQL response",
+    )
+    try:
+        repository = json_object(payload["data"]["repository"], "repository")
+        default_branch_ref = json_object(
+            repository["defaultBranchRef"], "defaultBranchRef"
+        )
+        default_branch = default_branch_ref["name"]
+        default_base_sha = json_object(
+            default_branch_ref["target"], "defaultBranchRef.target"
+        )["oid"]
+    except (KeyError, TypeError) as exc:
+        raise EvidenceError("default-base query returned malformed evidence") from exc
+    if not isinstance(default_branch, str) or not default_branch.strip():
+        raise EvidenceError("default-base query lacks a trusted default branch")
+    if not isinstance(default_base_sha, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{40}", default_base_sha
+    ):
+        raise EvidenceError("default-base query lacks a trusted default base SHA")
+    return default_branch.strip(), default_base_sha.lower()
+
+
 def collect_approval_metadata(
     github_repo: str,
     issue: int,
     run_json: Callable[[list[str]], Any],
     *,
     spec_source_commits: dict[str, str] | None = None,
+    spec_source_commits_provider: Callable[[str, str], dict[str, str]] | None = None,
 ) -> dict[str, Any]:
+    if spec_source_commits is not None and spec_source_commits_provider is not None:
+        raise EvidenceError(
+            "provide spec_source_commits or spec_source_commits_provider, not both"
+        )
     owner, name = github_repo.split("/", 1)
-    identity: tuple[str, str] | None = None
+    identity: tuple[str, str, str] | None = None
 
     def collect_connection(query: str, key: str) -> list[Any]:
         nonlocal identity
@@ -76,7 +123,13 @@ def collect_approval_metadata(
             try:
                 repository = json_object(payload["data"]["repository"], "repository")
                 issue_data = json_object(repository["issue"], "issue")
-                default_branch = repository["defaultBranchRef"]["name"]
+                default_branch_ref = json_object(
+                    repository["defaultBranchRef"], "defaultBranchRef"
+                )
+                default_branch = default_branch_ref["name"]
+                default_base_sha = json_object(
+                    default_branch_ref["target"], "defaultBranchRef.target"
+                )["oid"]
                 connection = json_object(issue_data[key], key)
                 nodes = json_array(connection["nodes"], f"{key}.nodes")
                 page_info = json_object(connection["pageInfo"], f"{key}.pageInfo")
@@ -84,7 +137,14 @@ def collect_approval_metadata(
                 raise EvidenceError("approved-spec query returned malformed issue evidence") from exc
             if not isinstance(default_branch, str) or not default_branch.strip():
                 raise EvidenceError("approved-spec query lacks a trusted default branch")
-            page_identity = (default_branch.strip(), str(issue_data.get("state")))
+            if not isinstance(default_base_sha, str) or not re.fullmatch(
+                r"[0-9a-fA-F]{40}", default_base_sha
+            ):
+                raise EvidenceError("approved-spec query lacks a trusted default base SHA")
+            page_identity = (
+                default_branch.strip(), default_base_sha.lower(),
+                str(issue_data.get("state")),
+            )
             if identity is None:
                 identity = page_identity
             elif identity != page_identity:
@@ -105,7 +165,7 @@ def collect_approval_metadata(
     labels = collect_connection(APPROVAL_QUERY, "labels")
     events = collect_connection(APPROVAL_TIMELINE_QUERY, "timelineItems")
     assert identity is not None
-    default_branch, issue_state = identity
+    default_branch, default_base_sha, issue_state = identity
     if issue_state != "OPEN":
         raise EvidenceError("approved-spec issue must remain OPEN")
     current_labels = {
@@ -116,29 +176,54 @@ def collect_approval_metadata(
         raise EvidenceError(
             "approved spec requires current ready_to_implement maintainer label"
         )
-    candidates: list[tuple[str, str]] = []
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
     for event in events:
         if not isinstance(event, dict):
             continue
         label = event.get("label")
-        actor = event.get("actor")
         if not isinstance(label, dict) or label.get("name") != "ready_to_implement":
             continue
         created_at = event.get("createdAt")
-        login = actor.get("login") if isinstance(actor, dict) else None
-        if isinstance(created_at, str) and created_at.strip() and isinstance(login, str) and login.strip():
-            candidates.append((created_at.strip(), login.strip()))
+        if not isinstance(created_at, str) or not created_at.strip():
+            raise EvidenceError(
+                "ready_to_implement label lacks maintainer actor/timestamp evidence"
+            )
+        try:
+            created_time = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise EvidenceError(
+                "ready_to_implement label timestamp is invalid"
+            ) from exc
+        if created_time.tzinfo is None:
+            raise EvidenceError(
+                "ready_to_implement label timestamp must include timezone"
+            )
+        candidates.append((created_time, event))
     if not candidates:
         raise EvidenceError(
             "ready_to_implement label lacks maintainer actor/timestamp evidence"
         )
-    approved_at, maintainer_actor = max(candidates)
+    _approved_time, latest_event = max(candidates, key=lambda item: item[0])
+    actor = latest_event.get("actor")
+    maintainer_actor = actor.get("login") if isinstance(actor, dict) else None
+    approved_at = latest_event["createdAt"].strip()
+    if not isinstance(maintainer_actor, str) or not maintainer_actor.strip():
+        raise EvidenceError(
+            "ready_to_implement label lacks maintainer actor/timestamp evidence"
+        )
+    maintainer_actor = maintainer_actor.strip()
     result: dict[str, Any] = {
         "approved_at": approved_at,
         "maintainer_actor": maintainer_actor,
         "state_source": "label",
         "state_trusted": True,
+        "default_base_ref": default_branch,
+        "default_base_sha": default_base_sha,
     }
+    if spec_source_commits_provider is not None:
+        spec_source_commits = spec_source_commits_provider(
+            default_branch, default_base_sha
+        )
     if spec_source_commits is None:
         return result
     try:

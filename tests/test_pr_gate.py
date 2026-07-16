@@ -69,6 +69,8 @@ def sensitive_evidence(tmp_path: Path) -> tuple[dict[str, object], Path, object]
             "repository": "majiayu000/specrail",
             "base_ref": "main",
             "base_sha": base_head,
+            "default_base_ref": "main",
+            "default_base_sha": base_head,
             "changed_files_count": 0,
             "changed_files_sha256": __import__("hashlib").sha256(b"[]").hexdigest(),
             "enforcement_sensitive": True,
@@ -92,6 +94,8 @@ def sensitive_evidence(tmp_path: Path) -> tuple[dict[str, object], Path, object]
                 approved_at="2030-07-14T00:00:00Z",
                 maintainer_actor="maintainer",
                 gated_head_sha=checkout_head,
+                default_base_ref="main",
+                default_base_sha=base_head,
             ),
         }
     )
@@ -105,6 +109,39 @@ def test_pr_gate_revalidates_explicit_sensitive_approved_spec(tmp_path: Path) ->
     assert result["decision"] == "allowed"
     assert result["enforcement_sensitive"] is True
     assert "approved spec evidence revalidated" in result["satisfied"]
+
+
+def test_pr_gate_blocks_missing_origin_head_even_with_adapter_default(
+    tmp_path: Path,
+) -> None:
+    evidence, repo, config = sensitive_evidence(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+        check=True,
+    )
+
+    result = evaluate_pr_gate(evidence, repo=repo, config=config)
+
+    assert result["decision"] == "blocked"
+    assert any("origin/HEAD is missing" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("default_base_ref", "forged"), ("default_base_sha", "0" * 40)],
+)
+def test_pr_gate_blocks_forged_adapter_default_identity(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    evidence, repo, config = sensitive_evidence(tmp_path)
+    evidence[field] = value
+
+    result = evaluate_pr_gate(evidence, repo=repo, config=config)
+
+    assert result["decision"] == "blocked"
+    assert any("default base" in reason for reason in result["reasons"])
 
 
 def test_pr_gate_blocks_changed_file_snapshot_digest_mismatch(tmp_path: Path) -> None:
