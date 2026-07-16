@@ -773,6 +773,46 @@ def test_pr_gate_allows_successor_resolver_with_current_head_rereview() -> None:
     assert result["decision"] == "allowed", result["reasons"]
 
 
+def test_pr_gate_blocks_successor_with_mismatched_trusted_lineage() -> None:
+    evidence = clean_evidence()
+    original = evidence["review_evidence"]["artifacts"][0]
+    successor = dict(original)
+    successor.update(
+        {
+            "artifact_id": "pr718-head1-successor",
+            "reviewer_lane": "reviewer-successor",
+            "producer_identity": "reviewer-2",
+        }
+    )
+    evidence["review_evidence"]["artifacts"].append(successor)
+    evidence["review_evidence"]["current_artifact_ids"].append(
+        "pr718-head1-successor"
+    )
+    evidence["review_evidence"]["lane_roster"].append(
+        {
+            "lane_id": "reviewer-successor",
+            "producer_identity": "reviewer-2",
+            "successor_of": "unrelated-reviewer",
+        }
+    )
+    evidence["review_threads"][0].update(
+        {
+            "resolved_by": "reviewer-2",
+            "resolver_role": "reviewer_lane",
+            "original_author": "reviewer-1",
+            "original_comment_id": "PRRC_fixture-root",
+            "lane_id": "reviewer-successor",
+            "successor_of": "merge-reviewer-2",
+            "re_review_artifact_id": "pr718-head1-successor",
+        }
+    )
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("lacks original/successor re-review evidence" in reason for reason in result["reasons"])
+
+
 def test_pr_gate_blocks_successor_when_original_reviewer_lane_is_ambiguous() -> None:
     evidence = clean_evidence()
     original = evidence["review_evidence"]["artifacts"][0]

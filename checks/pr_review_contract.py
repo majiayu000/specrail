@@ -106,7 +106,8 @@ def _verified_reviewer_resolver(
             for artifact in artifacts
         )
         return (
-            original_lane_id == thread.get("successor_of")
+            lane.get("successor_of") == original_lane_id
+            and original_lane_id == thread.get("successor_of")
             and re_review_artifact_id in current_ids
             and verified_re_review
         )
