@@ -130,10 +130,19 @@ Link to `product.md`.
        "tests/test_runtime_ledger_review.py",
        "tests/runtime_ledger_test_support.py",
    ]
+   current_trees = {
+       path: ast.parse(open(path, encoding="utf-8").read())
+       for path in current_paths
+   }
+   support_tests = [
+       node.name
+       for node in current_trees["tests/runtime_ledger_test_support.py"].body
+       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+       and node.name.startswith("test_")
+   ]
+   assert not support_tests, f"support module owns test functions: {support_tests}"
    before = function_map([ast.parse(baseline)])
-   after = function_map(
-       [ast.parse(open(path, encoding="utf-8").read()) for path in current_paths]
-   )
+   after = function_map(list(current_trees.values()))
    assert before == after, "runtime ledger top-level FunctionDef AST mapping changed"
    print(f"AST parity passed: {len(after)} top-level functions")
    PY
@@ -185,6 +194,7 @@ Link to `product.md`.
 6. 用同一 SHA 和精确 allowlist 审计 committed scope；只打印路径不算通过：
 
    ```sh
+   set -eu
    impl_base_sha=$(cat /tmp/gh108-impl-base-sha.txt)
    git diff --name-only "$impl_base_sha"...HEAD | LC_ALL=C sort \
      > /tmp/gh108-changed-paths.txt
@@ -194,9 +204,19 @@ Link to `product.md`.
      tests/test_runtime_ledger_queue.py \
      tests/test_runtime_ledger_review.py \
      | LC_ALL=C sort > /tmp/gh108-allowed-paths.txt
+   while IFS= read -r path; do
+     lines=$(wc -l < "$path" | tr -d ' ')
+     if [ "$lines" -ge 800 ]; then
+       printf '%s has %s lines; expected < 800\n' "$path" "$lines" >&2
+       exit 1
+     fi
+   done < /tmp/gh108-allowed-paths.txt
    comm -23 /tmp/gh108-changed-paths.txt /tmp/gh108-allowed-paths.txt \
      > /tmp/gh108-unexpected-paths.txt
-   test ! -s /tmp/gh108-unexpected-paths.txt
+   if [ -s /tmp/gh108-unexpected-paths.txt ]; then
+     cat /tmp/gh108-unexpected-paths.txt >&2
+     exit 1
+   fi
    git diff --exit-code "$impl_base_sha"...HEAD -- \
      checks schemas examples/fixtures .github/workflows specs
    ```
@@ -204,12 +224,18 @@ Link to `product.md`.
 7. focused run 必须实际执行全部 73 cases，不得出现 skipped/xfailed/xpassed：
 
    ```sh
+   set -eu
    python_bin=$(cat /tmp/gh108-python-bin.txt)
-   "$python_bin" -m pytest -q -r a tests/test_runtime_ledger*.py \
-     > /tmp/gh108-focused-pytest.txt 2>&1
+   if ! "$python_bin" -m pytest -q -r a tests/test_runtime_ledger*.py \
+     > /tmp/gh108-focused-pytest.txt 2>&1; then
+     tail -n 20 /tmp/gh108-focused-pytest.txt
+     exit 1
+   fi
    tail -n 20 /tmp/gh108-focused-pytest.txt
-   ! rg -n '(^|, )[1-9][0-9]* (skipped|xfailed|xpassed)' \
-     /tmp/gh108-focused-pytest.txt
+   if rg -n '(^|, )[1-9][0-9]* (skipped|xfailed|xpassed)' \
+     /tmp/gh108-focused-pytest.txt; then
+     exit 1
+   fi
    ```
 
 ## Product-to-Test Mapping
@@ -217,7 +243,7 @@ Link to `product.md`.
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
 | B-001 | runtime ledger 各测试模块 | 编辑前后保存 `pytest --collect-only -q` 输出，去除首个 `::` 前的模块路径后排序，`diff -u /tmp/gh108-before-runtime-nodes.txt /tmp/gh108-after-runtime-nodes.txt` 必须为空；实际基线偏离 66 functions / 73 cases 时先更新 spec |
-| B-002 | runtime ledger shared helper 与拆分模块 | `wc -l tests/test_runtime_ledger*.py tests/runtime_ledger_test_support.py`；每个文件严格小于 800 行，并人工确认 helper 只有一个定义来源 |
+| B-002 | runtime ledger shared helper 与拆分模块 | 执行 Deterministic Parity Procedure 步骤 6 的逐文件行数 gate；任一文件达到 800 行即非零退出，并人工确认 helper 只有一个定义来源 |
 | B-003 | implementation diff scope | 执行 Deterministic Parity Procedure 步骤 6；changed paths 减去四文件 allowlist 后必须为空，protected paths committed diff 也必须为空 |
 | B-004 | 所有迁移后的测试与 helper 函数及其 production bindings | 执行 Deterministic Parity Procedure 步骤 4、5、7；70 个顶层函数 AST mapping 与 production symbol identity 必须相等，且无 skip/xfail |
 | B-005 | repository validation | 编辑前后使用 `/tmp/gh108-python-bin.txt` 中同一解释器；全库 `pytest --collect-only` 总数相等；focused/full pytest、`python3 checks/check_workflow.py --repo . --all-specs`、`git diff --check` 全部通过 |
