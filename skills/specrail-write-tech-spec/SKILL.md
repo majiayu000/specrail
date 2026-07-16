@@ -1,6 +1,6 @@
 ---
 name: specrail-write-tech-spec
-description: Use when writing or updating a SpecRail technical spec for a linked issue. Produces the numbered `tech.md` spec from the locale-appropriate template, translating accepted product behavior into design, affected files, risks, verification, and rollback without starting implementation.
+description: Use when writing or updating a SpecRail technical spec for a linked issue. Produces the numbered `tech.md` spec from the locale-appropriate template, translating accepted product behavior into design, affected files, risks, verification, and rollback without starting implementation. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
 ---
 
 # SpecRail Write Tech Spec

@@ -1,6 +1,6 @@
 ---
 name: specrail-workflow
-description: Use as the router/startup skill when working in a repository that adopts SpecRail for issue-first, spec-first, AI-assisted development. Routes triage, spec writing, task planning, implementation, PR review, CI diagnosis, PR gates, release notes, and spec-vs-implementation checks to focused SpecRail skills while preserving locale and human-gate boundaries.
+description: Use as the router/startup skill when working in a repository that adopts SpecRail for issue-first, spec-first, AI-assisted development. Routes triage, spec writing, task planning, implementation, PR review, CI diagnosis, PR gates, release notes, and spec-vs-implementation checks to focused SpecRail skills while preserving locale and human-gate boundaries. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
 ---
 
 # SpecRail Workflow
@@ -42,9 +42,12 @@ python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issu
   `specs/GH<issue-number>/tasks.md`.
 - Use `skills/specrail-implement/SKILL.md` for code or workflow-asset changes
   after the implementation gate.
-- Use `skills/specrail-implement-queue/SKILL.md` when multiple approved specs or
-  open issues need coordinated implementation PRs, issue-to-PR mapping,
-  optional threads lanes, PR gates, and closure audit.
+- Use `skills/specrail-implement-queue/SKILL.md` only when the user names
+  implx or specrail-implement-queue. When multiple approved specs are ready
+  but the user named neither, work issue by issue through
+  `skills/specrail-implement/SKILL.md` (or mention that implx is available
+  for coordinated queue drains); do not enter queue orchestration or its
+  auth_mode state machine uninvited.
 - Use `skills/implx/SKILL.md` when the user explicitly asks for `implx`,
   `use implx`, or `用 implx` as the shortcut for SpecRail implementation queue
   work with optional threads orchestration and merge gates.

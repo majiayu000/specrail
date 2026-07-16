@@ -1,6 +1,6 @@
 ---
 name: specrail-diagnose-ci
-description: Use when diagnosing or fixing CI failures in a SpecRail-governed repository. Collects fresh CI evidence, reproduces failures locally when possible, identifies root cause before fixing, and reports verification without claiming green CI from stale or missing data.
+description: Use when diagnosing or fixing CI failures in a SpecRail-governed repository. Collects fresh CI evidence, reproduces failures locally when possible, identifies root cause before fixing, and reports verification without claiming green CI from stale or missing data. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
 ---
 
 # SpecRail Diagnose CI

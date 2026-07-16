@@ -1,6 +1,6 @@
 ---
 name: specrail-check-impl-against-spec
-description: Use when comparing a SpecRail implementation, diff, or PR against its linked issue, product spec, technical spec, and task plan. Reports acceptance coverage, mismatches, omitted tasks, extra scope, and verification gaps without approving or merging.
+description: Use when comparing a SpecRail implementation, diff, or PR against its linked issue, product spec, technical spec, and task plan. Reports acceptance coverage, mismatches, omitted tasks, extra scope, and verification gaps without approving or merging. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
 ---
 
 # SpecRail Check Implementation Against Spec

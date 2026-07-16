@@ -1,6 +1,6 @@
 ---
 name: specrail-pr-gate
-description: Use before reporting a SpecRail PR as merge-ready. Collects read-only PR evidence, runs the offline PR gate, checks linked work, current head SHA, CI, review decision, review threads, merge state, and human merge authorization without merging.
+description: Use before reporting a SpecRail PR as merge-ready. Collects read-only PR evidence, runs the offline PR gate, checks linked work, current head SHA, CI, review decision, review threads, merge state, and human merge authorization without merging. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
 ---
 
 # SpecRail PR Gate
