@@ -36,12 +36,15 @@ complexity: trivial
 2. B-002 `tests/test_runtime_ledger_gate.py`、本次新增的每个 runtime ledger
    测试模块及 `tests/runtime_ledger_test_support.py` 必须分别严格少于 800 行；
    共享 helper 不得成为规避行数门禁的转移目标，也不得复制测试数据。
-3. B-003 implementation diff 不得修改 `checks/`、`schemas/`、
-   `examples/fixtures/`、`.github/workflows/` 或既有 spec packet；生产行为、fixture
-   内容与 CI 命令保持不变。
-4. B-004 每个既有测试函数（含 decorators、参数化值、函数体和断言）的
-   `ast.dump(..., include_attributes=False)` 必须与 `impl_base_sha` 中的同名函数
-   完全一致；禁止删除断言、放宽期望值、增加跳过标记或把失败路径改成静默成功。
+3. B-003 implementation diff 的允许路径闭集为
+   `tests/test_runtime_ledger_gate.py`、`tests/test_runtime_ledger_queue.py`、
+   `tests/test_runtime_ledger_review.py`、`tests/runtime_ledger_test_support.py`；任何
+   其他路径（包括其他 `tests/`、`checks/`、schema、fixture、CI 或 spec）均阻断。
+4. B-004 基线文件中的全部顶层函数（当前为 66 个 tests + 4 个 helpers，含
+   decorators、参数化值、函数体和断言）的 `ast.dump(...,
+   include_attributes=False)` 必须与拆分后四个允许文件中的同名函数完全一致；
+   所有模块均不得新增 module-level 或 function-level skip/xfail 标记，禁止把失败
+   路径改成未执行或静默成功。
 5. B-005 拆分后，runtime ledger focused tests、全量 pytest、SpecRail workflow
    校验和 whitespace 检查必须全部通过；全库 collected test 数必须等于实际
    `impl_base_sha` 的 fresh 基线，不得仅用当前已知的 421 passed 作为未来下限。
@@ -52,7 +55,8 @@ complexity: trivial
 - [ ] 相对实际 `impl_base_sha`，normalized runtime node ID multiset、测试函数 AST
   与全库 collected test 数均完全一致；`f3251fe` 的初始证据为 66 functions、
   73 runtime cases、421 passed。
-- [ ] 生产代码、schema、fixture、CI 和其他 spec packet 没有改动。
+- [ ] committed diff 的每个路径都属于 B-003 允许闭集；生产、其他测试、schema、
+  fixture、CI 和 spec 没有改动。
 - [ ] focused tests、全量 pytest、workflow checks 与 `git diff --check` 全部通过。
 
 ## 边界情况清单

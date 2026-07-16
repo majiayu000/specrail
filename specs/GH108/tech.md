@@ -29,10 +29,10 @@ Link to `product.md`.
    一份；helper 不包含可被 pytest 收集的 `test_*` 函数。
 2. 保留 `tests/test_runtime_ledger_gate.py` 作为 core 模块，覆盖 schema/state、
    基础 checkpoint、敏感 PR-gate evidence、top-level validation 与 CLI contract。
-3. 新建具名测试模块承载 full-queue、budget/tranche 测试；这些测试共享同一 helper，
-   保持函数名、参数化装饰器、输入 mutation 与断言逐项等价。
-4. 新建具名测试模块承载 review source、self-review authorization 与 lane-failure
-   recovery 测试；同样保持函数名与断言语义不变。
+3. 新建 `tests/test_runtime_ledger_queue.py` 承载 full-queue、budget/tranche 测试；
+   这些测试共享同一 helper，保持函数名、参数化装饰器、输入 mutation 与断言等价。
+4. 新建 `tests/test_runtime_ledger_review.py` 承载 review source、self-review
+   authorization 与 lane-failure recovery 测试；同样保持函数名与断言语义不变。
 5. implementation 分支创建后立即记录 `impl_base_sha=$(git rev-parse HEAD)`；在
    编辑前保存 runtime ledger 与全库的 fresh collection 基线。若 runtime ledger
    基线不再是 66 functions / 73 cases，先停止并更新 spec。
@@ -78,7 +78,8 @@ Link to `product.md`.
    diff -u /tmp/gh108-before-all-count.txt /tmp/gh108-after-all-count.txt
    ```
 
-4. 比较每个测试函数的完整 AST（decorators 与函数体均包含；重复函数名也阻断）：
+4. 比较全部顶层函数的完整 AST（66 tests + 4 helpers；decorators 与函数体均
+   包含；重复函数名也阻断），并拒绝任何 skip/xfail 标记：
 
    ```sh
    impl_base_sha=$(cat /tmp/gh108-impl-base-sha.txt)
@@ -88,12 +89,25 @@ Link to `product.md`.
    import subprocess
    import sys
 
-   def test_map(trees):
+   def function_map(trees):
        result = {}
        for tree in trees:
+           for node in ast.walk(tree):
+               if isinstance(node, ast.Call):
+                   func = node.func
+                   if isinstance(func, ast.Attribute) and func.attr in {"skip", "xfail"}:
+                       raise AssertionError(f"forbidden skip/xfail call: {ast.dump(node)}")
            for node in tree.body:
-               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_"):
-                   assert node.name not in result, f"duplicate test function: {node.name}"
+               targets = []
+               if isinstance(node, ast.Assign):
+                   targets = node.targets
+               elif isinstance(node, ast.AnnAssign):
+                   targets = [node.target]
+               if any(isinstance(target, ast.Name) and target.id == "pytestmark" for target in targets):
+                   raise AssertionError("module-level pytestmark is forbidden")
+           for node in tree.body:
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                   assert node.name not in result, f"duplicate function: {node.name}"
                    result[node.name] = ast.dump(node, include_attributes=False)
        return result
 
@@ -101,23 +115,48 @@ Link to `product.md`.
        ["git", "show", f"{sys.argv[1]}:tests/test_runtime_ledger_gate.py"],
        text=True,
    )
-   current_paths = sorted(glob.glob("tests/test_runtime_ledger*.py"))
-   before = test_map([ast.parse(baseline)])
-   after = test_map(
+   current_paths = [
+       "tests/test_runtime_ledger_gate.py",
+       "tests/test_runtime_ledger_queue.py",
+       "tests/test_runtime_ledger_review.py",
+       "tests/runtime_ledger_test_support.py",
+   ]
+   before = function_map([ast.parse(baseline)])
+   after = function_map(
        [ast.parse(open(path, encoding="utf-8").read()) for path in current_paths]
    )
-   assert before == after, "runtime ledger test FunctionDef AST mapping changed"
-   print(f"AST parity passed: {len(after)} test functions")
+   assert before == after, "runtime ledger top-level FunctionDef AST mapping changed"
+   print(f"AST parity passed: {len(after)} top-level functions")
    PY
    ```
 
-5. 用同一 SHA 审计 committed scope：
+5. 用同一 SHA 和精确 allowlist 审计 committed scope；只打印路径不算通过：
 
    ```sh
    impl_base_sha=$(cat /tmp/gh108-impl-base-sha.txt)
-   git diff --name-only "$impl_base_sha"...HEAD
+   git diff --name-only "$impl_base_sha"...HEAD | LC_ALL=C sort \
+     > /tmp/gh108-changed-paths.txt
+   printf '%s\n' \
+     tests/runtime_ledger_test_support.py \
+     tests/test_runtime_ledger_gate.py \
+     tests/test_runtime_ledger_queue.py \
+     tests/test_runtime_ledger_review.py \
+     | LC_ALL=C sort > /tmp/gh108-allowed-paths.txt
+   comm -23 /tmp/gh108-changed-paths.txt /tmp/gh108-allowed-paths.txt \
+     > /tmp/gh108-unexpected-paths.txt
+   test ! -s /tmp/gh108-unexpected-paths.txt
    git diff --exit-code "$impl_base_sha"...HEAD -- \
      checks schemas examples/fixtures .github/workflows specs
+   ```
+
+6. focused run 必须实际执行全部 73 cases，不得出现 skipped/xfailed/xpassed：
+
+   ```sh
+   /usr/bin/python3 -m pytest -q -r a tests/test_runtime_ledger*.py \
+     > /tmp/gh108-focused-pytest.txt 2>&1
+   tail -n 20 /tmp/gh108-focused-pytest.txt
+   ! rg -n '(^|, )[1-9][0-9]* (skipped|xfailed|xpassed)' \
+     /tmp/gh108-focused-pytest.txt
    ```
 
 ## Product-to-Test Mapping
@@ -126,8 +165,8 @@ Link to `product.md`.
 | --- | --- | --- |
 | B-001 | runtime ledger 各测试模块 | 编辑前后保存 `pytest --collect-only -q` 输出，去除首个 `::` 前的模块路径后排序，`diff -u /tmp/gh108-before-runtime-nodes.txt /tmp/gh108-after-runtime-nodes.txt` 必须为空；实际基线偏离 66 functions / 73 cases 时先更新 spec |
 | B-002 | runtime ledger shared helper 与拆分模块 | `wc -l tests/test_runtime_ledger*.py tests/runtime_ledger_test_support.py`；每个文件严格小于 800 行，并人工确认 helper 只有一个定义来源 |
-| B-003 | implementation diff scope | `git diff --name-only "$impl_base_sha"...HEAD` 仅包含 `tests/` 下批准的 runtime ledger 文件；`git diff --exit-code "$impl_base_sha"...HEAD -- checks schemas examples/fixtures .github/workflows specs` 必须为空 |
-| B-004 | 所有迁移后的测试函数 | 执行 Deterministic Parity Procedure 步骤 4；`ast.parse` + `ast.dump(include_attributes=False)` mapping 必须完全相等 |
+| B-003 | implementation diff scope | 执行 Deterministic Parity Procedure 步骤 5；changed paths 减去四文件 allowlist 后必须为空，protected paths committed diff 也必须为空 |
+| B-004 | 所有迁移后的测试与 helper 函数 | 执行 Deterministic Parity Procedure 步骤 4、6；全部 70 个顶层函数 AST mapping 必须相等，且无 skip/xfail marker 或运行结果 |
 | B-005 | repository validation | 编辑前后全库 `pytest --collect-only` 总数相等；`/usr/bin/python3 -m pytest -q tests/test_runtime_ledger*.py`、`/usr/bin/python3 -m pytest -q`、`python3 checks/check_workflow.py --repo . --all-specs`、`git diff --check` 全部通过 |
 
 ## 数据流
@@ -151,8 +190,8 @@ pytest 收集各 `test_runtime_ledger*.py` 模块；测试从唯一共享 helper
   外部消费者依赖测试 node ID 全路径。
 - Performance: 模块导入略有变化；全量测试时间不应显著回归，不设未经基准支持的
   性能承诺。
-- Maintenance: helper import 若设计不当可能形成收集歧义；使用非 `test_` 文件名并以
-  fresh `--collect-only` 验证。
+- Maintenance: helper import 若设计不当可能形成收集歧义；使用固定非 `test_` 文件名、
+  精确四文件 allowlist 与 fresh `--collect-only` 验证。
 
 ## 测试计划
 
