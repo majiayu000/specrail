@@ -7,6 +7,43 @@
     }
   ],
   "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "review_completed_at": "2026-07-03T23:58:00Z",
+  "gate_started_at": "2026-07-03T23:59:00Z",
+  "review_evidence": {
+    "manifest_path": "examples/fixtures/review-manifest-pr718.json",
+    "manifest_sha256": "5162c53d0401e1606fff36cc3eda19998b3a0163e74b4142921837f62e61cbcc",
+    "pr": 718,
+    "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+    "review_source": "independent_lane",
+    "review_completed_at": "2026-07-03T23:58:00Z",
+    "human_final_review_required": false,
+    "lane_roster": [
+      {"lane_id": "merge-reviewer-2", "producer_identity": "reviewer-1"}
+    ],
+    "artifacts": [
+      {
+        "artifact_id": "pr718-head1-reviewer2",
+        "pr": 718,
+        "reviewer_lane": "merge-reviewer-2",
+        "producer_identity": "reviewer-1",
+        "review_source": "independent_lane",
+        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "review_started_at": "2026-07-03T23:57:00Z",
+        "review_completed_at": "2026-07-03T23:58:00Z",
+        "status": "completed",
+        "verdict": "clean",
+        "human_final_review_required": false,
+        "findings": [],
+        "prior_findings": [],
+        "body": "## Summary\nTerminal exact-head review evidence.\n\n## Verdict\nclean",
+        "comments": []
+      }
+    ],
+    "current_artifact_ids": ["pr718-head1-reviewer2"],
+    "errors": [],
+    "blocking_reasons": []
+  },
+
   "gate_query_completed_at": "2026-07-04T00:00:00Z",
   "gate_query_head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
   "is_draft": false,

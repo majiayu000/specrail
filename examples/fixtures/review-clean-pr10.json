@@ -1,0 +1,17 @@
+{
+  "artifact_id": "pr10-head1-reviewer1",
+  "pr": 10,
+  "reviewer_lane": "reviewer-1",
+  "producer_identity": "reviewer",
+  "review_source": "independent_lane",
+  "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "review_started_at": "2026-07-15T23:57:00Z",
+  "review_completed_at": "2026-07-15T23:58:00Z",
+  "status": "completed",
+  "verdict": "clean",
+  "human_final_review_required": false,
+  "findings": [],
+  "prior_findings": [],
+  "body": "## Summary\nTerminal exact-head review evidence.\n\n## Verdict\nclean",
+  "comments": []
+}

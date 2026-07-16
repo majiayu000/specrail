@@ -107,3 +107,54 @@ def test_runtime_ledger_gate_blocks_other_failure_kind_without_detail() -> None:
 
     assert result["decision"] == "blocked"
     assert any("requires detail" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_merge_ready_without_review_manifest() -> None:
+    checkpoint = clean_checkpoint()
+    del checkpoint["items"][0]["review"]["manifest"]  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("review.manifest" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_terminal_review_head_mismatch() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint["items"][0]["review"]["head_sha"] = "f" * 40  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("head_sha must match" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_actionable_terminal_finding() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint["items"][0]["review"]["findings"] = [  # type: ignore[index]
+        {
+            "id": "finding-current",
+            "severity": "important",
+            "actionable": True,
+            "summary": "Current blocking finding.",
+        }
+    ]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("blocking/actionable finding" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_self_review_without_human_final_gate() -> None:
+    checkpoint = _fixture_checkpoint("runtime-self-review-merged-unauthorized.json")
+    checkpoint["items"][0]["self_review_authorization"] = {  # type: ignore[index]
+        "scope": "merge PR #718 after self-review only",
+        "conversation_marker": "user message: reviewer lanes are down, self-review this one",
+    }
+    checkpoint["items"][0]["review"]["human_final_review_required"] = False  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("human_final_review_required" in error for error in result["errors"])

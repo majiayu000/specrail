@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
@@ -13,10 +15,45 @@ FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
 from review_json_gate import evaluate_review_gate  # noqa: E402
+from review_result_semantics import (  # noqa: E402
+    ReviewSemanticError,
+    load_review_manifest,
+    validate_review_artifact,
+)
 
 
 def load_review(name: str) -> dict[str, object]:
-    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    review = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    review.setdefault("artifact_id", f"fixture-{name.removesuffix('.json')}")
+    review.setdefault("pr", 489)
+    review.setdefault("reviewer_lane", "reviewer-1")
+    review.setdefault("producer_identity", "agent-reviewer-1")
+    review.setdefault("review_source", "independent_lane")
+    review.setdefault("head_sha", "aaaa000000000000000000000000000000000001")
+    review.setdefault("review_started_at", "2026-07-16T00:00:00Z")
+    review.setdefault("review_completed_at", "2026-07-16T00:01:00Z")
+    review.setdefault("status", "completed")
+    review["verdict"] = "blocking"
+    review.setdefault("human_final_review_required", False)
+    review.setdefault(
+        "findings",
+        [
+            {
+                "id": "fixture-finding",
+                "severity": "important",
+                "actionable": True,
+                "summary": "Fixture review finding.",
+            }
+        ],
+    )
+    if name != "review-resumed-no-checklist.json":
+        review.setdefault("prior_findings", [])
+    for index, finding in enumerate(review.get("prior_findings", []), start=1):
+        finding.setdefault("id", f"prior-{index}")
+        finding.setdefault("source_head_sha", "aaaa000000000000000000000000000000000000")
+        if finding.get("status") in {"resolved", "obsolete"}:
+            finding.setdefault("closure_evidence", f"review round {index} evidence")
+    return review
 
 
 def load_diff() -> str:
@@ -27,7 +64,7 @@ def test_review_json_gate_allows_valid_review() -> None:
     result = evaluate_review_gate(load_review("review-valid.json"), load_diff())
 
     assert result["decision"] == "allowed"
-    assert result["verdict"] == "REJECT"
+    assert result["verdict"] == "blocking"
     assert result["comment_count"] == 2
     assert result["advisory_only"] is True
     assert result["reasons"] == []
@@ -267,7 +304,262 @@ def test_review_json_gate_blocks_invalid_prior_finding_status() -> None:
     assert any("status must be one of" in reason for reason in result["reasons"])
 
 
-def test_review_json_gate_legacy_reviews_without_round_fields_still_pass() -> None:
-    result = evaluate_review_gate(load_review("review-valid.json"), load_diff())
+def test_review_json_gate_blocks_legacy_review_without_v2_terminal_fields() -> None:
+    review = load_review("review-valid.json")
+    for field in [
+        "artifact_id",
+        "reviewer_lane",
+        "producer_identity",
+        "review_source",
+        "review_started_at",
+        "review_completed_at",
+        "status",
+        "human_final_review_required",
+        "findings",
+        "prior_findings",
+    ]:
+        review.pop(field)
 
-    assert result["decision"] == "allowed", result["reasons"]
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("artifact_id" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize("status", ["pending", "failed", "cancelled", "superseded"])
+def test_review_semantics_terminal_lifecycle_blocks_merge_readiness(status: str) -> None:
+    review = load_review("review-valid.json")
+    review["status"] = status
+    if status == "pending":
+        review["review_completed_at"] = None
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is True
+    assert any("status is not completed" in item for item in result["blocking_reasons"])
+
+
+def test_review_semantics_blocks_duplicate_finding_ids() -> None:
+    review = load_review("review-valid.json")
+    review["findings"].append(dict(review["findings"][0]))
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is False
+    assert "findings IDs must be unique" in result["errors"]
+
+
+def test_review_semantics_requires_prior_finding_closure_evidence() -> None:
+    review = load_review("review-valid.json")
+    review["prior_findings"] = [
+        {
+            "id": "finding-old",
+            "source_head_sha": "b" * 40,
+            "summary": "Old blocking finding.",
+            "status": "resolved",
+        }
+    ]
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is False
+    assert any("closure_evidence" in item for item in result["errors"])
+
+
+def test_review_semantics_blocks_unresolved_prior_finding() -> None:
+    review = load_review("review-valid.json")
+    review["prior_findings"] = [
+        {
+            "id": "finding-old",
+            "source_head_sha": "b" * 40,
+            "summary": "Old blocking finding.",
+            "status": "unresolved",
+        }
+    ]
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is True
+    assert any("unresolved prior finding" in item for item in result["blocking_reasons"])
+
+
+def test_review_semantics_requires_self_review_human_final_gate() -> None:
+    review = load_review("review-valid.json")
+    review["review_source"] = "self_review"
+    review["human_final_review_required"] = False
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is False
+    assert "self_review requires human_final_review_required=true" in result["errors"]
+
+
+def clean_terminal_artifact(
+    *,
+    artifact_id: str = "current-clean",
+    lane: str = "reviewer-1",
+    producer: str = "agent-reviewer-1",
+    head_sha: str = "a" * 40,
+) -> dict[str, object]:
+    review = load_review("review-valid.json")
+    review.update(
+        {
+            "artifact_id": artifact_id,
+            "reviewer_lane": lane,
+            "producer_identity": producer,
+            "head_sha": head_sha,
+            "verdict": "clean",
+            "findings": [],
+            "prior_findings": [],
+        }
+    )
+    return review
+
+
+def write_review_manifest(
+    repo: Path,
+    artifacts: list[dict[str, object]],
+) -> str:
+    review_dir = repo / "artifacts" / "reviews"
+    review_dir.mkdir(parents=True)
+    lanes: dict[tuple[str, str], list[str]] = {}
+    for index, artifact in enumerate(artifacts, start=1):
+        path = review_dir / f"artifact-{index}.json"
+        path.write_text(json.dumps(artifact), encoding="utf-8")
+        key = (str(artifact["reviewer_lane"]), str(artifact["producer_identity"]))
+        lanes.setdefault(key, []).append(path.relative_to(repo).as_posix())
+    manifest = {
+        "version": 1,
+        "pr": 489,
+        "head_sha": "a" * 40,
+        "human_final_review_required": False,
+        "lanes": [
+            {
+                "lane_id": lane,
+                "producer_identity": producer,
+                "artifact_paths": paths,
+            }
+            for (lane, producer), paths in lanes.items()
+        ],
+    }
+    path = review_dir / "manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return path.relative_to(repo).as_posix()
+
+
+def test_review_manifest_allows_clean_current_head(tmp_path: Path) -> None:
+    manifest_path = write_review_manifest(tmp_path, [clean_terminal_artifact()])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert result["errors"] == []
+    assert result["blocking_reasons"] == []
+    assert result["review_source"] == "independent_lane"
+
+
+def test_review_manifest_blocks_duplicate_terminal_for_lane_and_head(tmp_path: Path) -> None:
+    artifacts = [
+        clean_terminal_artifact(artifact_id="current-1"),
+        clean_terminal_artifact(artifact_id="current-2"),
+    ]
+    manifest_path = write_review_manifest(tmp_path, artifacts)
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("duplicate terminal artifacts" in item for item in result["errors"])
+
+
+def test_review_manifest_requires_stale_finding_carry_forward(tmp_path: Path) -> None:
+    stale = clean_terminal_artifact(artifact_id="old", head_sha="b" * 40)
+    stale["verdict"] = "blocking"
+    stale["findings"] = [
+        {
+            "id": "finding-old",
+            "severity": "important",
+            "actionable": True,
+            "summary": "Old blocking finding.",
+        }
+    ]
+    manifest_path = write_review_manifest(
+        tmp_path,
+        [stale, clean_terminal_artifact()],
+    )
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("missing prior finding carry-forward" in item for item in result["errors"])
+
+
+def test_review_manifest_blocks_concurrent_clean_and_blocking_verdicts(tmp_path: Path) -> None:
+    blocking = clean_terminal_artifact(
+        artifact_id="current-blocking",
+        lane="reviewer-2",
+        producer="agent-reviewer-2",
+    )
+    blocking["verdict"] = "blocking"
+    blocking["findings"] = [
+        {
+            "id": "finding-current",
+            "severity": "important",
+            "actionable": True,
+            "summary": "Current blocking finding.",
+        }
+    ]
+    manifest_path = write_review_manifest(
+        tmp_path,
+        [clean_terminal_artifact(), blocking],
+    )
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("verdict is not merge-ready" in item for item in result["blocking_reasons"])
+    assert any("blocking current-head finding" in item for item in result["blocking_reasons"])
+
+
+def test_review_manifest_rejects_artifact_path_traversal(tmp_path: Path) -> None:
+    review_dir = tmp_path / "artifacts" / "reviews"
+    review_dir.mkdir(parents=True)
+    manifest = {
+        "version": 1,
+        "pr": 489,
+        "head_sha": "a" * 40,
+        "human_final_review_required": False,
+        "lanes": [
+            {
+                "lane_id": "reviewer-1",
+                "producer_identity": "agent-reviewer-1",
+                "artifact_paths": ["../outside.json"],
+            }
+        ],
+    }
+    manifest_path = review_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path.relative_to(tmp_path).as_posix(),
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("repo-relative POSIX paths" in item for item in result["errors"])

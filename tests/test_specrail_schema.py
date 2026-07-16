@@ -32,6 +32,12 @@ def pr_review_gate_schema() -> dict[str, object]:
     )
 
 
+def review_result_schema() -> dict[str, object]:
+    return json.loads(
+        (ROOT / "schemas" / "review_result.schema.json").read_text(encoding="utf-8")
+    )
+
+
 def valid_checkpoint() -> dict[str, object]:
     return {
         "checkpoint_version": 1,
@@ -279,6 +285,27 @@ def test_pr_gate_schema_accepts_structured_partial_issue_reference() -> None:
     }
 
     validate_instance(pr_review_gate_schema(), evidence)
+
+
+def test_review_result_v2_fixture_validates_against_schema() -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    validate_instance(review_result_schema(), review)
+
+
+def test_review_result_schema_rejects_legacy_source_only_artifact() -> None:
+    legacy = {
+        "verdict": "REJECT",
+        "body": "## Summary\nlegacy\n\n## Verdict\nREJECT",
+        "comments": [],
+    }
+
+    with pytest.raises(SpecRailError, match="artifact_id"):
+        validate_instance(review_result_schema(), legacy)
 
 
 def test_runtime_checkpoint_inline_valid_instance_matches_schema() -> None:

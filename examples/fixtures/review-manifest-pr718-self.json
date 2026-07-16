@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "pr": 718,
+  "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "human_final_review_required": true,
+  "lanes": [
+    {
+      "lane_id": "self-review-recovery",
+      "producer_identity": "reviewer-1",
+      "artifact_paths": ["examples/fixtures/review-clean-pr718-self.json"]
+    }
+  ]
+}

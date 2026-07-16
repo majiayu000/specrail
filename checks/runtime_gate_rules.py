@@ -173,6 +173,43 @@ def _validate_self_review_authorization(
             errors.append(f"{label}: self_review_authorization.{key} is required")
 
 
+def _validate_terminal_review_summary(
+    review: dict[str, Any],
+    *,
+    head_sha: Any,
+    review_source: Any,
+    label: str,
+    errors: list[str],
+) -> None:
+    for key in ["manifest", "artifact_id", "head_sha", "review_completed_at"]:
+        if not _nonempty_string(review.get(key)):
+            errors.append(f"{label}: terminal review requires review.{key}")
+    if review.get("head_sha") != head_sha:
+        errors.append(f"{label}: terminal review head_sha must match item head_sha")
+    if review.get("terminal_status") != "completed":
+        errors.append(f"{label}: terminal review status must be completed")
+    if review.get("verdict") not in {"clean", "non_blocking"}:
+        errors.append(f"{label}: terminal review verdict must be clean or non_blocking")
+    findings = review.get("findings")
+    if not isinstance(findings, list):
+        errors.append(f"{label}: terminal review findings must be a list")
+    else:
+        for finding in findings:
+            if not isinstance(finding, dict):
+                errors.append(f"{label}: terminal review finding must be an object")
+            elif finding.get("severity") in {"critical", "important"} or finding.get("actionable") is True:
+                errors.append(f"{label}: terminal review has blocking/actionable finding")
+    prior_findings = review.get("prior_findings")
+    if not isinstance(prior_findings, list):
+        errors.append(f"{label}: terminal review prior_findings must be a list")
+    else:
+        for finding in prior_findings:
+            if isinstance(finding, dict) and finding.get("status") == "unresolved":
+                errors.append(f"{label}: terminal review has unresolved prior finding")
+    if review_source == "self_review" and review.get("human_final_review_required") is not True:
+        errors.append(f"{label}: self_review requires human_final_review_required=true")
+
+
 def _validate_declaration(
     value: Any,
     label: str,

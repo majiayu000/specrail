@@ -15,12 +15,19 @@ from typing import Any
 from github_evidence_common import EvidenceError, json_object
 from github_approved_spec_evidence import collect_approval_metadata
 from github_issue_reference import (
-    normalize_closing_issue_numbers, normalize_issue_reference,
+    normalize_issue_reference,
     normalize_linked_issue, references_partial_issue, relation_snapshot,
 )
 from github_pr_snapshot import (
     assert_same_pr_file_snapshot, collect_pr_file_snapshot, derive_spec_refs,
     enforcement_declaration,
+)
+from github_review_evidence import (
+    build_human_authorization,
+    build_self_review_authorization,
+    load_lane_failures,
+    load_resolver_role_map,
+    normalize_review_threads,
 )
 from sensitive_enforcement import (
     approved_spec_source_commits,
@@ -28,6 +35,7 @@ from sensitive_enforcement import (
     classify_sensitive_changes,
     sensitive_registry,
 )
+from review_result_semantics import ReviewSemanticError, load_review_manifest
 from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
@@ -59,9 +67,6 @@ query SpecRailReviewThreads($owner: String!, $name: String!, $number: Int!) {
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 STATUS_CONTEXT_STATES = {"SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED"}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
-LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
-
-
 def parse_github_repo(raw: str) -> tuple[str, str]:
     value = raw.strip()
     if not REPO_PATTERN.fullmatch(value):
@@ -193,88 +198,6 @@ def _require_bool(payload: dict[str, Any], field: str) -> bool:
     return value
 
 
-def _read_json_file(path: str, field: str) -> Any:
-    try:
-        with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
-    except OSError as exc:
-        raise EvidenceError(f"cannot read {field} file {path}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise EvidenceError(f"{field} file is not valid JSON: {exc.msg}") from exc
-
-
-def _first_comment_url(thread: dict[str, Any]) -> str | None:
-    comments = thread.get("comments")
-    if not isinstance(comments, dict):
-        return None
-    nodes = comments.get("nodes")
-    if not isinstance(nodes, list):
-        return None
-    for node in nodes:
-        if isinstance(node, dict) and isinstance(node.get("url"), str) and node["url"].strip():
-            return node["url"].strip()
-    return None
-
-
-def _resolver_login(thread: dict[str, Any]) -> str | None:
-    for key in ["resolvedBy", "resolved_by"]:
-        value = thread.get(key)
-        if isinstance(value, dict) and isinstance(value.get("login"), str) and value["login"].strip():
-            return value["login"].strip()
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def _resolver_role(thread: dict[str, Any]) -> str | None:
-    for key in ["resolverRole", "resolver_role"]:
-        value = thread.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def _resolver_role_map(payload: Any) -> dict[str, str]:
-    source = payload
-    if isinstance(payload, dict):
-        if isinstance(payload.get("resolver_roles"), dict):
-            source = payload["resolver_roles"]
-        elif isinstance(payload.get("lane_roster"), list):
-            source = payload["lane_roster"]
-        elif isinstance(payload.get("lanes"), list):
-            source = payload["lanes"]
-
-    roles: dict[str, str] = {}
-    if isinstance(source, dict):
-        for login, role in source.items():
-            if isinstance(login, str) and isinstance(role, str) and login.strip() and role.strip():
-                roles[login.strip()] = role.strip()
-        return roles
-
-    if isinstance(source, list):
-        for index, lane in enumerate(source, start=1):
-            if not isinstance(lane, dict):
-                raise EvidenceError(f"resolver role lane_roster item #{index} must be an object")
-            role = lane.get("resolver_role") or lane.get("role")
-            login = (
-                lane.get("login")
-                or lane.get("github_login")
-                or lane.get("actor")
-                or lane.get("resolved_by")
-            )
-            if isinstance(login, str) and isinstance(role, str) and login.strip() and role.strip():
-                roles[login.strip()] = role.strip()
-        return roles
-
-    raise EvidenceError("resolver role map must be an object or lane roster list")
-
-
-def load_resolver_role_map(path: str | None) -> dict[str, str]:
-    if path is None:
-        return {}
-    return _resolver_role_map(_read_json_file(path, "resolver role map"))
-
-
 def _author_login(value: Any, fallback: str) -> str:
     if isinstance(value, dict) and isinstance(value.get("login"), str) and value["login"].strip():
         return value["login"].strip()
@@ -345,127 +268,6 @@ def normalize_reviews(value: Any) -> list[dict[str, str]]:
     return [latest_by_author[author] for author in author_order]
 
 
-def normalize_review_threads(
-    graphql_payload: dict[str, Any],
-    resolver_roles: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
-    data = _require_mapping(graphql_payload.get("data"), "data")
-    repository = _require_mapping(data.get("repository"), "data.repository")
-    pull_request = _require_mapping(
-        repository.get("pullRequest"), "data.repository.pullRequest"
-    )
-    review_threads = _require_mapping(
-        pull_request.get("reviewThreads"), "data.repository.pullRequest.reviewThreads"
-    )
-    nodes = _require_list(
-        review_threads.get("nodes"), "data.repository.pullRequest.reviewThreads.nodes"
-    )
-
-    normalized: list[dict[str, Any]] = []
-    for index, item in enumerate(nodes, start=1):
-        if not isinstance(item, dict):
-            raise EvidenceError(f"review thread item #{index} must be an object")
-        thread: dict[str, Any] = {
-            "is_resolved": item.get("isResolved") is True,
-            "is_outdated": item.get("isOutdated") is True,
-        }
-        thread_id = item.get("id")
-        if isinstance(thread_id, str) and thread_id.strip():
-            thread["id"] = thread_id.strip()
-        url = _first_comment_url(item)
-        if url:
-            thread["url"] = url
-        resolver = _resolver_login(item)
-        if resolver:
-            thread["resolved_by"] = resolver
-        role = _resolver_role(item)
-        if not role and resolver and resolver_roles:
-            role = resolver_roles.get(resolver)
-        if role:
-            thread["resolver_role"] = role
-        normalized.append(thread)
-    return normalized
-
-
-def build_human_authorization(
-    actor: str | None,
-    source: str | None,
-    summary: str | None,
-) -> dict[str, str] | None:
-    provided = [value for value in [actor, source, summary] if value is not None and value.strip()]
-    if not provided:
-        return None
-    if not actor or not actor.strip() or not source or not source.strip():
-        raise EvidenceError(
-            "--authorization-actor and --authorization-source must be provided together"
-        )
-    authorization = {
-        "actor": actor.strip(),
-        "source": source.strip(),
-    }
-    if summary and summary.strip():
-        authorization["summary"] = summary.strip()
-    return authorization
-
-
-def build_self_review_authorization(
-    actor: str | None,
-    source: str | None,
-    scope: str | None,
-    summary: str | None,
-) -> dict[str, str] | None:
-    provided = [
-        value
-        for value in [actor, source, scope, summary]
-        if value is not None and value.strip()
-    ]
-    if not provided:
-        return None
-    if not actor or not actor.strip() or not source or not source.strip() or not scope or not scope.strip():
-        raise EvidenceError(
-            "--self-review-authorization-actor, --self-review-authorization-source, "
-            "and --self-review-authorization-scope must be provided together"
-        )
-    authorization = {
-        "actor": actor.strip(),
-        "source": source.strip(),
-        "scope": scope.strip(),
-    }
-    if summary and summary.strip():
-        authorization["summary"] = summary.strip()
-    return authorization
-
-
-def _normalize_lane_failure(item: Any, index: int) -> dict[str, str]:
-    if not isinstance(item, dict):
-        raise EvidenceError(f"lane_failures item #{index} must be an object")
-    normalized: dict[str, str] = {}
-    for key in ["lane_id", "failure_kind", "observed_marker"]:
-        value = item.get(key)
-        if not isinstance(value, str) or not value.strip():
-            raise EvidenceError(f"lane_failures[{index}].{key} must be a non-empty string")
-        normalized[key] = value.strip()
-    if normalized["failure_kind"] not in LANE_FAILURE_KINDS:
-        raise EvidenceError(
-            f"lane_failures[{index}].failure_kind is unsupported: {normalized['failure_kind']}"
-        )
-    detail = item.get("detail")
-    if isinstance(detail, str) and detail.strip():
-        normalized["detail"] = detail.strip()
-    return normalized
-
-
-def load_lane_failures(path: str | None) -> list[dict[str, str]]:
-    if path is None:
-        return []
-    payload = _read_json_file(path, "lane failures")
-    if isinstance(payload, dict):
-        payload = payload.get("lane_failures")
-    if not isinstance(payload, list):
-        raise EvidenceError("lane failures file must contain a list or lane_failures list")
-    return [_normalize_lane_failure(item, index) for index, item in enumerate(payload, start=1)]
-
-
 def build_evidence(
     pr_payload: dict[str, Any],
     threads_payload: dict[str, Any],
@@ -473,7 +275,7 @@ def build_evidence(
     merge_dispatched_at: str | None = None,
     merge_head_sha: str | None = None,
     review_source: str | None = None,
-    lane_failures: list[dict[str, str]] | None = None,
+    lane_failures: list[dict[str, Any]] | None = None,
     self_review_authorization: dict[str, str] | None = None,
     resolver_roles: dict[str, str] | None = None,
     expected_issue: int | None = None,
@@ -483,6 +285,8 @@ def build_evidence(
     repository: str | None = None,
     approval_metadata: dict[str, Any] | None = None,
     pr_snapshot: dict[str, Any] | None = None,
+    review_evidence: dict[str, Any] | None = None,
+    gate_started_at: str | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     linked_issue, issue_reference = normalize_issue_reference(
@@ -495,6 +299,11 @@ def build_evidence(
         "state": _require_string(pr_payload, "state").upper(),
         "is_draft": _require_bool(pr_payload, "isDraft"),
         "head_sha": head_sha,
+        "gate_started_at": gate_started_at
+        or datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
         "gate_query_completed_at": datetime.now(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
@@ -586,11 +395,15 @@ def build_evidence(
                     )
                 except SpecRailError as exc:
                     raise EvidenceError(str(exc)) from exc
-    if review_source is not None:
-        source = review_source.strip()
-        if source not in REVIEW_SOURCES:
-            raise EvidenceError(f"review_source must be one of {sorted(REVIEW_SOURCES)}")
-        evidence["review_source"] = source
+    if review_evidence is not None:
+        derived_source = review_evidence.get("review_source")
+        if derived_source not in REVIEW_SOURCES:
+            raise EvidenceError("review manifest must derive a supported review_source")
+        if review_source is not None and review_source.strip() != derived_source:
+            raise EvidenceError("--review-source conflicts with trusted review manifest")
+        evidence["review_source"] = derived_source
+        evidence["review_evidence"] = review_evidence
+        evidence["review_completed_at"] = review_evidence.get("review_completed_at")
     if authorization is not None:
         evidence["human_authorization"] = authorization
     if self_review_authorization is not None:
@@ -613,12 +426,13 @@ def collect_evidence(
     merge_dispatched_at: str | None = None,
     merge_head_sha: str | None = None,
     review_source: str | None = None,
-    lane_failures: list[dict[str, str]] | None = None,
+    lane_failures: list[dict[str, Any]] | None = None,
     self_review_authorization: dict[str, str] | None = None,
     resolver_roles: dict[str, str] | None = None,
     expected_issue: int | None = None,
     repo: Path | None = None,
     config: PackConfig | None = None,
+    review_manifest: str | None = None,
 ) -> dict[str, Any]:
     if expected_issue is not None and (
         not isinstance(expected_issue, int)
@@ -626,6 +440,9 @@ def collect_evidence(
         or expected_issue <= 0
     ):
         raise EvidenceError("expected issue must be a positive integer")
+    gate_started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
     owner, name = parse_github_repo(github_repo)
     pr_payload_before = collect_pr_view(github_repo, pr_number)
     head_sha_before = _require_string(pr_payload_before, "headRefOid")
@@ -702,6 +519,24 @@ def collect_evidence(
             "PR issue relation changed while collecting gate evidence; rerun PR evidence collection"
         )
 
+    review_evidence = None
+    if review_manifest is not None:
+        if repo is None:
+            raise EvidenceError("--review-manifest requires a repository checkout")
+        try:
+            review_evidence = load_review_manifest(
+                repo,
+                review_manifest,
+                expected_pr=pr_number,
+                expected_head_sha=head_sha_after,
+            )
+        except ReviewSemanticError as exc:
+            raise EvidenceError(str(exc)) from exc
+    elif review_source is not None:
+        raise EvidenceError(
+            "--review-source alone cannot prove terminal review; --review-manifest is required"
+        )
+
     return build_evidence(
         pr_payload_after,
         threads_payload,
@@ -719,6 +554,8 @@ def collect_evidence(
         github_repo,
         approval_metadata,
         file_snapshot_after,
+        review_evidence,
+        gate_started_at,
     )
 
 
@@ -741,6 +578,10 @@ def main() -> int:
         "--review-source",
         choices=sorted(REVIEW_SOURCES),
         help="Review source for the PR gate evidence",
+    )
+    parser.add_argument(
+        "--review-manifest",
+        help="Repo-relative trusted manifest containing all reviewer lane artifacts",
     )
     parser.add_argument(
         "--lane-failures-json",
@@ -787,6 +628,7 @@ def main() -> int:
             args.issue,
             repo,
             load_pack(repo),
+            args.review_manifest,
         )
     except (EvidenceError, SpecRailError) as exc:
         print(f"error: {exc}", file=sys.stderr)

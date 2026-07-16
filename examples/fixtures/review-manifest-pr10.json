@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "pr": 10,
+  "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "human_final_review_required": false,
+  "lanes": [
+    {
+      "lane_id": "reviewer-1",
+      "producer_identity": "reviewer",
+      "artifact_paths": ["examples/fixtures/review-clean-pr10.json"]
+    }
+  ]
+}

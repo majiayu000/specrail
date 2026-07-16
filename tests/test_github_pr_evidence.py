@@ -99,6 +99,43 @@ def threads_payload() -> dict[str, object]:
     }
 
 
+def clean_review_evidence() -> dict[str, object]:
+    head_sha = "e36d97517d8d0b27faca1abe5e5c63f9f88684d9"
+    artifact = {
+        "artifact_id": "pr10-head1-reviewer1",
+        "pr": 10,
+        "reviewer_lane": "reviewer-1",
+        "producer_identity": "reviewer",
+        "review_source": "independent_lane",
+        "head_sha": head_sha,
+        "review_started_at": "2026-07-15T23:57:00Z",
+        "review_completed_at": "2026-07-15T23:58:00Z",
+        "status": "completed",
+        "verdict": "clean",
+        "human_final_review_required": False,
+        "findings": [],
+        "prior_findings": [],
+        "body": "## Summary\nTerminal review.\n\n## Verdict\nclean",
+        "comments": [],
+    }
+    return {
+        "manifest_path": "examples/fixtures/review-manifest-pr10.json",
+        "manifest_sha256": "a" * 64,
+        "pr": 10,
+        "head_sha": head_sha,
+        "review_source": "independent_lane",
+        "review_completed_at": "2026-07-15T23:58:00Z",
+        "human_final_review_required": False,
+        "lane_roster": [
+            {"lane_id": "reviewer-1", "producer_identity": "reviewer"}
+        ],
+        "artifacts": [artifact],
+        "current_artifact_ids": ["pr10-head1-reviewer1"],
+        "errors": [],
+        "blocking_reasons": [],
+    }
+
+
 def base_sha() -> str:
     return "b" * 40
 
@@ -464,6 +501,7 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
             "summary": "merge approved",
         },
         review_source="independent_lane",
+        review_evidence=clean_review_evidence(),
     )
 
     assert evidence["pr"] == 10
@@ -501,9 +539,10 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
         {
             "id": "PRRT_kwDOExample",
             "url": "https://github.com/example/specrail/pull/10#discussion_r1",
-            "is_resolved": True,
-            "is_outdated": False,
-            "resolved_by": "reviewer",
+                "is_resolved": True,
+                "is_outdated": False,
+                "actionable": True,
+                "resolved_by": "reviewer",
             "resolver_role": "reviewer_lane",
         }
     ]
@@ -540,6 +579,7 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec(
         threads_payload(),
         {"actor": "user", "source": "chat"},
         review_source="independent_lane",
+        review_evidence=clean_review_evidence(),
         repo=ROOT,
         config=config,
         repository="majiayu000/specrail",
@@ -583,6 +623,7 @@ def test_build_evidence_rejects_body_hint_approval_metadata() -> None:
     with pytest.raises(EvidenceError, match="trusted maintainer label"):
         build_evidence(
             payload, threads_payload(), review_source="independent_lane",
+            review_evidence=clean_review_evidence(),
             repo=ROOT, config=config, repository="majiayu000/specrail",
             approval_metadata={
                 "approved_at": "2026-07-14T00:00:00Z",
@@ -662,6 +703,7 @@ def test_build_evidence_records_other_closing_issues_without_reclassifying_expec
         threads_payload(),
         {"actor": "user", "source": "chat"},
         review_source="independent_lane",
+        review_evidence=clean_review_evidence(),
         expected_issue=671,
         issue_payload={
             "number": 671,
@@ -754,6 +796,7 @@ def test_build_evidence_maps_resolver_role_from_lane_roster() -> None:
             "source": "chat",
         },
         review_source="independent_lane",
+        review_evidence=clean_review_evidence(),
         resolver_roles={"reviewer": "reviewer_lane"},
     )
 
@@ -766,6 +809,7 @@ def test_build_evidence_without_authorization_needs_human() -> None:
         pr_payload(),
         threads_payload(),
         review_source="independent_lane",
+        review_evidence=clean_review_evidence(),
     )
 
     assert "human_authorization" not in evidence
@@ -785,6 +829,7 @@ def test_build_evidence_can_record_merge_dispatch_ordering() -> None:
         "2026-07-04T00:00:10Z",
         "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
         review_source="independent_lane",
+        review_evidence=clean_review_evidence(),
     )
 
     assert evidence["merge_dispatched_at"] == "2026-07-04T00:00:10Z"
@@ -850,6 +895,8 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
             "merge approved",
             "--review-source",
             "independent_lane",
+            "--review-manifest",
+            "examples/fixtures/review-manifest-pr10.json",
             "--json",
         ],
         cwd=ROOT,
@@ -927,8 +974,6 @@ def test_cli_collects_verified_partial_issue_with_fake_gh(
             "801",
             "--issue",
             "671",
-            "--review-source",
-            "independent_lane",
             "--json",
         ],
         cwd=ROOT,
@@ -1027,7 +1072,6 @@ def test_collect_evidence_queries_partial_issue_inside_pr_snapshots(
         "majiayu000/remem",
         801,
         None,
-        review_source="independent_lane",
         expected_issue=671,
     )
 

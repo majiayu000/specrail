@@ -9,6 +9,43 @@
   "gate_query_completed_at": "2026-07-04T00:00:00Z",
   "gate_query_head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
   "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "review_completed_at": "2026-07-03T23:58:00Z",
+  "gate_started_at": "2026-07-03T23:59:00Z",
+  "review_evidence": {
+    "manifest_path": "examples/fixtures/review-manifest-pr718-self.json",
+    "manifest_sha256": "df0b800692886ea6223fffe684e24762b0fd0d18dd34d406dab2b46e0531c524",
+    "pr": 718,
+    "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+    "review_source": "self_review",
+    "review_completed_at": "2026-07-03T23:58:00Z",
+    "human_final_review_required": true,
+    "lane_roster": [
+      {"lane_id": "self-review-recovery", "producer_identity": "reviewer-1"}
+    ],
+    "artifacts": [
+      {
+        "artifact_id": "pr718-head1-self-review",
+        "pr": 718,
+        "reviewer_lane": "self-review-recovery",
+        "producer_identity": "reviewer-1",
+        "review_source": "self_review",
+        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "review_started_at": "2026-07-03T23:57:00Z",
+        "review_completed_at": "2026-07-03T23:58:00Z",
+        "status": "completed",
+        "verdict": "clean",
+        "human_final_review_required": true,
+        "findings": [],
+        "prior_findings": [],
+        "body": "## Summary\nScoped self-review recovery evidence.\n\n## Verdict\nclean; human final review remains required.",
+        "comments": []
+      }
+    ],
+    "current_artifact_ids": ["pr718-head1-self-review"],
+    "errors": [],
+    "blocking_reasons": []
+  },
+
   "human_authorization": {
     "actor": "maintainer",
     "source": "chat",
@@ -19,6 +56,8 @@
     {
       "failure_kind": "usage_limit",
       "lane_id": "merge-reviewer-1",
+      "pr": 718,
+      "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
       "observed_marker": "You've hit your usage limit"
     }
   ],
@@ -32,6 +71,7 @@
       "is_resolved": true,
       "resolved_by": "maintainer",
       "resolver_role": "human",
+      "authorized_human_maintainer": true,
       "url": "https://example.invalid/self-review-unauthorized"
     }
   ],

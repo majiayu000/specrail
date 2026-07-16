@@ -1,5 +1,22 @@
 {
-  "verdict": "REJECT",
+  "artifact_id": "fixture-review-round3-full-with-request",
+  "prior_findings": [],
+  "reviewer_lane": "reviewer-1",
+  "producer_identity": "agent-reviewer-1",
+  "review_source": "independent_lane",
+  "review_started_at": "2026-07-16T00:00:00Z",
+  "review_completed_at": "2026-07-16T00:01:00Z",
+  "status": "completed",
+  "verdict": "blocking",
+  "human_final_review_required": false,
+  "findings": [
+    {
+      "id": "fixture-finding",
+      "severity": "important",
+      "actionable": true,
+      "summary": "Fixture review finding."
+    }
+  ],
   "body": "## Summary\nAdvisory review artifact. The implementation needs one fix before human final review.\n\n## Verdict\nREJECT: request changes before human final review.",
   "comments": [
     {

@@ -23,6 +23,7 @@ from runtime_gate_rules import (
     _validate_goal_candidate,
     _validate_lane_failure_outcome,
     _validate_self_review_authorization,
+    _validate_terminal_review_summary,
     _validate_tranche_mix,
 )
 from specrail_lib import PackConfig, SPEC_STATUSES, load_pack, resolve_path
@@ -553,6 +554,13 @@ def evaluate_checkpoint(
                 )
             elif review_source == "self_review":
                 _validate_self_review_authorization(raw_item, label, errors)
+            _validate_terminal_review_summary(
+                review,
+                head_sha=head_sha,
+                review_source=review_source,
+                label=label,
+                errors=errors,
+            )
 
             if review_status not in {"passed", "approved", "clean"}:
                 if review_source == "self_review":
