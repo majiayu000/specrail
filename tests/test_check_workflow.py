@@ -715,6 +715,27 @@ def test_spec_packet_reports_missing_doc_and_issue_token(tmp_path: Path) -> None
     assert any("product.md: missing linked issue token" in error for error in errors)
 
 
+def test_spec_packet_rejects_unrendered_tech_manifest_template(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "repo" / "specs" / "GH1"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "product.md").write_text("GitHub issue: `#1`\n", encoding="utf-8")
+    (spec_dir / "tech.md").write_text(
+        "GitHub issue: `#1`\n"
+        + (ROOT / "templates" / "tech_spec.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] `SP1-T001` Owner: test | Done when: done | Verify: test\n",
+        encoding="utf-8",
+    )
+
+    errors = validate_spec_packet(spec_dir)
+
+    assert f"{spec_dir / 'tech.md'}: manifest issue must match GH1" in errors
+    assert f"{spec_dir / 'tech.md'}: manifest must declare complete=true" in errors
+    assert f"{spec_dir / 'tech.md'}: manifest paths must not be empty" in errors
+
+
 def test_spec_packet_rejects_task_identity_redirect(tmp_path: Path) -> None:
     spec_dir = tmp_path / "repo" / "specs" / "GH1"
     spec_dir.mkdir(parents=True)

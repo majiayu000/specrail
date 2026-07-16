@@ -23,7 +23,10 @@ from specrail_lib import (
     validate_state_graph,
     validate_skills_lock,
 )
-from sensitive_enforcement import validate_sensitive_registry
+from sensitive_enforcement import (
+    parse_planned_changes_manifest,
+    validate_sensitive_registry,
+)
 
 
 REQUIRED_FILES = [
@@ -287,6 +290,24 @@ def validate_spec_packet(spec_dir: Path) -> list[str]:
             errors.append(f"{path}: must not be empty")
         if issue_tokens and not any(token in text for token in issue_tokens):
             errors.append(f"{path}: missing linked issue token {' or '.join(issue_tokens)}")
+        if name == "tech.md" and "specrail-planned-changes" in text:
+            try:
+                manifest = parse_planned_changes_manifest(
+                    text.encode("utf-8"), label=str(path)
+                )
+            except SpecRailError as exc:
+                errors.append(str(exc))
+            else:
+                if manifest["version"] != 1:
+                    errors.append(f"{path}: manifest version must be 1")
+                if issue_number and manifest["issue"] != int(issue_number):
+                    errors.append(
+                        f"{path}: manifest issue must match GH{issue_number}"
+                    )
+                if manifest["complete"] is not True:
+                    errors.append(f"{path}: manifest must declare complete=true")
+                if not manifest["paths"]:
+                    errors.append(f"{path}: manifest paths must not be empty")
 
     task_path = spec_dir / "tasks.md"
     if not task_path.is_file():
