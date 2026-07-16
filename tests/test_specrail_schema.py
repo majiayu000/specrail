@@ -12,7 +12,12 @@ CHECKS = ROOT / "checks"
 sys.path.insert(0, str(CHECKS))
 
 from runtime_ledger_gate import evaluate_checkpoint  # noqa: E402
-from specrail_lib import SpecRailError, validate_instance  # noqa: E402
+from specrail_lib import (  # noqa: E402
+    InstanceMismatch,
+    SchemaDefinitionError,
+    SpecRailError,
+    validate_instance,
+)
 
 
 def runtime_checkpoint_schema() -> dict[str, object]:
@@ -115,10 +120,48 @@ def test_validate_instance_supports_schema_composition_and_conditionals() -> Non
     validate_instance(schema, {"mode": "sensitive", "approval": "maintainer"})
     validate_instance(schema, {"legacy": True})
 
-    with pytest.raises(SpecRailError, match="approval: missing required field"):
+    with pytest.raises(InstanceMismatch, match="approval: missing required field"):
         validate_instance(schema, {"mode": "sensitive"})
-    with pytest.raises(SpecRailError, match="expected const None"):
+    with pytest.raises(InstanceMismatch, match="expected const None"):
         validate_instance(schema, {"legacy": True, "approval": "forged"})
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {
+            "if": {"typoKeyword": True},
+            "then": {"required": ["approval"]},
+        },
+        {
+            "anyOf": [
+                {"typoKeyword": True},
+                {"required": ["legacy"]},
+            ]
+        },
+        {
+            "allOf": [
+                {
+                    "if": {"const": "current"},
+                    "then": {"const": "current"},
+                    "else": {
+                        "properties": {
+                            "nested": {"typoKeyword": True},
+                        }
+                    },
+                }
+            ]
+        },
+    ],
+)
+def test_validate_instance_rejects_invalid_nested_schema_before_evaluation(
+    schema: dict[str, object],
+) -> None:
+    with pytest.raises(
+        SchemaDefinitionError,
+        match="unsupported JSON Schema keyword",
+    ):
+        validate_instance(schema, {"legacy": True})
 
 
 def test_validate_instance_supports_min_properties_for_approved_spec_revisions() -> None:
