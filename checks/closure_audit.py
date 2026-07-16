@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from specrail_lib import SpecRailError, validate_instance
+from specrail_lib import SpecRailError, resolve_repo_path, validate_instance
 
 
 REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -258,7 +258,11 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _load_schema(repo: Path) -> dict[str, Any]:
-    path = repo / "schemas" / "closure_audit_result.schema.json"
+    path = resolve_repo_path(
+        repo,
+        "schemas/closure_audit_result.schema.json",
+        label="closure audit schema",
+    )
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -285,9 +289,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         repo = Path(args.repo).resolve()
-        evidence_path = Path(args.evidence)
-        if not evidence_path.is_absolute():
-            evidence_path = repo / evidence_path
+        evidence_path = resolve_repo_path(
+            repo,
+            args.evidence,
+            label="closure evidence",
+        )
         result = audit_closure(
             _load_json(evidence_path), checked_at=args.checked_at
         )

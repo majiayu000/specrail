@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -182,23 +183,35 @@ def test_invalid_follow_up_identity_fails_explicitly(field: str, value: object) 
         audit_closure(evidence, checked_at="2026-07-16T14:39:00Z")
 
 
-def write_evidence(tmp_path: Path, evidence: dict[str, object]) -> Path:
-    path = tmp_path / "closure.json"
+def make_cli_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir(parents=True)
+    shutil.copyfile(
+        ROOT / "schemas" / "closure_audit_result.schema.json",
+        schema_dir / "closure_audit_result.schema.json",
+    )
+    return repo
+
+
+def write_evidence(repo: Path, evidence: dict[str, object]) -> Path:
+    path = repo / "closure.json"
     path.write_text(json.dumps(evidence), encoding="utf-8")
     return path
 
 
 def test_cli_compliant_smoke(tmp_path: Path) -> None:
-    evidence = write_evidence(tmp_path, compliant_evidence())
+    repo = make_cli_repo(tmp_path)
+    evidence = write_evidence(repo, compliant_evidence())
 
     completed = subprocess.run(
         [
             sys.executable,
             "checks/closure_audit.py",
             "--repo",
-            ".",
+            str(repo),
             "--evidence",
-            str(evidence),
+            evidence.name,
             "--checked-at",
             "2026-07-16T14:39:00Z",
             "--json",
@@ -216,6 +229,7 @@ def test_cli_compliant_smoke(tmp_path: Path) -> None:
 
 
 def test_cli_violation_smoke(tmp_path: Path) -> None:
+    repo = make_cli_repo(tmp_path)
     evidence_payload = compliant_evidence()
     evidence_payload["gate"] = None
     merge = evidence_payload["merge"]
@@ -223,16 +237,16 @@ def test_cli_violation_smoke(tmp_path: Path) -> None:
     merge["merge_path"] = "merged_by_other"
     merge.pop("merge_dispatched_at")
     merge.pop("merge_head_sha")
-    evidence = write_evidence(tmp_path, evidence_payload)
+    evidence = write_evidence(repo, evidence_payload)
 
     completed = subprocess.run(
         [
             sys.executable,
             "checks/closure_audit.py",
             "--repo",
-            ".",
+            str(repo),
             "--evidence",
-            str(evidence),
+            evidence.name,
             "--checked-at",
             "2026-07-16T14:39:00Z",
             "--json",
@@ -250,7 +264,8 @@ def test_cli_violation_smoke(tmp_path: Path) -> None:
 
 
 def test_cli_invalid_json_is_error(tmp_path: Path) -> None:
-    evidence = tmp_path / "invalid.json"
+    repo = make_cli_repo(tmp_path)
+    evidence = repo / "invalid.json"
     evidence.write_text("{", encoding="utf-8")
 
     completed = subprocess.run(
@@ -258,9 +273,9 @@ def test_cli_invalid_json_is_error(tmp_path: Path) -> None:
             sys.executable,
             "checks/closure_audit.py",
             "--repo",
-            ".",
+            str(repo),
             "--evidence",
-            str(evidence),
+            evidence.name,
             "--json",
         ],
         cwd=ROOT,
@@ -271,4 +286,42 @@ def test_cli_invalid_json_is_error(tmp_path: Path) -> None:
 
     assert completed.returncode == 2
     assert "invalid closure evidence JSON" in completed.stderr
+    assert completed.stdout == ""
+
+
+@pytest.mark.parametrize("evidence_arg", ["absolute", "parent", "symlink"])
+def test_cli_rejects_evidence_outside_repository(
+    tmp_path: Path, evidence_arg: str
+) -> None:
+    repo = make_cli_repo(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps(compliant_evidence()), encoding="utf-8")
+    if evidence_arg == "absolute":
+        argument = str(outside)
+    elif evidence_arg == "parent":
+        argument = "../outside.json"
+    else:
+        link = repo / "escape.json"
+        link.symlink_to(outside)
+        argument = link.name
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "checks/closure_audit.py",
+            "--repo",
+            str(repo),
+            "--evidence",
+            argument,
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2
+    assert "closure evidence" in completed.stderr
+    assert "repository" in completed.stderr
     assert completed.stdout == ""
