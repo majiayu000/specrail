@@ -90,6 +90,11 @@ evidence JSON and checks PR head, CI, review threads, merge state, linked issue,
 and human merge authorization. A later GitHub adapter can collect that evidence,
 but the policy decision should stay in the evaluator.
 
+The post-merge closure evaluator is `checks/closure_audit.py`. It verifies the
+same-head `gate < dispatch <= merged` chain from local evidence and emits a
+schema-valid advisory result. It performs no GitHub writes; consumers own any
+follow-up persistence or issue creation.
+
 The first issue evidence adapter is `checks/github_issue_evidence.py`. It uses
 `gh issue view` to collect issue state, labels, title, URL, default artifact
 paths, and state trust metadata, then prints schema-valid JSON that

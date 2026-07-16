@@ -49,6 +49,7 @@ REQUIRED_FILES = [
     "checks/github_pr_snapshot.py",
     "checks/github_review_evidence.py",
     "checks/pack_asset_validation.py",
+    "checks/closure_audit.py",
     "checks/pr_gate.py",
     "checks/pr_review_contract.py",
     "checks/review_json_gate.py",
