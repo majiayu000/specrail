@@ -3,9 +3,10 @@
 
 Measures per-spec: product/tech line counts, numbered behavior-invariant count,
 EARS-style conditional ratio, boundary-category coverage, and verified-style
-file:line anchor count in tech.md. Metric semantics v2 align boundary coverage
-with the current template's 10 verdict rows and count only conditional EARS
-triggers. Recomputed at GH-86 baseline commit ac66dbb (30 specs): 60% had
+file:line anchor count in tech.md. Metric semantics v3 align boundary coverage
+with the current template's 10 verdict rows, count only conditional EARS
+triggers, and include code-formatted or conventional extensionless file
+anchors. Recomputed at GH-86 baseline commit ac66dbb (30 specs): 60% had
 exactly 5 invariants, 28/30 had zero anchors, boundary coverage averaged
 0.6/10, and EARS coverage was 24%.
 
@@ -26,7 +27,7 @@ from collections import Counter
 import re
 from pathlib import Path
 
-METRIC_SEMANTICS_VERSION = 2
+METRIC_SEMANTICS_VERSION = 3
 
 INVARIANT_RE = re.compile(r"^\s*(?:[-*]\s*)?(?:[A-Z]{1,3}[-_ ]?)?\d{1,3}[.)：:]\s+")
 EARS_RE = re.compile(
@@ -35,6 +36,10 @@ EARS_RE = re.compile(
     re.IGNORECASE,
 )
 FILE_LINE_RE = re.compile(r"(?:[A-Za-z0-9_.\-/]+\.[A-Za-z0-9_+\-]+)(?::|#L)\d+")
+EXTENSIONLESS_FILE_LINE_RE = re.compile(
+    r"`(?:[A-Za-z0-9_.+\-]+/)*[A-Za-z0-9_+\-]*[A-Za-z]"
+    r"[A-Za-z0-9_+\-]*(?::|#L)\d+`"
+)
 FILE_RANGE_RE = re.compile(r"[A-Za-z0-9_.\-/]+\.[A-Za-z0-9_+\-]+\s*\(\d+[-–]\d+\)")
 
 BOUNDARY_CATEGORIES = {
@@ -124,6 +129,14 @@ def spec_labels(dirs: list[Path], *, explicit: bool) -> list[str]:
     ]
 
 
+def anchor_count(text: str) -> int:
+    return (
+        len(FILE_LINE_RE.findall(text))
+        + len(EXTENSIONLESS_FILE_LINE_RE.findall(text))
+        + len(FILE_RANGE_RE.findall(text))
+    )
+
+
 def audit_dir(d: Path, *, label: str | None = None):
     prod = d / "product.md"
     tech = d / "tech.md"
@@ -137,7 +150,7 @@ def audit_dir(d: Path, *, label: str | None = None):
     ears_hits = sum(1 for it in invs if EARS_RE.search(it))
     ears_ratio = (ears_hits / n_inv) if n_inv else 0.0
     cov = boundary_cov(ptext)
-    anchors = len(FILE_LINE_RE.findall(ttext)) + len(FILE_RANGE_RE.findall(ttext))
+    anchors = anchor_count(ttext)
     return (
         label or d.name,
         len(ptext.splitlines()),

@@ -5,13 +5,31 @@ import sys
 from tools.spec_depth_audit import (
     EARS_RE,
     METRIC_SEMANTICS_VERSION,
+    anchor_count,
     boundary_cov,
     spec_labels,
 )
 
 
 def test_metric_semantics_version_is_explicit() -> None:
-    assert METRIC_SEMANTICS_VERSION == 2
+    assert METRIC_SEMANTICS_VERSION == 3
+
+
+def test_anchor_count_includes_extensionless_files_without_counting_ids() -> None:
+    tech = """\
+`checks/gate.py:9`
+`Dockerfile:12`
+`Makefile:5`
+`CODEOWNERS:3`
+`config/hooks/pre-commit:7`
+B-001:4
+GH-93:2
+status:200
+http://localhost:8080
+`123:4`
+"""
+
+    assert anchor_count(tech) == 5
 
 
 def test_ears_ratio_requires_a_conditional_trigger() -> None:
