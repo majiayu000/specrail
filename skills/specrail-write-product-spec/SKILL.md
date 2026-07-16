@@ -1,6 +1,6 @@
 ---
 name: specrail-write-product-spec
-description: Use when writing or updating a SpecRail product spec for a linked issue. Produces the numbered `product.md` spec from the locale-appropriate template, focusing on user-facing behavior, goals, non-goals, and acceptance criteria without implementation detail.
+description: Use when writing or updating a SpecRail product spec for a linked issue. Produces the numbered `product.md` spec from the locale-appropriate template, focusing on user-facing behavior, goals, non-goals, and acceptance criteria without implementation detail. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
 ---
 
 # SpecRail Write Product Spec

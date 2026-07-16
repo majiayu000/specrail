@@ -1,6 +1,6 @@
 ---
 name: specrail-triage-issue
-description: Use when triaging a GitHub issue or issue-like request in a SpecRail-governed repository. Handles search-first duplicate checks, issue classification, readiness label proposals, security-private routing, and triage handoffs without bypassing human gates.
+description: Use when triaging a GitHub issue or issue-like request in a SpecRail-governed repository. Handles search-first duplicate checks, issue classification, readiness label proposals, security-private routing, and triage handoffs without bypassing human gates. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
 ---
 
 # SpecRail Triage Issue

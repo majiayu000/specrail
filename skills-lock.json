@@ -10,67 +10,67 @@
     {
       "name": "specrail-check-impl-against-spec",
       "path": "skills/specrail-check-impl-against-spec/SKILL.md",
-      "computedHash": "sha256:bad3ab797477f0905c39f4487bc9b416620df094acbdfa230610f9e21ca5aa3f"
+      "computedHash": "sha256:291e7a4121b5800badcb1369c39de70ae1ffe1f5b89e4fc5337a645292f90529"
     },
     {
       "name": "specrail-diagnose-ci",
       "path": "skills/specrail-diagnose-ci/SKILL.md",
-      "computedHash": "sha256:43890744a43a5c4cde44da35551d9784092b741042267baadd4b7facc67f9169"
+      "computedHash": "sha256:10b1a983fb14fd2a315afca9497702f3f12c2e5dc61814bdc4f0b1091dd5cf96"
     },
     {
       "name": "specrail-implement-queue",
       "path": "skills/specrail-implement-queue/SKILL.md",
-      "computedHash": "sha256:1a7ea602f8822d35d00c69a262c8ba4d42fa9c1fe78e9c4ebe76e13e358fdd78"
+      "computedHash": "sha256:f25d5885c71c25db020fa16b43a3c3845b13730f7230cc32c5e190bf2e3976cc"
     },
     {
       "name": "specrail-implement",
       "path": "skills/specrail-implement/SKILL.md",
-      "computedHash": "sha256:b28e94156e56a3e496743705ce5ea31d255a9e493d3f0501ab1bf0c43a27a981"
+      "computedHash": "sha256:40d1214e7a4b00ba82f22ab17665836e1c7147db9a8c1e04fa06495b04c0ceb0"
     },
     {
       "name": "specrail-install",
       "path": "skills/specrail-install/SKILL.md",
-      "computedHash": "sha256:722fbf72adb490fcf48daa17bbccfcbb889034c97bff752e75cc8c1396cbe90f"
+      "computedHash": "sha256:7f522c8d4e1c444accc4b24b24b90d3d380afa93acd39c6f2b0301254f679374"
     },
     {
       "name": "specrail-plan-tasks",
       "path": "skills/specrail-plan-tasks/SKILL.md",
-      "computedHash": "sha256:ae76ce467fde7f4939a0a94980a8344d307b6a2787e59008d42c3d8d7a49e0f9"
+      "computedHash": "sha256:31237ab799714902689c57a743e17ee49622b720c3ca65ede2f77d6412ff99df"
     },
     {
       "name": "specrail-pr-gate",
       "path": "skills/specrail-pr-gate/SKILL.md",
-      "computedHash": "sha256:94db458f9d5270669b60fb342cb1bf5c0e24f9c5a40a67eb90044e8e51968021"
+      "computedHash": "sha256:2dc13c0723c6f8111d681a1a39f601355ab8e2d7f525f80b1aa954ad320db762"
     },
     {
       "name": "specrail-release-note",
       "path": "skills/specrail-release-note/SKILL.md",
-      "computedHash": "sha256:e0825e7f3c52a00030ccec2d0cf131415df53fae7724012f1d8f984f891d4938"
+      "computedHash": "sha256:50dfd864f20468ab8a2f9c0093f8a50506fd0843f4f427ccb84c79d7cf0f8824"
     },
     {
       "name": "specrail-review-pr",
       "path": "skills/specrail-review-pr/SKILL.md",
-      "computedHash": "sha256:a5e824cfe3dac541e70ae86032101a130c2c8604a4ed1a5adfa2f13f02e8e441"
+      "computedHash": "sha256:0d9e0926b715ec74402f1e30861dcf072446d30659d4189c1b9ebd0747d9ce1a"
     },
     {
       "name": "specrail-triage-issue",
       "path": "skills/specrail-triage-issue/SKILL.md",
-      "computedHash": "sha256:7cfb668cf5e5a0ef8a6168f56b65164df66a15793f2fa2a62cedc91add7d9b95"
+      "computedHash": "sha256:0638123c0cfabb0511a601e411ed065351c94207ff97916df501692bf0d29e33"
     },
     {
       "name": "specrail-workflow",
       "path": "skills/specrail-workflow/SKILL.md",
-      "computedHash": "sha256:bbfbf731b7033f81c4470b8bcd0bfc56f287a6e84db86e3950b198a0ab1c1b15"
+      "computedHash": "sha256:cbfdbd69428960840fbe52cf15c48a2f24bf23787a28dbbc45f01f7ae0d12e78"
     },
     {
       "name": "specrail-write-product-spec",
       "path": "skills/specrail-write-product-spec/SKILL.md",
-      "computedHash": "sha256:8b184006422026eb1a572ec1307e6cd01ac6c041fd41da1f860cc705d03298ae"
+      "computedHash": "sha256:a4e2ed67baa5d1f86d15a2fbe6df4ac31e9ed6760d56a87f0699221a54c7c445"
     },
     {
       "name": "specrail-write-tech-spec",
       "path": "skills/specrail-write-tech-spec/SKILL.md",
-      "computedHash": "sha256:58e9dca625844bcecad962226ea808aba60610c654bcd217b8b0c857993e3395"
+      "computedHash": "sha256:662d714880eb4cfec9e2d7538df4090174663971e9116eff71738c55a135eb59"
     }
   ]
 }

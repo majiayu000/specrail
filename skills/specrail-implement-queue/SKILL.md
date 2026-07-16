@@ -1,6 +1,6 @@
 ---
 name: specrail-implement-queue
-description: Use when implementing or draining a GitHub issue/PR queue in a SpecRail-governed repository where approved specs already exist, such as multiple numbered specs/GH packets that need one or more implementation PRs per issue. Maps issues to specs and existing PRs, supports full-queue drain requests from implx, selects single-agent or optional threads orchestration, preserves partial versus final closing semantics, and requires SpecRail verification plus PR gates before merge-readiness claims.
+description: Use ONLY when explicitly delegated by the implx skill or when the user names this skill (specrail-implement-queue) directly. Do not self-activate from descriptive language about optimizing a repository, finishing issues, draining work, or making many PRs — without an explicit implx or by-name invocation, follow the repository's AGENTS.md conventions as a normal agent instead. When invoked, implements or drains a GitHub issue/PR queue in a SpecRail-governed repository where approved specs already exist: maps issues to specs and existing PRs, supports full-queue drain requests from implx, selects single-agent or optional threads orchestration, preserves partial versus final closing semantics, and requires SpecRail verification plus PR gates before merge-readiness claims.
 ---
 
 # SpecRail Implement Queue

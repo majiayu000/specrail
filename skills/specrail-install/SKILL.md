@@ -1,6 +1,6 @@
 ---
 name: specrail-install
-description: Use when installing, updating, verifying, or adopting SpecRail for agents. Guides local Codex skill installation, global AGENTS.md guidance setup, repository adoption planning, dry-run-first verification, and explicit human authorization boundaries.
+description: Use when installing, updating, verifying, or adopting SpecRail for agents. Guides local Codex skill installation, global AGENTS.md guidance setup, repository adoption planning, dry-run-first verification, and explicit human authorization boundaries. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
 ---
 
 # SpecRail Install
