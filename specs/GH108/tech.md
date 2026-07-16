@@ -48,30 +48,39 @@ Link to `product.md`.
 以下命令由 implementation owner 在同一个干净 worktree 中按顺序执行。步骤 1-2
 必须发生在任何测试文件编辑之前；`/tmp` 证据同时摘要到 implementation PR，且不提交。
 
-1. 记录实际 implementation base：
+1. 记录实际 implementation base 与本次验证唯一使用的 Python。默认跟随仓库/CI
+   的 `python3`；本地环境需要覆盖时显式设置 `PYTHON_BIN`，但编辑前后不得切换：
 
    ```sh
    git rev-parse HEAD > /tmp/gh108-impl-base-sha.txt
+   python_bin=${PYTHON_BIN:-python3}
+   command -v "$python_bin" > /tmp/gh108-python-bin.txt
+   python_bin=$(cat /tmp/gh108-python-bin.txt)
+   "$python_bin" -m pytest --version
    ```
 
 2. 保存编辑前的 normalized runtime nodes 与全库 collected count：
 
    ```sh
-   /usr/bin/python3 -m pytest --collect-only -q tests/test_runtime_ledger_gate.py \
+   python_bin=$(cat /tmp/gh108-python-bin.txt)
+   "$python_bin" -m pytest --collect-only -q tests/test_runtime_ledger_gate.py \
      | sed -n '/::/s/^[^:]*:://p' | LC_ALL=C sort \
      > /tmp/gh108-before-runtime-nodes.txt
-   /usr/bin/python3 -m pytest --collect-only -q \
+   "$python_bin" -m pytest --collect-only -q \
      | awk '/::/{count++} END{print count+0}' \
      > /tmp/gh108-before-all-count.txt
+   test "$(rg -c '^def test_' tests/test_runtime_ledger_gate.py)" -eq 66
+   test "$(wc -l < /tmp/gh108-before-runtime-nodes.txt | tr -d ' ')" -eq 73
    ```
 
 3. 拆分后保存同形证据并逐项比较：
 
    ```sh
-   /usr/bin/python3 -m pytest --collect-only -q tests/test_runtime_ledger*.py \
+   python_bin=$(cat /tmp/gh108-python-bin.txt)
+   "$python_bin" -m pytest --collect-only -q tests/test_runtime_ledger*.py \
      | sed -n '/::/s/^[^:]*:://p' | LC_ALL=C sort \
      > /tmp/gh108-after-runtime-nodes.txt
-   /usr/bin/python3 -m pytest --collect-only -q \
+   "$python_bin" -m pytest --collect-only -q \
      | awk '/::/{count++} END{print count+0}' \
      > /tmp/gh108-after-all-count.txt
    diff -u /tmp/gh108-before-runtime-nodes.txt /tmp/gh108-after-runtime-nodes.txt
@@ -83,9 +92,9 @@ Link to `product.md`.
 
    ```sh
    impl_base_sha=$(cat /tmp/gh108-impl-base-sha.txt)
-   /usr/bin/python3 - "$impl_base_sha" <<'PY'
+   python_bin=$(cat /tmp/gh108-python-bin.txt)
+   "$python_bin" - "$impl_base_sha" <<'PY'
    import ast
-   import glob
    import subprocess
    import sys
 
@@ -130,7 +139,50 @@ Link to `product.md`.
    PY
    ```
 
-5. 用同一 SHA 和精确 allowlist 审计 committed scope；只打印路径不算通过：
+5. 导入拆分后的模块，验证测试全局名称仍绑定到真实 production symbols，而不是
+   support wrapper、lambda 或替代常量：
+
+   ```sh
+   python_bin=$(cat /tmp/gh108-python-bin.txt)
+   "$python_bin" - <<'PY'
+   import importlib
+   import sys
+   from pathlib import Path
+
+   root = Path.cwd().resolve()
+   sys.path.insert(0, str(root / "tests"))
+   sys.path.insert(0, str(root / "checks"))
+   gate = importlib.import_module("runtime_ledger_gate")
+   library = importlib.import_module("specrail_lib")
+   test_modules = [
+       importlib.import_module("test_runtime_ledger_gate"),
+       importlib.import_module("test_runtime_ledger_queue"),
+       importlib.import_module("test_runtime_ledger_review"),
+   ]
+   support = importlib.import_module("runtime_ledger_test_support")
+
+   for module in test_modules:
+       assert module.evaluate_checkpoint is gate.evaluate_checkpoint
+   for name in (
+       "CHECKPOINT_STATUSES",
+       "FULL_QUEUE_NON_DRAINED_STATES",
+       "FULL_QUEUE_TERMINAL_REMAINDER_STATES",
+       "MERGE_READY_STATES",
+   ):
+       owners = [module for module in test_modules if hasattr(module, name)]
+       assert owners, f"production symbol is no longer bound: {name}"
+       assert all(getattr(module, name) is getattr(gate, name) for module in owners)
+   for name in ("RUNTIME_ONLY_STATE", "RUNTIME_STATE_MAPPING", "SPEC_STATUSES", "load_yaml_file"):
+       owners = [module for module in test_modules if hasattr(module, name)]
+       assert owners, f"specrail_lib symbol is no longer bound: {name}"
+       assert all(getattr(module, name) is getattr(library, name) for module in owners)
+   for module in [*test_modules, support]:
+       assert module.ROOT == root
+   print("production symbol identity passed")
+   PY
+   ```
+
+6. 用同一 SHA 和精确 allowlist 审计 committed scope；只打印路径不算通过：
 
    ```sh
    impl_base_sha=$(cat /tmp/gh108-impl-base-sha.txt)
@@ -149,10 +201,11 @@ Link to `product.md`.
      checks schemas examples/fixtures .github/workflows specs
    ```
 
-6. focused run 必须实际执行全部 73 cases，不得出现 skipped/xfailed/xpassed：
+7. focused run 必须实际执行全部 73 cases，不得出现 skipped/xfailed/xpassed：
 
    ```sh
-   /usr/bin/python3 -m pytest -q -r a tests/test_runtime_ledger*.py \
+   python_bin=$(cat /tmp/gh108-python-bin.txt)
+   "$python_bin" -m pytest -q -r a tests/test_runtime_ledger*.py \
      > /tmp/gh108-focused-pytest.txt 2>&1
    tail -n 20 /tmp/gh108-focused-pytest.txt
    ! rg -n '(^|, )[1-9][0-9]* (skipped|xfailed|xpassed)' \
@@ -165,9 +218,9 @@ Link to `product.md`.
 | --- | --- | --- |
 | B-001 | runtime ledger 各测试模块 | 编辑前后保存 `pytest --collect-only -q` 输出，去除首个 `::` 前的模块路径后排序，`diff -u /tmp/gh108-before-runtime-nodes.txt /tmp/gh108-after-runtime-nodes.txt` 必须为空；实际基线偏离 66 functions / 73 cases 时先更新 spec |
 | B-002 | runtime ledger shared helper 与拆分模块 | `wc -l tests/test_runtime_ledger*.py tests/runtime_ledger_test_support.py`；每个文件严格小于 800 行，并人工确认 helper 只有一个定义来源 |
-| B-003 | implementation diff scope | 执行 Deterministic Parity Procedure 步骤 5；changed paths 减去四文件 allowlist 后必须为空，protected paths committed diff 也必须为空 |
-| B-004 | 所有迁移后的测试与 helper 函数 | 执行 Deterministic Parity Procedure 步骤 4、6；全部 70 个顶层函数 AST mapping 必须相等，且无 skip/xfail marker 或运行结果 |
-| B-005 | repository validation | 编辑前后全库 `pytest --collect-only` 总数相等；`/usr/bin/python3 -m pytest -q tests/test_runtime_ledger*.py`、`/usr/bin/python3 -m pytest -q`、`python3 checks/check_workflow.py --repo . --all-specs`、`git diff --check` 全部通过 |
+| B-003 | implementation diff scope | 执行 Deterministic Parity Procedure 步骤 6；changed paths 减去四文件 allowlist 后必须为空，protected paths committed diff 也必须为空 |
+| B-004 | 所有迁移后的测试与 helper 函数及其 production bindings | 执行 Deterministic Parity Procedure 步骤 4、5、7；70 个顶层函数 AST mapping 与 production symbol identity 必须相等，且无 skip/xfail |
+| B-005 | repository validation | 编辑前后使用 `/tmp/gh108-python-bin.txt` 中同一解释器；全库 `pytest --collect-only` 总数相等；focused/full pytest、`python3 checks/check_workflow.py --repo . --all-specs`、`git diff --check` 全部通过 |
 
 ## 数据流
 
@@ -187,7 +240,8 @@ pytest 收集各 `test_runtime_ledger*.py` 模块；测试从唯一共享 helper
 - Security: 不改变生产或安全 gate；主要风险是漏迁移或替换负例，使用 normalized
   node multiset 与逐函数 AST equality 双重阻断。
 - Compatibility: pytest 模块路径会变化，但测试函数与生产 API 不变；仓库没有声明
-  外部消费者依赖测试 node ID 全路径。
+  外部消费者依赖测试 node ID 全路径。验证默认使用 PATH `python3`，仅允许通过
+  显式 `PYTHON_BIN` 选择一次本地解释器并在整个 parity 流程复用。
 - Performance: 模块导入略有变化；全量测试时间不应显著回归，不设未经基准支持的
   性能承诺。
 - Maintenance: helper import 若设计不当可能形成收集歧义；使用固定非 `test_` 文件名、

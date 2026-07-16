@@ -43,8 +43,9 @@ complexity: trivial
 4. B-004 基线文件中的全部顶层函数（当前为 66 个 tests + 4 个 helpers，含
    decorators、参数化值、函数体和断言）的 `ast.dump(...,
    include_attributes=False)` 必须与拆分后四个允许文件中的同名函数完全一致；
-   所有模块均不得新增 module-level 或 function-level skip/xfail 标记，禁止把失败
-   路径改成未执行或静默成功。
+   拆分模块引用的 `evaluate_checkpoint`、gate 常量与 `specrail_lib` 对象必须仍与
+   生产模块对象 identity 相同；所有模块均不得新增 module-level 或 function-level
+   skip/xfail 标记，禁止把失败路径改成未执行或静默成功。
 5. B-005 拆分后，runtime ledger focused tests、全量 pytest、SpecRail workflow
    校验和 whitespace 检查必须全部通过；全库 collected test 数必须等于实际
    `impl_base_sha` 的 fresh 基线，不得仅用当前已知的 421 passed 作为未来下限。
