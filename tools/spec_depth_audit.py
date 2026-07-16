@@ -3,9 +3,16 @@
 
 Measures per-spec: product/tech line counts, numbered behavior-invariant count,
 EARS-style conditional ratio, boundary-category coverage, and verified-style
-file:line anchor count in tech.md. Used as the regression baseline for the
-GH-86 deep-spec-authoring method (baseline measured 2026-07-13: 60% of specs
-had exactly 5 invariants, 28/30 had zero anchors).
+file:line anchor count in tech.md. Metric semantics v2 align boundary coverage
+with the current template's 10 verdict rows and count only conditional EARS
+triggers. Recomputed at GH-86 baseline commit ac66dbb (30 specs): 60% had
+exactly 5 invariants, 28/30 had zero anchors, boundary coverage averaged
+0.6/10, and EARS coverage was 24%.
+
+Historical v1 numbers are retained for provenance only and are not comparable
+with v2: the 2026-07-13 baseline reported 3.1/10 boundary coverage and 38% EARS;
+the GH58/GH60/GH62 blind A/B rerun reported 9/14/14 invariants, 37/46/17
+anchors, 7.0 average boundary coverage, and 76% EARS.
 
 Usage:
     python3 tools/spec_depth_audit.py                     # audit <repo>/specs/GH*/
@@ -15,29 +22,32 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import re
 from pathlib import Path
 
+METRIC_SEMANTICS_VERSION = 2
+
 INVARIANT_RE = re.compile(r"^\s*(?:[-*]\s*)?(?:[A-Z]{1,3}[-_ ]?)?\d{1,3}[.)：:]\s+")
 EARS_RE = re.compile(
-    r"\b(WHEN|WHILE|IF|WHERE|UNLESS|AFTER|BEFORE|GIVEN|SHALL)\b|"
-    r"(当|在.+期间|如果|若|对于|除非|之前|之后|应|须)",
+    r"\b(WHEN|WHILE|IF|WHERE|UNLESS|AFTER|BEFORE|GIVEN)\b|"
+    r"(当|在.+期间|如果|若|对于|除非|之前|之后)",
     re.IGNORECASE,
 )
 FILE_LINE_RE = re.compile(r"(?:[A-Za-z0-9_.\-/]+\.[A-Za-z0-9_+\-]+)(?::|#L)\d+")
 FILE_RANGE_RE = re.compile(r"[A-Za-z0-9_.\-/]+\.[A-Za-z0-9_+\-]+\s*\(\d+[-–]\d+\)")
 
 BOUNDARY_CATEGORIES = {
-    "empty": ["empty", "no data", "missing", "空", "无数据", "缺失"],
-    "error": ["error", "failure", "invalid", "错误", "失败", "非法", "无效"],
-    "loading": ["loading", "pending", "progress", "加载", "处理中", "等待"],
+    "empty": ["empty", "missing input", "空", "缺失输入"],
+    "error": ["error", "failure", "错误", "失败"],
     "permission": ["permission", "unauthorized", "forbidden", "auth", "权限", "未授权", "禁止"],
-    "timeout_offline": ["timeout", "offline", "network", "超时", "离线", "网络"],
     "concurrency": ["concurrent", "race", "simultaneous", "并发", "竞态", "同时"],
-    "stale_cache": ["stale", "outdated", "cache", "过期", "旧数据", "缓存"],
-    "cancellation": ["cancel", "abort", "interrupt", "取消", "中断"],
-    "accessibility": ["keyboard", "focus", "screen reader", "a11y", "键盘", "焦点", "无障碍"],
+    "retry_idempotency": ["retry", "idempotency", "重试", "幂等"],
+    "illegal_state": ["illegal state", "state transition", "非法状态", "状态转换"],
     "compatibility": ["backward compat", "migration", "rollback", "兼容", "迁移", "回滚"],
+    "degradation": ["degradation", "fallback", "降级", "回退"],
+    "evidence_audit": ["evidence", "audit integrity", "证据", "审计完整"],
+    "cancellation": ["cancel", "abort", "interrupt", "取消", "中断"],
 }
 
 
@@ -64,11 +74,57 @@ def numbered_items(block: str) -> list[str]:
 
 
 def boundary_cov(text: str) -> set[str]:
-    low = text.lower()
-    return {c for c, ws in BOUNDARY_CATEGORIES.items() if any(w.lower() in low for w in ws)}
+    block = section(
+        text,
+        ["Boundary Checklist", "边界情况清单", "Boundary Cases", "边界情况"],
+    )
+    if not block:
+        return set()
+
+    covered: set[str] = set()
+    recognized_rows = 0
+    for line in block.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+            continue
+        label, verdict = cells[:2]
+        label_low = label.lower()
+        category = next(
+            (
+                name
+                for name, words in BOUNDARY_CATEGORIES.items()
+                if any(word.lower() in label_low for word in words)
+            ),
+            None,
+        )
+        if category is None:
+            continue
+        recognized_rows += 1
+        if verdict:
+            covered.add(category)
+
+    if recognized_rows:
+        return covered
+
+    low = block.lower()
+    return {
+        category
+        for category, words in BOUNDARY_CATEGORIES.items()
+        if any(word.lower() in low for word in words)
+    }
 
 
-def audit_dir(d: Path):
+def spec_labels(dirs: list[Path], *, explicit: bool) -> list[str]:
+    names = Counter(path.name for path in dirs)
+    return [
+        str(path.resolve()) if explicit and names[path.name] > 1 else path.name
+        for path in dirs
+    ]
+
+
+def audit_dir(d: Path, *, label: str | None = None):
     prod = d / "product.md"
     tech = d / "tech.md"
     if not prod.is_file():
@@ -83,7 +139,7 @@ def audit_dir(d: Path):
     cov = boundary_cov(ptext)
     anchors = len(FILE_LINE_RE.findall(ttext)) + len(FILE_RANGE_RE.findall(ttext))
     return (
-        d.name,
+        label or d.name,
         len(ptext.splitlines()),
         len(ttext.splitlines()),
         n_inv,
@@ -101,8 +157,17 @@ def main() -> None:
                     help="audit only these spec dirs (repeatable); overrides --repo glob")
     args = ap.parse_args()
 
-    dirs = args.spec_dir if args.spec_dir else sorted(args.repo.glob("specs/GH*/"))
-    rows = [r for d in dirs if (r := audit_dir(Path(d))) is not None]
+    dirs = [Path(d) for d in args.spec_dir] if args.spec_dir else sorted(args.repo.glob("specs/GH*/"))
+    invalid_explicit = [d for d in dirs if args.spec_dir and not (d / "product.md").is_file()]
+    if invalid_explicit:
+        rendered = ", ".join(str(path) for path in invalid_explicit)
+        raise SystemExit(f"spec dirs missing product.md: {rendered}")
+    labels = spec_labels(dirs, explicit=args.spec_dir is not None)
+    rows = [
+        row
+        for d, label in zip(dirs, labels)
+        if (row := audit_dir(d, label=label)) is not None
+    ]
     if not rows:
         raise SystemExit("no spec dirs with product.md found")
 
@@ -112,6 +177,7 @@ def main() -> None:
     def fmt(r):
         return "  ".join(str(r[i]).ljust(w[i]) for i in range(len(r)))
 
+    print(f"metric_semantics=v{METRIC_SEMANTICS_VERSION}")
     print(fmt(hdr))
     print("  ".join("-" * w[i] for i in range(len(hdr))))
     for r in rows:

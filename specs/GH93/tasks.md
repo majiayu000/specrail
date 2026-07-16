@@ -11,7 +11,7 @@ GH-93
 
 ## 实现任务
 
-- [ ] `SP93-T1` 入库 `tools/spec_depth_audit.py`:argparse(`--repo`/`--spec-dir`)、只读审计、空结果非零退出、docstring 记录基线。Covers: B-001 B-002 B-003。Owner: agent. Done when: 三条 invariant 的验证命令全部通过. Verify: `python3 tools/spec_depth_audit.py` 输出 30+ 份明细与汇总
+- [ ] `SP93-T1` 入库 `tools/spec_depth_audit.py`:argparse(`--repo`/`--spec-dir`)、只读审计、空结果非零退出、docstring 记录基线；回归测试覆盖条件式 EARS、当前 10 类边界 verdict 与同名外部目录标签。Covers: B-001 B-002 B-003。Owner: agent. Done when: 三条 invariant 的验证命令全部通过. Verify: `python3 tools/spec_depth_audit.py` 输出 30+ 份明细与汇总，且 `python3 -m pytest -q tests/test_spec_depth_audit.py` 通过
 
 ## 并行拆分
 

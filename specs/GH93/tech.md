@@ -12,22 +12,22 @@ GH-93
 
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
-| 深度指标定义 | `tools/spec_depth_audit.py:21` (`INVARIANT_RE`)、`:22` (`EARS_RE`)、`:30-41` (`BOUNDARY_CATEGORIES`) | 编号 invariant / EARS 条件式 / 10 类边界的正则启发式 | 与 GH86 写作方法的四项指标一一对应 |
-| 目录选择 | `tools/spec_depth_audit.py:104` | 默认 glob `specs/GH*/`,`--spec-dir` 覆盖 | B-002 的落点 |
-| 空结果保护 | `tools/spec_depth_audit.py:105-107` | 无有效目录时 `SystemExit` 非零退出 | B-003 的落点 |
+| 深度指标定义 | `tools/spec_depth_audit.py:31`、`:32`、`:40`、`:76` | 编号 invariant / 条件式 EARS / 当前模板 10 类边界 verdict 判定 | 与 GH86 写作方法的四项指标一一对应 |
+| 目录选择 | `tools/spec_depth_audit.py:154`、`:160`、`:165` | 默认 glob `specs/GH*/`,`--spec-dir` 覆盖；重复 basename 使用 resolved path | B-002 的落点 |
+| 空结果保护 | `tools/spec_depth_audit.py:161`、`:171` | 显式目录缺 `product.md` 或最终无结果时 `SystemExit` 非零退出 | B-003 的落点 |
 | 既有工具目录 | `tools/install_codex_skills.py:1` | 已有的仓库级开发工具 | 新脚本放同一目录,遵循既有布局 |
 
 ## Proposed Design
 
-单文件只读脚本(约 140 行):正则启发式统计每份 spec 的 invariant 数、EARS 占比、边界类覆盖、tech.md path:line 锚点数,打印明细表与汇总。docstring 记录 2026-07-13 基线数字,供未来回归对比。
+单文件只读脚本:正则启发式统计每份 spec 的 invariant 数、条件式 EARS 占比、当前模板边界 verdict 覆盖、tech.md path:line 锚点数,打印 `metric_semantics=v2`、明细表与汇总。docstring 记录在 GH86 基线提交 `ac66dbb` 上重算的 v2 数字；旧 v1 基线与 A/B 数字仅保留作来源记录，不与 v2 直接比较。
 
 ## Product-to-Test Mapping
 
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
-| B-001 | 全文件仅 `read_text`,无任何写调用(`tools/spec_depth_audit.py:76-77`) | `python3 tools/spec_depth_audit.py && git status --porcelain` 输出不含意外改动 |
-| B-002 | `tools/spec_depth_audit.py:104` | `python3 tools/spec_depth_audit.py --spec-dir /tmp/<任意含 product.md 的目录>` 仅输出该目录 |
-| B-003 | `tools/spec_depth_audit.py:105-107` | `python3 tools/spec_depth_audit.py --spec-dir /tmp/empty; echo $?` 非零 |
+| B-001 | 全文件仅 `read_text`,无任何写调用(`tools/spec_depth_audit.py:132`、`:133`) | `python3 tools/spec_depth_audit.py && git status --porcelain` 输出不含意外改动 |
+| B-002 | `tools/spec_depth_audit.py:154`、`:160`、`:165` | `python3 tools/spec_depth_audit.py --spec-dir /tmp/<任意含 product.md 的目录>` 仅输出该目录 |
+| B-003 | `tools/spec_depth_audit.py:161`、`:171` | `python3 tools/spec_depth_audit.py --spec-dir /tmp/empty; echo $?` 非零 |
 
 ## Data Flow
 
@@ -43,14 +43,14 @@ GH-93
 - Security: 无(只读本地文件)。
 - Compatibility: 无(纯新增)。
 - Performance: 30 份 spec 毫秒级。
-- Maintenance: 正则启发式对英文 EARS 措辞低估(已在 product.md 非目标中声明)。
+- Maintenance: 指标是启发式；语义变更必须提升 `metric_semantics` 并重算带 commit 的基线。
 
 ## Test Plan
 
-- [ ] Unit tests: 不新增(trivial 只读工具,验证靠下述命令)。
+- [ ] Unit tests: `python3 -m pytest -q tests/test_spec_depth_audit.py` 覆盖条件式 EARS、边界 verdict 与同名外部目录标签。
 - [ ] Integration tests: `python3 checks/check_workflow.py --repo . --all-specs`、`python3 -m pytest -q` 全绿。
 - [ ] Manual verification: 按 Product-to-Test Mapping 三条命令逐一执行。
 
 ## Rollback Plan
 
-删除 `tools/spec_depth_audit.py` 与 `specs/GH93/` 即完全回滚,无其他文件依赖。
+回滚整个 GH93 PR：删除 `tools/spec_depth_audit.py`、`tests/test_spec_depth_audit.py` 与 `specs/GH93/`，并删除 `CHANGELOG.md` 中对应条目；不得只删脚本而留下测试导入。
