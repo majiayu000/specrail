@@ -589,4 +589,3 @@ def test_spec_packet_rejects_task_symlink_outside_packet(tmp_path: Path) -> None
 
 def test_spec_packet_sort_key_places_non_packet_paths_last() -> None:
     assert spec_packet_sort_key(Path("not-a-packet")) == (1, 0, "not-a-packet")
-

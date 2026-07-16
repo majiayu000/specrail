@@ -49,4 +49,3 @@ def _spec_config(**artifact_overrides: str) -> object:
     }
     artifacts.update(artifact_overrides)
     return _config({"artifacts": artifacts})
-
