@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from schema_validation import validate_instance
 from specrail_lib import SpecRailError, resolve_path, resolve_repo_path
 
 
@@ -255,6 +256,11 @@ def load_review_manifest(
 
     resolved_repo = resolve_path(repo, label="repository")
     path, manifest = _load_manifest_json(resolved_repo, manifest_path, "review manifest")
+    _, review_schema = _load_manifest_json(
+        resolved_repo,
+        "schemas/review_result.schema.json",
+        "review result schema",
+    )
     errors: list[str] = []
     if manifest.get("version") != 1:
         errors.append("review manifest version must be 1")
@@ -318,6 +324,14 @@ def load_review_manifest(
             except ReviewSemanticError as exc:
                 errors.append(str(exc))
                 continue
+            try:
+                validate_instance(
+                    review_schema,
+                    artifact,
+                    f"review artifact {normalized_path}",
+                )
+            except SpecRailError as exc:
+                errors.append(str(exc))
             result = validate_review_artifact(
                 artifact,
                 expected_pr=expected_pr,

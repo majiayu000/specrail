@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from shutil import copyfile
 
 import pytest
 
@@ -15,6 +16,7 @@ FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
 from review_json_gate import evaluate_review_gate  # noqa: E402
+from pr_review_contract import evaluate_review_contract  # noqa: E402
 from review_result_semantics import (  # noqa: E402
     ReviewSemanticError,
     load_review_manifest,
@@ -170,6 +172,22 @@ def test_review_json_gate_blocks_missing_body_headings() -> None:
     assert result["decision"] == "blocked"
     assert "body must include ## Summary heading" in result["reasons"]
     assert "body must include ## Verdict heading" in result["reasons"]
+
+
+def test_review_contract_blocks_tampered_top_level_completion_time() -> None:
+    evidence = json.loads(
+        (FIXTURES / "pr-clean-authorized.json").read_text(encoding="utf-8")
+    )
+    evidence["review_completed_at"] = "2026-07-03T23:57:00Z"
+    evidence["gate_started_at"] = "2026-07-03T23:57:30Z"
+    evidence["gate_query_completed_at"] = "2026-07-03T23:59:00Z"
+
+    _, _, reasons = evaluate_review_contract(evidence, ROOT)
+
+    assert (
+        "review_completed_at must match trusted review_evidence.review_completed_at"
+        in reasons
+    )
 
 
 def test_review_json_gate_blocks_spec_drift() -> None:
@@ -416,10 +434,20 @@ def clean_terminal_artifact(
     return review
 
 
+def install_review_schema(repo: Path) -> None:
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir(exist_ok=True)
+    copyfile(
+        ROOT / "schemas" / "review_result.schema.json",
+        schema_dir / "review_result.schema.json",
+    )
+
+
 def write_review_manifest(
     repo: Path,
     artifacts: list[dict[str, object]],
 ) -> str:
+    install_review_schema(repo)
     review_dir = repo / "artifacts" / "reviews"
     review_dir.mkdir(parents=True)
     lanes: dict[tuple[str, str], list[str]] = {}
@@ -459,6 +487,49 @@ def test_review_manifest_allows_clean_current_head(tmp_path: Path) -> None:
 
     assert result["errors"] == []
     assert result["blocking_reasons"] == []
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        (lambda artifact: artifact.update({"forged_unknown_field": True}), "additional property"),
+        (lambda artifact: artifact.update({"body": "clean without required headings"}), "does not match pattern"),
+        (
+            lambda artifact: artifact.update(
+                {
+                    "comments": [
+                        {
+                            "path": "checks/pr_gate.py",
+                            "line": 1,
+                            "side": "MIDDLE",
+                            "severity": "important",
+                            "body": "invalid side",
+                        }
+                    ]
+                }
+            ),
+            "is not in enum",
+        ),
+    ],
+)
+def test_review_manifest_rejects_schema_invalid_artifact(
+    tmp_path: Path,
+    mutation: object,
+    expected_error: str,
+) -> None:
+    artifact = clean_terminal_artifact()
+    assert callable(mutation)
+    mutation(artifact)
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any(expected_error in item for item in result["errors"])
     assert result["review_source"] == "independent_lane"
 
 
@@ -537,6 +608,7 @@ def test_review_manifest_blocks_concurrent_clean_and_blocking_verdicts(tmp_path:
 
 
 def test_review_manifest_rejects_artifact_path_traversal(tmp_path: Path) -> None:
+    install_review_schema(tmp_path)
     review_dir = tmp_path / "artifacts" / "reviews"
     review_dir.mkdir(parents=True)
     manifest = {

@@ -28,6 +28,12 @@ def sensitive_evidence(tmp_path: Path) -> tuple[dict[str, object], Path, object]
     repo.mkdir()
     for name in ["workflow.yaml", "states.yaml", "labels.yaml"]:
         copyfile(ROOT / name, repo / name)
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir()
+    copyfile(
+        ROOT / "schemas" / "review_result.schema.json",
+        schema_dir / "review_result.schema.json",
+    )
     packet = repo / "specs" / "GH97"
     packet.mkdir(parents=True)
     for name in ["product.md", "tech.md"]:

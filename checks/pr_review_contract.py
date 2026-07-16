@@ -308,6 +308,19 @@ def _ordering_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], lis
     if "gate_completed_at" in evidence:
         reasons.append("gate_completed_at alias is unsupported; use canonical gate_query_completed_at")
 
+    review_evidence = evidence.get("review_evidence")
+    manifest_completed_at = (
+        review_evidence.get("review_completed_at")
+        if isinstance(review_evidence, dict)
+        else None
+    )
+    if not _nonempty(manifest_completed_at):
+        missing.append("review_evidence.review_completed_at")
+    elif evidence.get("review_completed_at") != manifest_completed_at:
+        reasons.append(
+            "review_completed_at must match trusted review_evidence.review_completed_at"
+        )
+
     fields = ["review_completed_at", "gate_started_at", "gate_query_completed_at"]
     times: dict[str, datetime] = {}
     for field in fields:
