@@ -22,10 +22,10 @@ GH-141
 
 ## Behavior Invariants
 
-1. B-001 当驳回类 gate 的 decision 非 `allowed` 时，输出 JSON 应包含 `rejection_items` 数组，一次性枚举全部可独立判定的缺失/失败项；gate 应不因发现第一项失败而停止收集其余项。
+1. B-001 当驳回类 gate 的 decision 非 `allowed` 时，输出 JSON 应包含 `rejection_items` 数组，一次性枚举全部可独立判定的缺失/失败项；gate 应不因发现第一项失败而停止收集其余项。该要求覆盖 gate 的全部驳回来源，而非单一汇总路径——对 pr_gate 即包括其内联字段检查、`_check_items`、`_issue_reference_items`、`_merge_record_items`、`_authorization_item`、sensitive enforcement 分支与 review contract 汇总，以及 evidence 加载失败早退分支；任一来源产生的 reason/missing 都应有对应的结构化条目。
 2. B-002 `rejection_items` 每项应包含非空的 `item_id`、`category`、`expected`、`found` 四个字段；`category` 取值为闭集 {missing_artifact, invalid_state, missing_evidence_field, invalid_evidence_value, contract_violation, config_error}，越界取值或字段缺失视为 gate 自身缺陷，gate 应非零退出并说明。
 3. B-003 当以相同仓库状态与相同输入重复运行 gate 时，`rejection_items` 的条目集合、`item_id` 取值与排序应逐字节一致（确定性排序 + 去重）。
-4. B-004 如果同一缺陷被多个 checker 重复发现，`rejection_items` 应按 `item_id` 去重后只保留一项，不得出现同 id 多条。
+4. B-004 如果同一缺陷被多个 checker 重复发现，`rejection_items` 应按 `item_id` 去重后只保留一项，不得出现同 id 多条。当同一 `item_id` 携带不同的 `expected`/`found` 时，gate 应确定性消解：`(expected, found)` 完全相同的条目合并为一条；不同的条目全部保留并按 `(expected, found)` 字典序给 `item_id` 追加 `#1`、`#2`… 序号后缀，输出与输入顺序无关且不丢失任何对照信息。
 5. B-005 当调用方通过 `--prior-rejection` 提供上一轮驳回 payload、且本轮存在与上一轮 `item_id` + `expected` + `found` 完全一致的条目时，gate 应输出 `repeat_rejection` 段并列出全部重复的 `item_id`——重复驳回同一项即契约违规信号。
 6. B-006 若 `--prior-rejection` 指向的文件缺失、JSON 非法或缺少 `rejection_items` 字段，gate 应将该错误作为一条 `config_error` 类别的 rejection item 列入本轮清单并阻断，不得静默忽略或降级为仅告警。
 7. B-007 当未传 `--prior-rejection` 且不消费新字段时，既有 `reasons` / `missing` / `satisfied` 的内容与排序应保持与现状一致，退出码语义不变；`rejection_items` 为纯新增字段。
