@@ -663,3 +663,19 @@ Report:
   each with a recommended action (auto mode reports this once at the end
   instead of asking mid-run)
 - local dirty or stale worktree state
+
+## Rejection Persistence And Retry
+
+When a gate command in this skill (`checks/route_gate.py`,
+`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
+other than `allowed`, the caller persists the gate's JSON output to
+`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
+missing). This write is orchestrator behavior; the gate itself stays
+read-only. Use the `rejection_items[]` list to fix every defect in a single
+round instead of guessing one item per retry.
+
+On the next retry of the same gate for the same issue or PR, pass
+`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
+the new output contains a `repeat_rejection` section, the same item was
+rejected verbatim twice: stop retrying and report the contract violation to a
+human instead of starting another round.

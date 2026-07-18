@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from rejection_items import items_from_legacy
 from review_result_semantics import (
     ReviewSemanticError,
     evaluate_review_evidence,
@@ -416,3 +417,19 @@ def evaluate_review_contract(
     missing.extend(trust_missing)
     reasons.extend(trust_reasons)
     return satisfied, missing, reasons
+
+
+def evaluate_review_contract_with_items(
+    evidence: dict[str, Any],
+    repo: Path | None = None,
+) -> tuple[list[str], list[str], list[str], list[dict[str, str]]]:
+    """Companion to evaluate_review_contract that also emits rejection items."""
+
+    satisfied, missing, reasons = evaluate_review_contract(evidence, repo)
+    items = items_from_legacy(
+        missing,
+        reasons,
+        missing_category="missing_evidence_field",
+        reason_category="contract_violation",
+    )
+    return satisfied, missing, reasons, items

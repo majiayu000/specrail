@@ -11,6 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from rejection_items import (
+    add_prior_rejection_argument,
+    apply_prior_rejection,
+    finalize_items,
+    item_from_reason,
+    items_from_legacy,
+)
 from review_result_semantics import REVIEW_VERDICTS, validate_review_artifact
 
 
@@ -581,6 +588,18 @@ def evaluate_review_gate(review: dict[str, Any], diff_text: str) -> dict[str, An
             reasons.extend(_validate_suggestions(shaped, index))
 
     decision = "blocked" if reasons or missing else "allowed"
+    rejection_items = (
+        []
+        if decision == "allowed"
+        else finalize_items(
+            items_from_legacy(
+                sorted(set(missing)),
+                sorted(set(reasons)),
+                missing_category="missing_evidence_field",
+                reason_category="contract_violation",
+            )
+        )
+    )
     return {
         "decision": decision,
         "verdict": review.get("verdict"),
@@ -589,6 +608,7 @@ def evaluate_review_gate(review: dict[str, Any], diff_text: str) -> dict[str, An
         "reasons": sorted(set(reasons)),
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),
+        "rejection_items": rejection_items,
         "blocked_actions": ["final_approval", "merge"],
         "verification_commands": [
             "python3 checks/review_json_gate.py --repo . --review <review.json> --diff <patch>",
@@ -620,6 +640,7 @@ def main() -> int:
     parser.add_argument("--review", required=True, help="Review artifact JSON file")
     parser.add_argument("--diff", required=True, help="Unified diff patch file")
     parser.add_argument("--json", action="store_true", help="Print JSON output")
+    add_prior_rejection_argument(parser)
     args = parser.parse_args()
 
     repo = Path(args.repo).resolve()
@@ -636,11 +657,16 @@ def main() -> int:
             "reasons": [str(exc)],
             "satisfied": [],
             "missing": [],
+            "rejection_items": finalize_items(
+                [item_from_reason(str(exc), "config_error")]
+            ),
             "blocked_actions": ["final_approval", "merge"],
             "verification_commands": [
                 "python3 checks/review_json_gate.py --repo . --review <review.json> --diff <patch>"
             ],
         }
+
+    result = apply_prior_rejection(result, args.prior_rejection)
 
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

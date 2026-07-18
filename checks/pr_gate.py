@@ -13,8 +13,19 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from pr_review_contract import evaluate_review_contract
-from sensitive_enforcement import evaluate_sensitive_evidence, sensitive_registry
+from pr_review_contract import evaluate_review_contract_with_items
+from rejection_items import (
+    add_prior_rejection_argument,
+    apply_prior_rejection,
+    finalize_items,
+    item_from_missing,
+    item_from_reason,
+    items_from_legacy,
+)
+from sensitive_enforcement import (
+    evaluate_sensitive_evidence_with_items,
+    sensitive_registry,
+)
 from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
@@ -207,6 +218,7 @@ def evaluate_pr_gate(
     reasons: list[str] = []
     satisfied: list[str] = []
     missing: list[str] = []
+    items: list[dict[str, str]] = []
     sensitive_classification: dict[str, Any] | None = None
     sensitive_reasons: list[str] = []
 
@@ -214,39 +226,59 @@ def evaluate_pr_gate(
         satisfied.append(f"pr: {evidence['pr']}")
     else:
         missing.append("pr")
+        items.append(item_from_missing("pr"))
 
     state = str(evidence.get("state") or "").upper()
     if state == "OPEN":
         satisfied.append("PR state is OPEN")
     elif state:
         reasons.append(f"PR state must be OPEN; got {state}")
+        items.append(
+            item_from_reason(
+                f"PR state must be OPEN; got {state}", "invalid_evidence_value"
+            )
+        )
     else:
         missing.append("state")
+        items.append(item_from_missing("state"))
 
     if evidence.get("is_draft") is False:
         satisfied.append("PR is not draft")
     elif "is_draft" not in evidence:
         missing.append("is_draft")
+        items.append(item_from_missing("is_draft"))
     else:
         reasons.append("draft PR cannot merge")
+        items.append(
+            item_from_reason("draft PR cannot merge", "invalid_evidence_value")
+        )
 
     if _non_empty_string(evidence.get("head_sha")):
         satisfied.append(f"head_sha: {evidence['head_sha']}")
     else:
         missing.append("head_sha")
+        items.append(item_from_missing("head_sha"))
 
     if _positive_int(evidence.get("linked_issue")):
         satisfied.append(f"linked_issue: {evidence['linked_issue']}")
     else:
         missing.append("linked_issue")
+        items.append(item_from_missing("linked_issue"))
 
     merge_state = str(evidence.get("merge_state") or "").upper()
     if merge_state in CLEAN_MERGE_STATES:
         satisfied.append(f"merge_state: {merge_state}")
     elif merge_state:
         reasons.append(f"merge_state must be CLEAN; got {merge_state}")
+        items.append(
+            item_from_reason(
+                f"merge_state must be CLEAN; got {merge_state}",
+                "invalid_evidence_value",
+            )
+        )
     else:
         missing.append("merge_state")
+        items.append(item_from_missing("merge_state"))
 
     for checker in [
         _check_items,
@@ -257,18 +289,30 @@ def evaluate_pr_gate(
         satisfied.extend(checker_satisfied)
         missing.extend(checker_missing)
         reasons.extend(checker_reasons)
+        items.extend(
+            items_from_legacy(
+                checker_missing,
+                checker_reasons,
+                missing_category="missing_evidence_field",
+                reason_category="invalid_evidence_value",
+            )
+        )
 
-    review_satisfied, review_missing, review_reasons = evaluate_review_contract(
-        evidence,
-        repo,
+    review_satisfied, review_missing, review_reasons, review_items = (
+        evaluate_review_contract_with_items(
+            evidence,
+            repo,
+        )
     )
     satisfied.extend(review_satisfied)
     missing.extend(review_missing)
     reasons.extend(review_reasons)
+    items.extend(review_items)
 
     auth_satisfied, auth_missing = _authorization_item(evidence)
     satisfied.extend(auth_satisfied)
     missing.extend(auth_missing)
+    items.extend(item_from_missing(entry) for entry in auth_missing)
 
     has_sensitive_evidence = any(
         key in evidence
@@ -290,13 +334,21 @@ def evaluate_pr_gate(
             sensitive_reasons.append(
                 "repository checkout is required to revalidate enforcement-sensitive evidence"
             )
+            items.extend(
+                item_from_reason(reason, "config_error")
+                for reason in sensitive_reasons
+            )
         elif config is None:
             sensitive_reasons.append(
                 "workflow configuration is required to revalidate enforcement-sensitive evidence"
             )
+            items.extend(
+                item_from_reason(reason, "config_error")
+                for reason in sensitive_reasons
+            )
         else:
-            sensitive_classification, sensitive_satisfied, sensitive_reasons = (
-                evaluate_sensitive_evidence(
+            sensitive_classification, sensitive_satisfied, sensitive_reasons, sensitive_items = (
+                evaluate_sensitive_evidence_with_items(
                     config,
                     resolve_path(repo, label="repository"),
                     evidence,
@@ -307,9 +359,11 @@ def evaluate_pr_gate(
                 )
             )
             satisfied.extend(sensitive_satisfied)
+            items.extend(sensitive_items)
         if sensitive_reasons:
             reasons.extend(sensitive_reasons)
             missing.append("sensitive_enforcement")
+            items.append(item_from_missing("sensitive_enforcement"))
 
     deterministic_missing = [item for item in missing if not item.startswith("human_authorization")]
     if reasons or deterministic_missing:
@@ -345,6 +399,7 @@ def evaluate_pr_gate(
         "reasons": sorted(set(reasons)),
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),
+        "rejection_items": [] if decision == "allowed" else finalize_items(items),
         "blocked_actions": blocked_actions,
         "verification_commands": [
             "python3 checks/pr_gate.py --repo . --evidence <evidence.json>",
@@ -384,6 +439,7 @@ def main() -> int:
         help="Evaluation enforcement mode",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON output")
+    add_prior_rejection_argument(parser)
     args = parser.parse_args()
 
     try:
@@ -399,9 +455,14 @@ def main() -> int:
             "reasons": [str(exc)],
             "satisfied": [],
             "missing": [],
+            "rejection_items": finalize_items(
+                [item_from_reason(str(exc), "config_error")]
+            ),
             "blocked_actions": ["merge", "final_approval"],
             "verification_commands": ["python3 checks/pr_gate.py --repo . --evidence <evidence.json>"],
         }
+
+    result = apply_prior_rejection(result, args.prior_rejection)
 
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

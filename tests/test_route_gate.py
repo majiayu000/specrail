@@ -464,3 +464,49 @@ def test_route_gate_blocks_unknown_current_state() -> None:
     assert result.returncode == 1
     assert payload["decision"] == "blocked"
     assert payload["reasons"] == ["unknown current state: ready_to_merge"]
+
+
+def test_route_gate_rejection_items_enumerate_missing_evidence(
+    tmp_path: Path,
+) -> None:
+    _, payload = run_route_gate("--route", "implement", "--issue", "999")
+
+    assert payload["decision"] != "allowed"
+    items = payload["rejection_items"]
+    assert items
+    item_ids = {item["item_id"] for item in items}
+    assert "missing_evidence_field:current_state" in item_ids
+    for item in items:
+        for key in ["item_id", "category", "expected", "found"]:
+            assert isinstance(item[key], str) and item[key].strip()
+
+
+def test_route_gate_allowed_result_has_empty_rejection_items(
+    tmp_path: Path,
+) -> None:
+    evidence_path = tmp_path / "issue-evidence.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "github_state": "OPEN",
+                "state": "ready_to_spec",
+                "state_source": "label",
+                "state_trusted": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = run_route_gate(
+        "--route",
+        "write_spec",
+        "--issue",
+        "999",
+        "--evidence",
+        str(evidence_path),
+    )
+
+    assert result.returncode == 0
+    assert payload["decision"] == "allowed"
+    assert payload["rejection_items"] == []
+    assert "repeat_rejection" not in payload
