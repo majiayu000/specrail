@@ -15,7 +15,9 @@ sys.path.insert(0, str(CHECKS))
 
 from rejection_items import (  # noqa: E402
     RejectionItemError,
+    apply_prior_rejection,
     finalize_items,
+    item_from_reason,
     load_prior_rejection,
     make_item,
     repeat_rejection,
@@ -331,6 +333,111 @@ def test_two_round_full_list_single_fix_then_pass(tmp_path: Path) -> None:
     assert second_payload["decision"] == "allowed"
     assert second_payload["rejection_items"] == []
     assert "repeat_rejection" not in second_payload
+
+
+# --- PR147 review round: placeholder observations ---------------------------
+
+
+def test_item_from_reason_normalizes_placeholder_observation() -> None:
+    for placeholder in ["None", "null", "unknown", "N/A", "-"]:
+        item = item_from_reason(f"verdict must be approve; got {placeholder}")
+        assert item["found"] == f"placeholder value {placeholder!r} reported"
+
+    concrete = item_from_reason("verdict must be approve; got bogus")
+    assert concrete["found"] == "bogus"
+
+
+def test_review_gate_null_verdict_keeps_full_enumeration() -> None:
+    result = evaluate_review_gate({"verdict": None}, load_diff())
+
+    assert result["decision"] == "blocked"
+    items = result["rejection_items"]
+    for item in items:
+        assert_item_shape(item)
+    assert not any(item["category"] == "config_error" for item in items)
+    assert any(
+        item["found"] == "placeholder value 'None' reported" for item in items
+    )
+    assert len(items) >= len(result["missing"]) + len(result["reasons"])
+
+
+# --- PR147 review round: malformed prior entries fail closed -----------------
+
+
+def test_prior_rejection_non_object_entry_fails_closed(tmp_path: Path) -> None:
+    bad = tmp_path / "prior.json"
+    bad.write_text(json.dumps({"rejection_items": [None]}), encoding="utf-8")
+
+    items, error = load_prior_rejection(bad)
+
+    assert items is None
+    assert error is not None
+    assert error["category"] == "config_error"
+    assert "non-object entry" in error["found"]
+
+    # CLI: the corrupted prior blocks an otherwise passing review.
+    result = run_review_gate_cli(
+        "--review",
+        "examples/fixtures/review-valid.json",
+        "--diff",
+        "examples/fixtures/pr-diff.patch",
+        "--prior-rejection",
+        str(bad),
+    )
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "blocked"
+    assert any(
+        item["item_id"] == "config_error:prior_rejection"
+        for item in payload["rejection_items"]
+    )
+
+
+# --- PR147 review round: suffix-stable repeat detection ----------------------
+
+
+def test_repeat_rejection_matches_across_conflict_suffix_changes() -> None:
+    prior_suffixed = [
+        {
+            "item_id": "invalid_state:route#1",
+            "category": "invalid_state",
+            "expected": "state in triaged",
+            "found": "needs_info",
+        },
+        {
+            "item_id": "invalid_state:route#2",
+            "category": "invalid_state",
+            "expected": "state in triaged",
+            "found": "new_issue",
+        },
+    ]
+    survivor = [make_item("invalid_state", "route", "state in triaged", "new_issue")]
+
+    # Round 1 suffixed both conflicts; round 2 fixed one, survivor unsuffixed.
+    assert repeat_rejection(survivor, prior_suffixed) == ["invalid_state:route"]
+    # Reverse direction: prior unsuffixed, current suffixed still matches.
+    assert repeat_rejection(prior_suffixed, survivor) == ["invalid_state:route#2"]
+
+
+# --- PR147 review round: unusable prior carries blocked actions --------------
+
+
+def test_unusable_prior_blocks_declared_actions(tmp_path: Path) -> None:
+    result = {
+        "decision": "allowed",
+        "reasons": [],
+        "rejection_items": [],
+        "blocked_actions": [],
+    }
+
+    updated = apply_prior_rejection(
+        result,
+        str(tmp_path / "absent.json"),
+        blocked_actions=["merge", "final_approval"],
+    )
+
+    assert updated["decision"] == "blocked"
+    assert updated["blocked_actions"] == ["final_approval", "merge"]
 
 
 def test_repeat_rejection_cli_flags_identical_second_round(tmp_path: Path) -> None:

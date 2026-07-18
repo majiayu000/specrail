@@ -256,6 +256,9 @@ def test_route_gate_blocks_forged_or_conflicting_sensitive_evidence(
     assert result.returncode == 1
     assert payload["decision"] == "blocked"
     assert "sensitive_enforcement" in payload["missing"]
+    assert "missing_evidence_field:sensitive_enforcement" in {
+        item["item_id"] for item in payload["rejection_items"]
+    }
 
 
 @pytest.mark.parametrize("caller_paths", [[], ["README.md"]])

@@ -446,6 +446,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         if sensitive_errors:
             reasons.extend(sensitive_errors)
             missing.append("sensitive_enforcement")
+            items.append(item_from_missing("sensitive_enforcement"))
             items.extend(
                 item_from_reason(error, "contract_violation")
                 for error in sensitive_errors
@@ -476,11 +477,13 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         for item in duplicate_work_result.get("missing", []):
             missing.append(f"duplicate_work:{item}")
             items.append(item_from_missing(f"duplicate_work:{item}"))
+        duplicate_work_allowed = duplicate_work_result.get("decision") == "allowed"
         for reason in duplicate_work_result.get("reasons", []):
             reasons.append(f"duplicate_work: {reason}")
-            items.append(
-                item_from_reason(f"duplicate_work: {reason}", "contract_violation")
-            )
+            if not duplicate_work_allowed:
+                items.append(
+                    item_from_reason(f"duplicate_work: {reason}", "contract_violation")
+                )
 
     for action, action_body in policies.items():
         allowed_states = [str(state) for state in action_body.get("allowed_from", [])]
@@ -653,7 +656,9 @@ def main() -> int:
             "verification_commands": ["python3 checks/check_workflow.py --repo ."],
         }
 
-    result = apply_prior_rejection(result, args.prior_rejection)
+    result = apply_prior_rejection(
+        result, args.prior_rejection, blocked_actions=[result["route"]]
+    )
 
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

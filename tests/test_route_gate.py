@@ -384,6 +384,35 @@ def test_route_gate_dry_run_warns_for_missing_artifacts_but_required_blocks(
     assert any("tech_spec" in item for item in required_payload["missing"])
 
 
+def test_route_gate_duplicate_success_reason_not_itemized(tmp_path: Path) -> None:
+    duplicate_evidence = write_duplicate_evidence(tmp_path)
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        "--duplicate-evidence",
+        str(duplicate_evidence),
+        "--mode",
+        "required",
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    # duplicate-work gate itself passed and its success reason is carried...
+    assert any(
+        "duplicate work gate passed" in reason for reason in payload["reasons"]
+    )
+    # ...but never turned into a rejection item asking to "fix" a passing gate.
+    assert not any(
+        "duplicate work gate passed" in item["expected"]
+        or "duplicate work gate passed" in item["found"]
+        for item in payload["rejection_items"]
+    )
+
+
 def test_route_gate_implement_requires_duplicate_evidence() -> None:
     result, payload = run_route_gate(
         "--route",

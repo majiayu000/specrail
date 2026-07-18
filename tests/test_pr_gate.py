@@ -587,6 +587,38 @@ def test_pr_gate_all_sources_emit_items(tmp_path: Path) -> None:
     assert payload["rejection_items"][0]["category"] == "config_error"
 
 
+def test_pr_gate_unusable_prior_rejection_blocks_actions(tmp_path: Path) -> None:
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(clean_evidence()), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/pr_gate.py",
+            "--repo",
+            ".",
+            "--evidence",
+            str(evidence_path),
+            "--prior-rejection",
+            str(tmp_path / "absent-prior.json"),
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "blocked"
+    assert payload["blocked_actions"] == ["final_approval", "merge"]
+    assert any(
+        item["item_id"] == "config_error:prior_rejection"
+        for item in payload["rejection_items"]
+    )
+
+
 def test_pr_gate_allowed_result_has_empty_rejection_items() -> None:
     result = evaluate_pr_gate(clean_evidence())
 

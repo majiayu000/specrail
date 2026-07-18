@@ -32,6 +32,8 @@ _PLACEHOLDER_VALUES = frozenset(
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
+_ITEM_ID_SUFFIX_RE = re.compile(r"#\d+$")
+
 
 class RejectionItemError(ValueError):
     """Raised when a gate tries to build an invalid rejection item."""
@@ -72,12 +74,26 @@ def item_from_missing(entry: str, category: str = "missing_evidence_field") -> d
     return make_item(category, entry, f"{entry} present", "absent")
 
 
+def _concrete_found(observed: str) -> str:
+    """Normalize placeholder observations into a concrete ``found`` description.
+
+    Legacy validators report values like ``...; got None`` or ``...; got ''``;
+    passing those raw into :func:`make_item` trips the placeholder guard and
+    degrades the whole result to one ``config_error``.
+    """
+
+    text = observed.strip()
+    if text.lower() in _PLACEHOLDER_VALUES:
+        return f"placeholder value {text!r} reported"
+    return text
+
+
 def item_from_reason(reason: str, category: str = "contract_violation") -> dict[str, str]:
     """Convert one legacy ``reasons`` entry into a rejection item."""
 
     requirement, sep, observed = reason.partition("; got ")
     if sep and requirement.strip() and observed.strip():
-        return make_item(category, requirement, requirement, observed)
+        return make_item(category, requirement, requirement, _concrete_found(observed))
     return make_item(
         category,
         reason,
@@ -189,33 +205,55 @@ def load_prior_rejection(
             f"prior rejection payload {path} lacks a rejection_items list",
         )
     items: list[dict[str, str]] = []
-    for entry in data["rejection_items"]:
-        if isinstance(entry, dict):
-            items.append(
-                {
-                    "item_id": str(entry.get("item_id") or ""),
-                    "category": str(entry.get("category") or ""),
-                    "expected": str(entry.get("expected") or ""),
-                    "found": str(entry.get("found") or ""),
-                }
+    for index, entry in enumerate(data["rejection_items"]):
+        if not isinstance(entry, dict):
+            return None, make_item(
+                "config_error",
+                "prior_rejection",
+                expected,
+                f"prior rejection payload {path} has a non-object entry at "
+                f"rejection_items[{index}]",
             )
+        items.append(
+            {
+                "item_id": str(entry.get("item_id") or ""),
+                "category": str(entry.get("category") or ""),
+                "expected": str(entry.get("expected") or ""),
+                "found": str(entry.get("found") or ""),
+            }
+        )
     return items, None
+
+
+def _base_item_id(item_id: str | None) -> str:
+    """Strip a ``#N`` conflict suffix so ids compare stably across rounds."""
+
+    return _ITEM_ID_SUFFIX_RE.sub("", item_id or "")
 
 
 def repeat_rejection(
     current: Iterable[dict[str, str]], prior: Iterable[dict[str, str]]
 ) -> list[str]:
-    """Return item_ids rejected identically (id+expected+found) in both rounds."""
+    """Return item_ids rejected identically (id+expected+found) in both rounds.
+
+    Conflict suffixes (``#1``/``#2``) are stripped before comparison: an item
+    suffixed in round one because of a same-id conflict still counts as a
+    repeat when it survives unsuffixed after the conflicting sibling is fixed.
+    """
 
     prior_triples = {
-        (item.get("item_id"), item.get("expected"), item.get("found"))
+        (_base_item_id(item.get("item_id")), item.get("expected"), item.get("found"))
         for item in prior
     }
     return sorted(
         {
             item["item_id"]
             for item in current
-            if (item.get("item_id"), item.get("expected"), item.get("found"))
+            if (
+                _base_item_id(item.get("item_id")),
+                item.get("expected"),
+                item.get("found"),
+            )
             in prior_triples
         }
     )
@@ -228,11 +266,18 @@ def add_prior_rejection_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def apply_prior_rejection(result: dict[str, Any], prior_path: str | None) -> dict[str, Any]:
+def apply_prior_rejection(
+    result: dict[str, Any],
+    prior_path: str | None,
+    *,
+    blocked_actions: Iterable[str] = (),
+) -> dict[str, Any]:
     """Compare this round's rejection_items against a prior payload.
 
-    An unusable prior payload becomes a blocking ``config_error`` item (B-006).
-    Identical repeated items surface as a ``repeat_rejection`` section (B-005).
+    An unusable prior payload becomes a blocking ``config_error`` item (B-006)
+    and blocks the caller-declared ``blocked_actions`` so the JSON stays
+    self-consistent. Identical repeated items surface as a
+    ``repeat_rejection`` section (B-005).
     """
 
     if not prior_path:
@@ -243,6 +288,9 @@ def apply_prior_rejection(result: dict[str, Any], prior_path: str | None) -> dic
         items.append(error_item)
         result["rejection_items"] = finalize_items(items)
         result["decision"] = "blocked"
+        merged_blocked = set(result.get("blocked_actions") or [])
+        merged_blocked.update(blocked_actions)
+        result["blocked_actions"] = sorted(merged_blocked)
         reasons = list(result.get("reasons") or [])
         reasons.append(f"--prior-rejection payload is unusable: {error_item['found']}")
         result["reasons"] = reasons

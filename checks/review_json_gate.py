@@ -666,7 +666,9 @@ def main() -> int:
             ],
         }
 
-    result = apply_prior_rejection(result, args.prior_rejection)
+    result = apply_prior_rejection(
+        result, args.prior_rejection, blocked_actions=["final_approval", "merge"]
+    )
 
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

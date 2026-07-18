@@ -462,7 +462,9 @@ def main() -> int:
             "verification_commands": ["python3 checks/pr_gate.py --repo . --evidence <evidence.json>"],
         }
 
-    result = apply_prior_rejection(result, args.prior_rejection)
+    result = apply_prior_rejection(
+        result, args.prior_rejection, blocked_actions=["merge", "final_approval"]
+    )
 
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
