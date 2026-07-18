@@ -9,7 +9,8 @@
 #   QUEUE_REPO         required  owner/repo, e.g. majiayu000/remem
 #   QUEUE_CHECKOUT     required  path to the local clone
 #   QUEUE_CONCURRENCY  default 2 parallel issue sessions
-#   QUEUE_LIMIT        default 6 max issues per run
+#   QUEUE_LIMIT        default 6 max issue sessions started per run
+#                      (skipped issues do not consume the limit)
 #   QUEUE_LABEL        optional  only issues with this label
 #   QUEUE_CODEX_BIN    default codex
 #   QUEUE_CODEX_FLAGS  default "--full-auto"
@@ -31,7 +32,10 @@ echo "run dir: $RUN_DIR"
 # Fresh remote truth before mapping the queue (anti-duplication baseline).
 git -C "$CHECKOUT" fetch origin --prune --quiet
 
-list_args=(issue list --repo "$REPO" --state open --limit "$LIMIT" --json number)
+# Fetch a larger candidate pool; skips (already-referenced issues) must not
+# consume the session limit.
+POOL=$(( LIMIT * 5 > 30 ? LIMIT * 5 : 30 ))
+list_args=(issue list --repo "$REPO" --state open --limit "$POOL" --json number)
 [ -n "$LABEL" ] && list_args+=(--label "$LABEL")
 issues=$(gh "${list_args[@]}" --jq '.[].number')
 [ -n "$issues" ] || { echo "no actionable issues"; exit 0; }
@@ -64,11 +68,14 @@ only inside this worktree."
 }
 
 fail=0
+started=0
 for n in $issues; do
+  [ "$started" -ge "$LIMIT" ] && break
   if printf '%s' "$open_pr_text" | grep -qE "(#$n\b|gh$n\b|GH$n\b)"; then
     echo "[gh$n] skip: open PR already references it"
     continue
   fi
+  started=$((started + 1))
   while [ "$(jobs -rp | wc -l)" -ge "$CONCURRENCY" ]; do
     wait -n || fail=1
   done
