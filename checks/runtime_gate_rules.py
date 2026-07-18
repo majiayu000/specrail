@@ -8,7 +8,17 @@ failures, session budgets, tranche spec/impl mix, and goal candidates.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
+
+from runtime_budget_dimensions import (
+    HARD_BUDGET_DIMENSIONS,
+    _nonneg_int,
+    _validate_budget_overrides,
+    judge_dimension,
+    judge_hard_dimensions,
+)
+from session_telemetry import parse_timestamp
 
 
 REVIEW_SOURCES = {"independent_lane", "self_review"}
@@ -19,7 +29,10 @@ PR_KINDS = {"spec", "impl", "mixed_impl"}
 IMPL_PR_KINDS = {"impl", "mixed_impl"}
 SPEC_ONLY_STREAK_CAP = 3
 BUDGET_BASES = {"compaction", "item_cap", "both"}
+BUDGET_BASES_V3 = BUDGET_BASES | {"runtime_dims"}
 BUDGET_STOP_REASONS = {"budget_exhausted", "queue_empty", "user_interrupt", "blocked"}
+TELEMETRY_SOURCES = {"runtime", "session_log", "unavailable"}
+TRUSTED_TELEMETRY_SOURCES = {"runtime", "session_log"}
 
 
 def _require_positive_int(
@@ -251,12 +264,15 @@ def _validate_declaration(
 def _validate_budget(
     data: dict[str, Any],
     errors: list[str],
+    warnings: list[str],
     satisfied: list[str],
+    *,
+    now: datetime | None = None,
 ) -> None:
     budget = data.get("budget")
     if budget is None:
         if (
-            data.get("checkpoint_version") == 2
+            data.get("checkpoint_version") in {2, 3}
             and data.get("queue_mode") == "full_queue_drain"
         ):
             errors.append(
@@ -266,6 +282,10 @@ def _validate_budget(
         return
     if not isinstance(budget, dict):
         errors.append("budget must be an object")
+        return
+
+    if data.get("checkpoint_version") == 3:
+        _validate_budget_v3(data, budget, errors, warnings, satisfied, now=now)
         return
 
     basis = budget.get("basis")
@@ -332,6 +352,179 @@ def _validate_budget(
                 "budget_override; stop and hand off via checkpoint instead"
             )
     elif stop_reason == "budget_exhausted":
+        satisfied.append("budget-exhausted stop is a passing terminal with handoff")
+
+
+def _validate_budget_v3(
+    data: dict[str, Any],
+    budget: dict[str, Any],
+    errors: list[str],
+    warnings: list[str],
+    satisfied: list[str],
+    *,
+    now: datetime | None = None,
+) -> None:
+    tranche_started = parse_timestamp(data.get("tranche_started_at"))
+    if tranche_started is None:
+        errors.append(
+            "checkpoint.tranche_started_at must be an ISO8601 timestamp "
+            "(required for checkpoint_version 3)"
+        )
+    if _nonneg_int(data.get("tranche_session_offset")) is None:
+        errors.append(
+            "checkpoint.tranche_session_offset must be a non-negative integer "
+            "(required for checkpoint_version 3; 0 for a session's first tranche)"
+        )
+    goal_id = data.get("goal_id")
+    if goal_id is not None and not _nonempty_string(goal_id):
+        errors.append("checkpoint.goal_id must be a non-empty string when present")
+
+    basis = budget.get("basis")
+    if not isinstance(basis, str) or basis not in BUDGET_BASES_V3:
+        allowed = ", ".join(sorted(BUDGET_BASES_V3))
+        errors.append(f"budget.basis must be one of: {allowed}")
+        basis = ""
+
+    telemetry_source = budget.get("telemetry_source")
+    if telemetry_source is not None and (
+        not isinstance(telemetry_source, str)
+        or telemetry_source not in TELEMETRY_SOURCES
+    ):
+        allowed = ", ".join(sorted(TELEMETRY_SOURCES))
+        errors.append(f"budget.telemetry_source must be one of: {allowed}")
+        telemetry_source = None
+    source_display = telemetry_source if isinstance(telemetry_source, str) else "unset"
+    telemetry_trusted = telemetry_source in TRUSTED_TELEMETRY_SOURCES
+
+    compaction_basis_ok = True
+    if basis in {"compaction", "both"}:
+        if telemetry_source is None:
+            errors.append(
+                "budget.telemetry_source is required when basis is compaction or both"
+            )
+            compaction_basis_ok = False
+        elif telemetry_source == "unavailable":
+            errors.append(
+                "budget.basis compaction is invalid with telemetry_source "
+                "unavailable: compaction counts cannot be verified; downgrade "
+                "the basis to item_cap or runtime_dims"
+            )
+            compaction_basis_ok = False
+
+    window_id = budget.get("last_compaction_window_id")
+    if window_id is not None and not _nonempty_string(window_id):
+        errors.append(
+            "budget.last_compaction_window_id must be a non-empty string when present"
+        )
+        window_id = None
+
+    observed_compaction = _nonneg_int(budget.get("observed_compaction_count"))
+    if observed_compaction is None:
+        if budget.get("observed_compaction_count") is not None:
+            errors.append(
+                "budget.observed_compaction_count must be a non-negative integer"
+            )
+        elif telemetry_trusted:
+            errors.append(
+                "budget.observed_compaction_count is required when "
+                f"telemetry_source is {source_display}"
+            )
+
+    observed_values: dict[str, int | None] = {}
+    for _, _, _, observed_key in HARD_BUDGET_DIMENSIONS:
+        value = _nonneg_int(budget.get(observed_key))
+        if value is None:
+            errors.append(
+                f"budget.{observed_key} must be a recorded non-negative integer "
+                "(checkpoint_version 3 forbids defaulting observed counters to 0)"
+            )
+        observed_values[observed_key] = value
+
+    override_dimensions = _validate_budget_overrides(budget, errors)
+
+    def _judge(dimension: str, effective: int, limit: int) -> None:
+        judge_dimension(
+            dimension,
+            effective,
+            limit,
+            override_dimensions=override_dimensions,
+            source_display=source_display,
+            errors=errors,
+            warnings=warnings,
+            satisfied=satisfied,
+        )
+
+    compaction_budget = budget.get("compaction_budget")
+    if basis in {"compaction", "both"}:
+        _require_positive_int(budget, "compaction_budget", "budget", errors)
+    if basis in {"item_cap", "both"}:
+        _require_positive_int(budget, "item_cap", "budget", errors)
+        item_cap = budget.get("item_cap")
+        if (
+            not isinstance(item_cap, bool)
+            and isinstance(item_cap, int)
+            and item_cap >= 1
+        ):
+            items = data.get("items")
+            item_count = (
+                sum(1 for item in items if isinstance(item, dict))
+                if isinstance(items, list)
+                else 0
+            )
+            _judge("item_cap", item_count, item_cap)
+
+    compaction_count = budget.get("compaction_count")
+    if compaction_count is not None and _nonneg_int(compaction_count) is None:
+        errors.append("budget.compaction_count must be a non-negative integer")
+        compaction_count = None
+    if basis in {"compaction", "both"} and compaction_count is None:
+        errors.append(
+            "budget.compaction_count must record the self-reported compaction events"
+        )
+
+    if (
+        basis in {"compaction", "both"}
+        and compaction_basis_ok
+        and isinstance(compaction_count, int)
+        and isinstance(compaction_budget, int)
+        and not isinstance(compaction_budget, bool)
+        and compaction_budget >= 1
+    ):
+        effective = compaction_count
+        if observed_compaction is not None:
+            effective = max(observed_compaction, compaction_count)
+            if observed_compaction != compaction_count:
+                warnings.append(
+                    "compaction telemetry mismatch: observed "
+                    f"{observed_compaction} vs self-reported {compaction_count} "
+                    f"(telemetry_source={source_display}, "
+                    f"window_id={window_id or 'unset'})"
+                )
+        _judge("compaction", effective, compaction_budget)
+
+    stop_reason = budget.get("stop_reason")
+    if stop_reason is not None and (
+        not isinstance(stop_reason, str) or stop_reason not in BUDGET_STOP_REASONS
+    ):
+        allowed = ", ".join(sorted(BUDGET_STOP_REASONS))
+        errors.append(f"budget.stop_reason must be one of: {allowed}")
+
+    gate_now = now if now is not None else datetime.now(timezone.utc)
+    judge_hard_dimensions(
+        data,
+        budget,
+        errors,
+        warnings,
+        satisfied,
+        gate_now=gate_now,
+        tranche_started=tranche_started,
+        observed_values=observed_values,
+        override_dimensions=override_dimensions,
+        telemetry_trusted=telemetry_trusted,
+        source_display=source_display,
+    )
+
+    if stop_reason == "budget_exhausted" and not errors:
         satisfied.append("budget-exhausted stop is a passing terminal with handoff")
 
 

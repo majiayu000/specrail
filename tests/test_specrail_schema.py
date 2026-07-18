@@ -385,3 +385,33 @@ def test_runtime_checkpoint_required_field_is_rejected_by_schema_and_gate() -> N
     result = evaluate_checkpoint(checkpoint)
     assert result["decision"] == "blocked"
     assert any("resume_prompt" in error for error in result["errors"])
+
+
+def _valid_v3_checkpoint() -> dict[str, object]:
+    checkpoint = valid_checkpoint()
+    checkpoint["checkpoint_version"] = 3
+    checkpoint["tranche_started_at"] = "2026-07-17T01:00:00Z"
+    checkpoint["tranche_session_offset"] = 0
+    return checkpoint
+
+
+def test_runtime_checkpoint_v3_schema_accepts_real_tranche_fields() -> None:
+    validate_instance(runtime_checkpoint_schema(), _valid_v3_checkpoint())
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("tranche_started_at", None),
+        ("tranche_session_offset", None),
+        ("tranche_session_offset", -1),
+    ],
+)
+def test_runtime_checkpoint_v3_schema_rejects_null_or_negative_tranche_fields(
+    key: str, value: object
+) -> None:
+    checkpoint = _valid_v3_checkpoint()
+    checkpoint[key] = value
+
+    with pytest.raises(SpecRailError):
+        validate_instance(runtime_checkpoint_schema(), checkpoint)

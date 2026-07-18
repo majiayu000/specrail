@@ -199,7 +199,7 @@ def test_runtime_ledger_gate_blocks_override_without_marker() -> None:
 
 def test_runtime_ledger_gate_blocks_unknown_checkpoint_version() -> None:
     checkpoint = clean_checkpoint()
-    checkpoint["checkpoint_version"] = 3
+    checkpoint["checkpoint_version"] = 4
     result = evaluate_checkpoint(checkpoint)
 
     assert result["decision"] == "blocked"
