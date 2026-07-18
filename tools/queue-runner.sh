@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# codex-queue-runner — drain actionable GitHub issues with one `codex exec`
+# session per issue, each in an isolated git worktree, with a bounded
+# concurrency cap. The model never waits in a poll loop: CI waits happen
+# inside the session via blocking `gh pr checks --watch` calls, and queue
+# scheduling lives here, outside any LLM context.
+#
+# Configuration (env):
+#   QUEUE_REPO         required  owner/repo, e.g. majiayu000/remem
+#   QUEUE_CHECKOUT     required  path to the local clone
+#   QUEUE_CONCURRENCY  default 2 parallel issue sessions
+#   QUEUE_LIMIT        default 6 max issues per run
+#   QUEUE_LABEL        optional  only issues with this label
+#   QUEUE_CODEX_BIN    default codex
+#   QUEUE_CODEX_FLAGS  default "--full-auto"
+#   QUEUE_RUN_DIR      default ~/.codex/queue-runner/runs/<timestamp>
+set -euo pipefail
+
+REPO=${QUEUE_REPO:?set QUEUE_REPO (owner/repo)}
+CHECKOUT=${QUEUE_CHECKOUT:?set QUEUE_CHECKOUT (local clone path)}
+CONCURRENCY=${QUEUE_CONCURRENCY:-2}
+LIMIT=${QUEUE_LIMIT:-6}
+LABEL=${QUEUE_LABEL:-}
+CODEX_BIN=${QUEUE_CODEX_BIN:-codex}
+CODEX_FLAGS=${QUEUE_CODEX_FLAGS:---full-auto}
+RUN_DIR=${QUEUE_RUN_DIR:-$HOME/.codex/queue-runner/runs/$(date +%Y%m%d-%H%M%S)}
+
+mkdir -p "$RUN_DIR"
+echo "run dir: $RUN_DIR"
+
+# Fresh remote truth before mapping the queue (anti-duplication baseline).
+git -C "$CHECKOUT" fetch origin --prune --quiet
+
+list_args=(issue list --repo "$REPO" --state open --limit "$LIMIT" --json number)
+[ -n "$LABEL" ] && list_args+=(--label "$LABEL")
+issues=$(gh "${list_args[@]}" --jq '.[].number')
+[ -n "$issues" ] || { echo "no actionable issues"; exit 0; }
+
+# Skip issues that already have an open PR referencing them.
+open_pr_text=$(gh pr list --repo "$REPO" --state open --limit 100 \
+  --json number,title,body,headRefName \
+  --jq '.[] | "\(.title) \(.body) \(.headRefName)"')
+
+run_issue() {
+  local n=$1
+  local wt="$RUN_DIR/wt-gh$n"
+  local log="$RUN_DIR/gh$n.log"
+  echo "[gh$n] start -> $log"
+  if ! git -C "$CHECKOUT" worktree add --detach "$wt" origin/main \
+      >>"$log" 2>&1; then
+    echo "[gh$n] worktree add failed"; return 1
+  fi
+  local prompt="implx auto: bounded_tranche, only issue #$n. Do the full \
+flow inside this worktree (spec coverage, implementation, PR, blocking CI \
+wait via 'gh pr checks <n> --repo $REPO --watch --fail-fast', reviewer \
+lane, merge on green evidence). Do not touch any other issue. Run cargo \
+only inside this worktree."
+  local status=0
+  (cd "$wt" && "$CODEX_BIN" exec $CODEX_FLAGS "$prompt") >>"$log" 2>&1 \
+    || status=$?
+  git -C "$CHECKOUT" worktree remove --force "$wt" >>"$log" 2>&1 || true
+  echo "[gh$n] done exit=$status"
+  return "$status"
+}
+
+fail=0
+for n in $issues; do
+  if printf '%s' "$open_pr_text" | grep -qE "(#$n\b|gh$n\b|GH$n\b)"; then
+    echo "[gh$n] skip: open PR already references it"
+    continue
+  fi
+  while [ "$(jobs -rp | wc -l)" -ge "$CONCURRENCY" ]; do
+    wait -n || fail=1
+  done
+  run_issue "$n" &
+done
+while [ "$(jobs -rp | wc -l)" -gt 0 ]; do wait -n || fail=1; done
+
+git -C "$CHECKOUT" worktree prune
+echo "queue pass complete (logs: $RUN_DIR)"
+exit "$fail"
