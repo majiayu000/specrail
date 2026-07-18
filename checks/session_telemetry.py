@@ -43,7 +43,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_timestamp(value: Any) -> datetime | None:
+def parse_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
     raw = value.strip()
@@ -96,7 +96,7 @@ def _event_timestamp(event: dict[str, Any]) -> datetime | None:
         event.get("ts"),
         payload.get("timestamp") if isinstance(payload, dict) else None,
     ]:
-        parsed = _parse_timestamp(candidate)
+        parsed = parse_timestamp(candidate)
         if parsed is not None:
             return parsed
     return None

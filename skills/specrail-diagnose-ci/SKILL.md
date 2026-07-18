@@ -30,3 +30,19 @@ python3 checks/route_gate.py --repo . --route fix_ci --issue <issue-number> --pr
 - Do not make unrelated improvements while fixing CI.
 - Do not bypass tests, weaken assertions, or hide failures.
 - Do not merge without explicit human authorization and PR-gate evidence.
+
+## Rejection Persistence And Retry
+
+When a gate command in this skill (`checks/route_gate.py`,
+`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
+other than `allowed`, the caller persists the gate's JSON output to
+`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
+missing). This write is orchestrator behavior; the gate itself stays
+read-only. Use the `rejection_items[]` list to fix every defect in a single
+round instead of guessing one item per retry.
+
+On the next retry of the same gate for the same issue or PR, pass
+`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
+the new output contains a `repeat_rejection` section, the same item was
+rejected verbatim twice: stop retrying and report the contract violation to a
+human instead of starting another round.

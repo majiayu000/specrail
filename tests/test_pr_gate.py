@@ -497,3 +497,131 @@ def test_pr_gate_cli_json_contract(tmp_path: Path) -> None:
         "blocked_actions",
         "verification_commands",
     } <= set(payload)
+
+
+def _rejection_categories(result: dict[str, object]) -> set[str]:
+    return {item["category"] for item in result["rejection_items"]}
+
+
+def _rejection_ids(result: dict[str, object]) -> set[str]:
+    return {item["item_id"] for item in result["rejection_items"]}
+
+
+def test_pr_gate_all_sources_emit_items(tmp_path: Path) -> None:
+    # Source 1: inline field checks.
+    evidence = clean_evidence()
+    evidence["state"] = "CLOSED"
+    result = evaluate_pr_gate(evidence)
+    assert result["decision"] == "blocked"
+    assert any(
+        item["category"] == "invalid_evidence_value"
+        and item["found"] == "CLOSED"
+        for item in result["rejection_items"]
+    )
+
+    # Source 2: _check_items.
+    evidence = clean_evidence()
+    evidence["checks"] = []
+    result = evaluate_pr_gate(evidence)
+    assert "missing_evidence_field:checks" in _rejection_ids(result)
+
+    # Source 3: _issue_reference_items.
+    evidence = clean_evidence()
+    evidence["issue_reference"] = "not-an-object"
+    result = evaluate_pr_gate(evidence)
+    assert any(
+        "issue_reference" in item["expected"] or "issue_reference" in item["found"]
+        for item in result["rejection_items"]
+    )
+
+    # Source 4: _merge_record_items.
+    evidence = clean_evidence()
+    evidence["merge_record"] = {"merge_path": "bogus", "remote_confirmed": True,
+                                "merge_commit_sha": "abc123"}
+    result = evaluate_pr_gate(evidence)
+    assert any(
+        "merge_record.merge_path" in item["expected"]
+        for item in result["rejection_items"]
+    )
+
+    # Source 5: _authorization_item.
+    evidence = clean_evidence()
+    evidence.pop("human_authorization", None)
+    result = evaluate_pr_gate(evidence)
+    assert result["decision"] == "needs_human"
+    assert "missing_evidence_field:human_authorization" in _rejection_ids(result)
+
+    # Source 6: review contract.
+    evidence = fixture("pr-unresolved-thread.json")
+    result = evaluate_pr_gate(evidence)
+    assert result["decision"] == "blocked"
+    assert "contract_violation" in _rejection_categories(result)
+
+    # Source 7: sensitive enforcement without a repository checkout.
+    evidence = clean_evidence()
+    evidence["enforcement_sensitive"] = True
+    result = evaluate_pr_gate(evidence)
+    assert result["decision"] == "blocked"
+    assert "config_error" in _rejection_categories(result)
+    assert "missing_evidence_field:sensitive_enforcement" in _rejection_ids(result)
+
+    # Source 8: main() ValueError early-exit path.
+    cli = subprocess.run(
+        [
+            sys.executable,
+            "checks/pr_gate.py",
+            "--repo",
+            ".",
+            "--evidence",
+            str(tmp_path / "does-not-exist.json"),
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert cli.returncode == 1
+    payload = json.loads(cli.stdout)
+    assert payload["decision"] == "blocked"
+    assert payload["rejection_items"][0]["category"] == "config_error"
+
+
+def test_pr_gate_unusable_prior_rejection_blocks_actions(tmp_path: Path) -> None:
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(clean_evidence()), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/pr_gate.py",
+            "--repo",
+            ".",
+            "--evidence",
+            str(evidence_path),
+            "--prior-rejection",
+            str(tmp_path / "absent-prior.json"),
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "blocked"
+    assert payload["blocked_actions"] == ["final_approval", "merge"]
+    assert any(
+        item["item_id"] == "config_error:prior_rejection"
+        for item in payload["rejection_items"]
+    )
+
+
+def test_pr_gate_allowed_result_has_empty_rejection_items() -> None:
+    result = evaluate_pr_gate(clean_evidence())
+
+    assert result["decision"] == "allowed"
+    assert result["rejection_items"] == []
+    assert "repeat_rejection" not in result

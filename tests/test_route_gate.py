@@ -384,6 +384,35 @@ def test_route_gate_dry_run_warns_for_missing_artifacts_but_required_blocks(
     assert any("tech_spec" in item for item in required_payload["missing"])
 
 
+def test_route_gate_duplicate_success_reason_not_itemized(tmp_path: Path) -> None:
+    duplicate_evidence = write_duplicate_evidence(tmp_path)
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        "--duplicate-evidence",
+        str(duplicate_evidence),
+        "--mode",
+        "required",
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    # duplicate-work gate itself passed and its success reason is carried...
+    assert any(
+        "duplicate work gate passed" in reason for reason in payload["reasons"]
+    )
+    # ...but never turned into a rejection item asking to "fix" a passing gate.
+    assert not any(
+        "duplicate work gate passed" in item["expected"]
+        or "duplicate work gate passed" in item["found"]
+        for item in payload["rejection_items"]
+    )
+
+
 def test_route_gate_implement_requires_duplicate_evidence() -> None:
     result, payload = run_route_gate(
         "--route",
@@ -464,3 +493,49 @@ def test_route_gate_blocks_unknown_current_state() -> None:
     assert result.returncode == 1
     assert payload["decision"] == "blocked"
     assert payload["reasons"] == ["unknown current state: ready_to_merge"]
+
+
+def test_route_gate_rejection_items_enumerate_missing_evidence(
+    tmp_path: Path,
+) -> None:
+    _, payload = run_route_gate("--route", "implement", "--issue", "999")
+
+    assert payload["decision"] != "allowed"
+    items = payload["rejection_items"]
+    assert items
+    item_ids = {item["item_id"] for item in items}
+    assert "missing_evidence_field:current_state" in item_ids
+    for item in items:
+        for key in ["item_id", "category", "expected", "found"]:
+            assert isinstance(item[key], str) and item[key].strip()
+
+
+def test_route_gate_allowed_result_has_empty_rejection_items(
+    tmp_path: Path,
+) -> None:
+    evidence_path = tmp_path / "issue-evidence.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "github_state": "OPEN",
+                "state": "ready_to_spec",
+                "state_source": "label",
+                "state_trusted": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = run_route_gate(
+        "--route",
+        "write_spec",
+        "--issue",
+        "999",
+        "--evidence",
+        str(evidence_path),
+    )
+
+    assert result.returncode == 0
+    assert payload["decision"] == "allowed"
+    assert payload["rejection_items"] == []
+    assert "repeat_rejection" not in payload

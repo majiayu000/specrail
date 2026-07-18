@@ -18,7 +18,7 @@ from runtime_budget_dimensions import (
     judge_dimension,
     judge_hard_dimensions,
 )
-from session_telemetry import _parse_timestamp
+from session_telemetry import parse_timestamp
 
 
 REVIEW_SOURCES = {"independent_lane", "self_review"}
@@ -364,7 +364,7 @@ def _validate_budget_v3(
     *,
     now: datetime | None = None,
 ) -> None:
-    tranche_started = _parse_timestamp(data.get("tranche_started_at"))
+    tranche_started = parse_timestamp(data.get("tranche_started_at"))
     if tranche_started is None:
         errors.append(
             "checkpoint.tranche_started_at must be an ISO8601 timestamp "

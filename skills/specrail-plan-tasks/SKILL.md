@@ -47,3 +47,19 @@ python3 checks/route_gate.py --repo . --route implement --issue <issue-number> -
 - Do not mark a task plan complete while a product invariant is absent from
   the task coverage union.
 - Keep the plan small enough for one agent or a clearly partitioned thread lane.
+
+## Rejection Persistence And Retry
+
+When a gate command in this skill (`checks/route_gate.py`,
+`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
+other than `allowed`, the caller persists the gate's JSON output to
+`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
+missing). This write is orchestrator behavior; the gate itself stays
+read-only. Use the `rejection_items[]` list to fix every defect in a single
+round instead of guessing one item per retry.
+
+On the next retry of the same gate for the same issue or PR, pass
+`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
+the new output contains a `repeat_rejection` section, the same item was
+rejected verbatim twice: stop retrying and report the contract violation to a
+human instead of starting another round.

@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from rejection_items import item_from_reason
 from specrail_lib import (
     PackConfig,
     SpecRailError,
@@ -653,3 +654,28 @@ def evaluate_sensitive_evidence(
             + ("matched" if computed_sensitive else "not matched")
         )
     return classification, satisfied, reasons
+
+
+def evaluate_sensitive_evidence_with_items(
+    config: PackConfig,
+    repo: Path,
+    evidence: dict[str, Any],
+    *,
+    expected_source: str,
+    issue: int | None,
+    expected_base_ref: str | None = None,
+    expected_base_head: str | None = None,
+) -> tuple[dict[str, Any] | None, list[str], list[str], list[dict[str, str]]]:
+    """Companion to evaluate_sensitive_evidence that also emits rejection items."""
+
+    classification, satisfied, reasons = evaluate_sensitive_evidence(
+        config,
+        repo,
+        evidence,
+        expected_source=expected_source,
+        issue=issue,
+        expected_base_ref=expected_base_ref,
+        expected_base_head=expected_base_head,
+    )
+    items = [item_from_reason(reason, "contract_violation") for reason in reasons]
+    return classification, satisfied, reasons, items

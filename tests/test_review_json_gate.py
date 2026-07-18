@@ -743,3 +743,23 @@ def test_review_manifest_rejects_artifact_path_traversal(tmp_path: Path) -> None
     )
 
     assert any("repo-relative POSIX paths" in item for item in result["errors"])
+
+
+def test_review_json_gate_rejection_items_cover_missing_and_reasons() -> None:
+    result = evaluate_review_gate({}, load_diff())
+
+    assert result["decision"] == "blocked"
+    items = result["rejection_items"]
+    assert items
+    item_ids = {item["item_id"] for item in items}
+    for field in ["verdict", "body", "comments"]:
+        assert f"missing_evidence_field:{field}" in item_ids
+    assert len(items) >= len(result["missing"]) + len(result["reasons"])
+
+
+def test_review_json_gate_allowed_result_has_empty_rejection_items() -> None:
+    result = evaluate_review_gate(load_review("review-valid.json"), load_diff())
+
+    assert result["decision"] == "allowed"
+    assert result["rejection_items"] == []
+    assert "repeat_rejection" not in result
