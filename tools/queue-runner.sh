@@ -13,7 +13,7 @@
 #   QUEUE_CONCURRENCY  default 2 parallel issue sessions
 #   QUEUE_LIMIT        default 6 max issue sessions started per run
 #                      (skipped issues do not consume the limit)
-#   QUEUE_LABEL        optional  only issues with this label
+#   QUEUE_LABEL        optional  only issues/PRs with this label
 #   QUEUE_CODEX_BIN    default codex
 #   QUEUE_CODEX_FLAGS  default "--full-auto"
 #   QUEUE_RUN_DIR      default ~/.codex/queue-runner/runs/<timestamp>
@@ -40,12 +40,21 @@ POOL=$(( LIMIT * 5 > 30 ? LIMIT * 5 : 30 ))
 list_args=(issue list --repo "$REPO" --state open --limit "$POOL" --json number)
 [ -n "$LABEL" ] && list_args+=(--label "$LABEL")
 issues=$(gh "${list_args[@]}" --jq '.[].number')
-[ -n "$issues" ] || { echo "no actionable issues"; exit 0; }
 
 # Skip issues that already have an open PR referencing them.
 open_pr_text=$(gh pr list --repo "$REPO" --state open --limit 100 \
   --json number,title,body,headRefName \
   --jq '.[] | "\(.title) \(.body) \(.headRefName)"')
+
+# Snapshot existing non-draft open PRs BEFORE launching issue workers so a
+# PR opened by a worker in this pass never gets a duplicate finisher
+# session. When QUEUE_LABEL scopes the run, scope PR finishing the same way.
+pr_list_args=(pr list --repo "$REPO" --state open --limit 50 --json number,isDraft)
+[ -n "$LABEL" ] && pr_list_args+=(--label "$LABEL")
+open_prs=$(gh "${pr_list_args[@]}" --jq '.[] | select(.isDraft | not) | .number')
+
+# PR-only queues are still actionable: only exit when neither exists.
+[ -n "$issues" ] || [ -n "$open_prs" ] || { echo "no actionable issues or PRs"; exit 0; }
 
 run_pr() {
   local n=$1
@@ -107,9 +116,8 @@ for n in $issues; do
   done
   run_issue "$n" &
 done
-# Existing non-draft open PRs get finisher sessions from the same pool.
-open_prs=$(gh pr list --repo "$REPO" --state open --limit 50 \
-  --json number,isDraft --jq '.[] | select(.isDraft | not) | .number')
+# Existing non-draft open PRs (snapshotted above, before issue workers
+# started) get finisher sessions from the same pool.
 for n in $open_prs; do
   [ "$started" -ge "$LIMIT" ] && break
   started=$((started + 1))
