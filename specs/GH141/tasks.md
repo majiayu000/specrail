@@ -24,8 +24,8 @@ T1 先行；T2/T3/T4 文件不相交可并行（route_gate.py / review_json_gate
 
 ## Verification
 
-- [ ] `python3 -m pytest -q tests/test_rejection_items.py tests/test_route_gate.py tests/test_review_json_gate.py tests/test_pr_gate.py`
-- [ ] `python3 checks/check_workflow.py --repo .`
+- `python3 -m pytest -q tests/test_rejection_items.py tests/test_route_gate.py tests/test_review_json_gate.py tests/test_pr_gate.py`
+- `python3 checks/check_workflow.py --repo .`
 
 ## Handoff Notes
 
