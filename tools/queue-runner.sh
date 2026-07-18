@@ -48,10 +48,32 @@ open_pr_text=$(gh pr list --repo "$REPO" --state open --limit 100 \
 
 # Snapshot existing non-draft open PRs BEFORE launching issue workers so a
 # PR opened by a worker in this pass never gets a duplicate finisher
-# session. When QUEUE_LABEL scopes the run, scope PR finishing the same way.
-pr_list_args=(pr list --repo "$REPO" --state open --limit 50 --json number,isDraft)
-[ -n "$LABEL" ] && pr_list_args+=(--label "$LABEL")
-open_prs=$(gh "${pr_list_args[@]}" --jq '.[] | select(.isDraft | not) | .number')
+# session. Drafts are filtered server-side so the fetch limit only spends
+# slots on finishable PRs.
+pr_pool=$(gh pr list --repo "$REPO" --state open --search "draft:false" \
+  --limit "$POOL" --json number,title,body,headRefName,labels \
+  --jq '.[] | "\(.number)\t,\(.labels | map(.name) | join(",")),\t\(.title) \(.body // "" | gsub("\\s+"; " ")) \(.headRefName)"')
+if [ -n "$LABEL" ]; then
+  # Label runs finish PRs that carry the label themselves PLUS PRs linked
+  # to the selected labeled issues (issue labels are not mirrored to PRs).
+  open_prs=""
+  while IFS=$'\t' read -r pr_num pr_labels pr_text; do
+    [ -n "$pr_num" ] || continue
+    if printf '%s' "$pr_labels" | grep -qF ",$LABEL,"; then
+      open_prs="$open_prs $pr_num"
+      continue
+    fi
+    for i in $issues; do
+      if printf '%s' "$pr_text" | grep -qE "(#$i\b|gh$i\b|GH$i\b)"; then
+        open_prs="$open_prs $pr_num"
+        break
+      fi
+    done
+  done <<<"$pr_pool"
+  open_prs=$(printf '%s\n' $open_prs | sort -un)
+else
+  open_prs=$(printf '%s\n' "$pr_pool" | cut -f1)
+fi
 
 # PR-only queues are still actionable: only exit when neither exists.
 [ -n "$issues" ] || [ -n "$open_prs" ] || { echo "no actionable issues or PRs"; exit 0; }
@@ -104,6 +126,17 @@ only inside this worktree."
 
 fail=0
 started=0
+# Existing non-draft open PRs (snapshotted above) get finisher sessions
+# FIRST so a steady stream of new issues cannot starve older PRs of the
+# shared session budget.
+for n in $open_prs; do
+  [ "$started" -ge "$LIMIT" ] && break
+  started=$((started + 1))
+  while [ "$(jobs -rp | wc -l)" -ge "$CONCURRENCY" ]; do
+    wait -n || fail=1
+  done
+  run_pr "$n" &
+done
 for n in $issues; do
   [ "$started" -ge "$LIMIT" ] && break
   if printf '%s' "$open_pr_text" | grep -qE "(#$n\b|gh$n\b|GH$n\b)"; then
@@ -115,16 +148,6 @@ for n in $issues; do
     wait -n || fail=1
   done
   run_issue "$n" &
-done
-# Existing non-draft open PRs (snapshotted above, before issue workers
-# started) get finisher sessions from the same pool.
-for n in $open_prs; do
-  [ "$started" -ge "$LIMIT" ] && break
-  started=$((started + 1))
-  while [ "$(jobs -rp | wc -l)" -ge "$CONCURRENCY" ]; do
-    wait -n || fail=1
-  done
-  run_pr "$n" &
 done
 
 while [ "$(jobs -rp | wc -l)" -gt 0 ]; do wait -n || fail=1; done
