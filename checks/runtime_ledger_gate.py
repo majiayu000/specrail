@@ -553,7 +553,12 @@ def evaluate_checkpoint(
                     f"(one of: {allowed})"
                 )
             elif review_source == "self_review":
-                _validate_self_review_authorization(raw_item, label, errors)
+                _validate_self_review_authorization(
+                    raw_item,
+                    label,
+                    errors,
+                    auth_mode=str(data.get("auth_mode") or ""),
+                )
             _validate_terminal_review_summary(
                 review,
                 head_sha=head_sha,

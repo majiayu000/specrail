@@ -156,14 +156,35 @@ def _validate_lane_failure_outcome(
         )
 
 
+def _distinct_failed_lane_ids(raw_item: dict[str, Any]) -> set[str]:
+    lane_failures = raw_item.get("lane_failures")
+    if not isinstance(lane_failures, list):
+        return set()
+    return {
+        failure["lane_id"].strip()
+        for failure in lane_failures
+        if isinstance(failure, dict) and _nonempty_string(failure.get("lane_id"))
+    }
+
+
 def _validate_self_review_authorization(
     raw_item: dict[str, Any],
     label: str,
     errors: list[str],
+    *,
+    auth_mode: str = "",
 ) -> None:
     lane_failures = raw_item.get("lane_failures")
     if not isinstance(lane_failures, list) or not lane_failures:
         errors.append(f"{label}: self_review requires recorded lane_failures")
+    if str(auth_mode).strip().lower() == "auto":
+        distinct = _distinct_failed_lane_ids(raw_item)
+        if len(distinct) < 2:
+            errors.append(
+                f"{label}: auth_mode auto self_review requires two distinct "
+                f"failed reviewer lanes (found {len(distinct)}); a single lane "
+                "failure still requires an independent retry lane"
+            )
     value = raw_item.get("self_review_authorization")
     if not isinstance(value, dict):
         errors.append(f"{label}: self_review requires self_review_authorization")

@@ -217,3 +217,98 @@ def test_runtime_ledger_gate_blocks_self_review_without_human_final_gate() -> No
 
     assert result["decision"] == "blocked"
     assert any("human_final_review_required" in error for error in result["errors"])
+
+
+def _auto_self_review_checkpoint(lane_ids: list[str]) -> dict[str, object]:
+    checkpoint = _fixture_checkpoint("runtime-self-review-merged-unauthorized.json")
+    checkpoint["auth_mode"] = "auto"
+    item = checkpoint["items"][0]  # type: ignore[index]
+    item["self_review_authorization"] = {
+        "scope": "merge PR #718 after double reviewer-lane failure",
+        "conversation_marker": "implx auto invocation after two lane failures",
+    }
+    item["lane_failures"] = [
+        {
+            "lane_id": lane_id,
+            "failure_kind": "crash",
+            "observed_marker": f"{lane_id or 'lane'} crashed mid-review",
+        }
+        for lane_id in lane_ids
+    ]
+    return checkpoint
+
+
+def test_auto_self_review_blocks_single_lane_failure() -> None:
+    result = evaluate_checkpoint(_auto_self_review_checkpoint(["merge-reviewer-1"]))
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "two distinct failed reviewer lanes (found 1)" in error
+        for error in result["errors"]
+    )
+
+
+def test_auto_self_review_allows_two_distinct_lane_failures() -> None:
+    result = evaluate_checkpoint(
+        _auto_self_review_checkpoint(["merge-reviewer-1", "merge-reviewer-2"])
+    )
+
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]
+
+
+def test_auto_self_review_blocks_duplicate_lane_ids() -> None:
+    result = evaluate_checkpoint(
+        _auto_self_review_checkpoint(["merge-reviewer-1", "merge-reviewer-1"])
+    )
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "two distinct failed reviewer lanes (found 1)" in error
+        for error in result["errors"]
+    )
+
+
+def test_auto_self_review_ignores_blank_lane_ids() -> None:
+    result = evaluate_checkpoint(
+        _auto_self_review_checkpoint(["merge-reviewer-1", "   "])
+    )
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "two distinct failed reviewer lanes (found 1)" in error
+        for error in result["errors"]
+    )
+
+
+def test_auto_self_review_auth_mode_is_case_insensitive() -> None:
+    checkpoint = _auto_self_review_checkpoint(["merge-reviewer-1"])
+    checkpoint["auth_mode"] = "  AUTO "
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "two distinct failed reviewer lanes" in error for error in result["errors"]
+    )
+
+
+def test_auto_single_lane_failure_non_merge_state_not_gated() -> None:
+    checkpoint = _auto_self_review_checkpoint(["merge-reviewer-1"])
+    item = checkpoint["items"][0]  # type: ignore[index]
+    item["state"] = "blocked"
+    item["blocked_reason"] = "reviewer_lane_failure"
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert not any(
+        "two distinct failed reviewer lanes" in error for error in result["errors"]
+    )
+
+
+def test_review_mode_self_review_keeps_single_lane_behavior() -> None:
+    checkpoint = _auto_self_review_checkpoint(["merge-reviewer-1"])
+    checkpoint["auth_mode"] = "review"
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]
