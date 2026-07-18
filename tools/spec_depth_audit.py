@@ -15,10 +15,18 @@ with v2: the 2026-07-13 baseline reported 3.1/10 boundary coverage and 38% EARS;
 the GH58/GH60/GH62 blind A/B rerun reported 9/14/14 invariants, 37/46/17
 anchors, 7.0 average boundary coverage, and 76% EARS.
 
+GH-130 gate mode: `--gate` turns the audit into a hard verdict over the audited
+set. Non-trivial specs must reach the invariant/boundary/anchor thresholds
+(defaults 8/8/5, from the GH86/GH88/GH91 deep-spec baseline) or the tool exits
+1 listing each failing metric. Specs declaring `complexity: trivial` inside the
+Linked Issue section are exempt. The EARS ratio never gates (its conditional-
+only heuristic scored 0% on proven deep specs GH88/GH91).
+
 Usage:
     python3 tools/spec_depth_audit.py                     # audit <repo>/specs/GH*/
     python3 tools/spec_depth_audit.py --repo PATH         # other repo root
     python3 tools/spec_depth_audit.py --spec-dir DIR ...  # audit explicit spec dirs only
+    python3 tools/spec_depth_audit.py --spec-dir DIR --gate   # hard depth verdict
 """
 from __future__ import annotations
 
@@ -26,8 +34,13 @@ import argparse
 from collections import Counter
 import re
 from pathlib import Path
+from typing import Any
 
 METRIC_SEMANTICS_VERSION = 3
+
+GATE_DEFAULT_MIN_INVARIANTS = 8
+GATE_DEFAULT_MIN_BOUNDARY = 8
+GATE_DEFAULT_MIN_ANCHORS = 5
 
 INVARIANT_RE = re.compile(r"^\s*(?:[-*]\s*)?(?:[A-Z]{1,3}[-_ ]?)?\d{1,3}[.)：:]\s+")
 EARS_RE = re.compile(
@@ -41,6 +54,7 @@ EXTENSIONLESS_FILE_LINE_RE = re.compile(
     r"[A-Za-z0-9_+\-]*(?::|#L)\d+`"
 )
 FILE_RANGE_RE = re.compile(r"[A-Za-z0-9_.\-/]+\.[A-Za-z0-9_+\-]+\s*\(\d+[-–]\d+\)")
+TRIVIAL_RE = re.compile(r"^\s*complexity:\s*trivial\s*$", re.IGNORECASE | re.MULTILINE)
 
 BOUNDARY_CATEGORIES = {
     "empty": ["empty", "missing input", "空", "缺失输入"],
@@ -137,7 +151,13 @@ def anchor_count(text: str) -> int:
     )
 
 
-def audit_dir(d: Path, *, label: str | None = None):
+def is_trivial(ptext: str) -> bool:
+    """A trivial declaration only counts inside the Linked Issue section."""
+    linked = section(ptext, ["Linked Issue"])
+    return bool(TRIVIAL_RE.search(linked))
+
+
+def audit_dir(d: Path, *, label: str | None = None) -> dict[str, Any] | None:
     prod = d / "product.md"
     tech = d / "tech.md"
     if not prod.is_file():
@@ -150,16 +170,68 @@ def audit_dir(d: Path, *, label: str | None = None):
     ears_hits = sum(1 for it in invs if EARS_RE.search(it))
     ears_ratio = (ears_hits / n_inv) if n_inv else 0.0
     cov = boundary_cov(ptext)
-    anchors = anchor_count(ttext)
+    return {
+        "label": label or d.name,
+        "p_lines": len(ptext.splitlines()),
+        "t_lines": len(ttext.splitlines()),
+        "invariants": n_inv,
+        "ears": f"{ears_ratio:.0%}",
+        "boundary": len(cov),
+        "anchors": anchor_count(ttext),
+        "boundary_names": ",".join(sorted(cov)) or "-",
+        "trivial": is_trivial(ptext),
+    }
+
+
+def gate_failures(record: dict[str, Any], thresholds: dict[str, int]) -> list[str]:
+    """EARS never gates (B-007); trivial specs are exempt (B-004)."""
+    if record["trivial"]:
+        return []
+    checks = [
+        ("invariants", "min_invariants"),
+        ("boundary_categories", "min_boundary"),
+        ("anchors", "min_anchors"),
+    ]
+    metric_keys = {"invariants": "invariants", "boundary_categories": "boundary", "anchors": "anchors"}
+    return [
+        f"{metric}={record[metric_keys[metric]]} < {thresholds[key]}"
+        for metric, key in checks
+        if record[metric_keys[metric]] < thresholds[key]
+    ]
+
+
+def display_row(record: dict[str, Any]) -> tuple:
     return (
-        label or d.name,
-        len(ptext.splitlines()),
-        len(ttext.splitlines()),
-        n_inv,
-        f"{ears_ratio:.0%}",
-        len(cov),
-        anchors,
-        ",".join(sorted(cov)) or "-",
+        record["label"],
+        record["p_lines"],
+        record["t_lines"],
+        record["invariants"],
+        record["ears"],
+        record["boundary"],
+        record["anchors"],
+        record["boundary_names"],
+    )
+
+
+def run_gate(records: list[dict[str, Any]], thresholds: dict[str, int]) -> None:
+    print("\n=== gate ===")
+    exempt = [r["label"] for r in records if r["trivial"]]
+    if exempt:
+        print(f"exempt (complexity: trivial): {', '.join(exempt)}")
+    failing = [
+        (r["label"], reasons)
+        for r in records
+        if (reasons := gate_failures(r, thresholds))
+    ]
+    for label, reasons in failing:
+        print(f"FAIL {label}: {'; '.join(reasons)}")
+    if failing:
+        raise SystemExit(1)
+    print(
+        "gate: PASS "
+        f"(min_invariants={thresholds['min_invariants']}, "
+        f"min_boundary={thresholds['min_boundary']}, "
+        f"min_anchors={thresholds['min_anchors']})"
     )
 
 
@@ -168,6 +240,11 @@ def main() -> None:
     ap.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
     ap.add_argument("--spec-dir", type=Path, action="append", default=None,
                     help="audit only these spec dirs (repeatable); overrides --repo glob")
+    ap.add_argument("--gate", action="store_true",
+                    help="exit 1 when any audited non-trivial spec misses the depth thresholds")
+    ap.add_argument("--min-invariants", type=int, default=GATE_DEFAULT_MIN_INVARIANTS)
+    ap.add_argument("--min-boundary", type=int, default=GATE_DEFAULT_MIN_BOUNDARY)
+    ap.add_argument("--min-anchors", type=int, default=GATE_DEFAULT_MIN_ANCHORS)
     args = ap.parse_args()
 
     dirs = [Path(d) for d in args.spec_dir] if args.spec_dir else sorted(args.repo.glob("specs/GH*/"))
@@ -176,13 +253,14 @@ def main() -> None:
         rendered = ", ".join(str(path) for path in invalid_explicit)
         raise SystemExit(f"spec dirs missing product.md: {rendered}")
     labels = spec_labels(dirs, explicit=args.spec_dir is not None)
-    rows = [
-        row
+    records = [
+        record
         for d, label in zip(dirs, labels)
-        if (row := audit_dir(d, label=label)) is not None
+        if (record := audit_dir(d, label=label)) is not None
     ]
-    if not rows:
+    if not records:
         raise SystemExit("no spec dirs with product.md found")
+    rows = [display_row(r) for r in records]
 
     hdr = ("spec", "P行", "T行", "inv数", "EARS%", "边界类", "锚点", "覆盖的边界类别")
     w = [max(len(str(r[i])) for r in rows + [hdr]) for i in range(len(hdr))]
@@ -204,6 +282,16 @@ def main() -> None:
     print(f"边界类覆盖:       均值={sum(r[5] for r in rows)/n:.1f}/10  覆盖>=5类的spec数={sum(1 for r in rows if r[5]>=5)}/{n}")
     ears_all = [int(r[4].rstrip("%")) for r in rows]
     print(f"EARS 占比:        均值={sum(ears_all)/n:.0f}%  >=60%的spec数={sum(1 for e in ears_all if e>=60)}/{n}")
+
+    if args.gate:
+        run_gate(
+            records,
+            {
+                "min_invariants": args.min_invariants,
+                "min_boundary": args.min_boundary,
+                "min_anchors": args.min_anchors,
+            },
+        )
 
 
 if __name__ == "__main__":
