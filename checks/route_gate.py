@@ -28,6 +28,14 @@ from specrail_lib import (
     validate_state_graph,
 )
 from duplicate_work_gate import evaluate_duplicate_work_gate_path
+from rejection_items import (
+    add_prior_rejection_argument,
+    apply_prior_rejection,
+    finalize_items,
+    item_from_missing,
+    item_from_reason,
+    make_item,
+)
 from sensitive_enforcement import (
     classification_from_approved_tech,
     evaluate_sensitive_evidence,
@@ -159,6 +167,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     reasons: list[str] = []
     satisfied: list[str] = []
     missing: list[str] = []
+    items: list[dict[str, str]] = []
     blocked_actions: list[str] = []
     allowed_actions: list[str] = []
     required_artifacts: list[str] = []
@@ -177,6 +186,9 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             "reasons": config_errors,
             "satisfied": [],
             "missing": [],
+            "rejection_items": finalize_items(
+                item_from_reason(error, "config_error") for error in config_errors
+            ),
             "required_artifacts": [],
             "human_gates": [],
             "allowed_actions": [],
@@ -223,12 +235,28 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     if current_state is None:
         missing.append("current_state")
         reasons.append("no state or matching readiness label was provided")
+        items.append(
+            make_item(
+                "missing_evidence_field",
+                "current_state",
+                "current_state provided via --state or a readiness label",
+                "absent",
+            )
+        )
     elif current_state in allowed_from:
         satisfied.append(f"state {current_state} allows {route}")
     else:
         missing.append(f"allowed_state:{'|'.join(allowed_from)}")
         reasons.append(
             f"route {route} requires one of {', '.join(allowed_from)}; got {current_state}"
+        )
+        items.append(
+            make_item(
+                "invalid_state",
+                f"allowed_state:{route}",
+                f"state in {', '.join(allowed_from)}",
+                str(current_state),
+            )
         )
 
     if (
@@ -243,6 +271,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             f"state {current_state} came from untrusted {state_source} evidence; "
             "maintainer readiness label required"
         )
+        items.append(
+            make_item(
+                "invalid_state",
+                "trusted_state",
+                "state evidence trusted via maintainer readiness label",
+                f"state {current_state} from untrusted {state_source} evidence",
+            )
+        )
 
     provided_artifacts = dict(evidence.get("artifacts", {})) if isinstance(evidence.get("artifacts"), dict) else {}
     for raw_artifact in args.artifact or []:
@@ -253,12 +289,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         if artifact == "linked_issue":
             if args.issue is None:
                 missing.append("linked_issue")
+                items.append(item_from_missing("linked_issue"))
             else:
                 satisfied.append(f"linked_issue: GH-{args.issue}")
             continue
         if artifact == "linked_pr":
             if args.pr is None:
                 missing.append("linked_pr")
+                items.append(item_from_missing("linked_pr"))
             else:
                 satisfied.append(f"linked_pr: PR-{args.pr}")
             continue
@@ -268,6 +306,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                 satisfied.append("verification evidence provided")
             else:
                 missing.append("verification")
+                items.append(item_from_missing("verification"))
             continue
         provided = provided_artifacts.get(artifact)
         if artifact in ARTIFACT_FILES and args.issue is None:
@@ -276,8 +315,24 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                 satisfied.append(f"{artifact}: {provided}")
             elif provided:
                 missing.append(f"{artifact}:{provided}")
+                items.append(
+                    make_item(
+                        "missing_artifact",
+                        artifact,
+                        f"{artifact} exists at {provided}",
+                        "absent",
+                    )
+                )
             else:
                 missing.append(artifact)
+                items.append(
+                    make_item(
+                        "missing_artifact",
+                        artifact,
+                        f"{artifact} path provided in evidence",
+                        "absent",
+                    )
+                )
             continue
         path = required_artifact_path(config, artifact, args.issue)
         required_artifacts.append(path or artifact)
@@ -291,6 +346,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                 except SpecRailError as exc:
                     missing.append(f"{artifact}:{path}")
                     reasons.append(str(exc))
+                    items.append(
+                        make_item(
+                            "invalid_evidence_value",
+                            artifact,
+                            f"{artifact} at configured path {path}",
+                            str(exc),
+                        )
+                    )
                     continue
                 if normalized_provided != path:
                     missing.append(f"{artifact}:{path}")
@@ -298,8 +361,24 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                         f"{artifact} provided at {provided} does not match "
                         f"configured path {path}"
                     )
+                    items.append(
+                        make_item(
+                            "invalid_evidence_value",
+                            artifact,
+                            f"{artifact} at configured path {path}",
+                            f"provided at {provided}",
+                        )
+                    )
                 elif not artifact_exists(repo, normalized_provided):
                     missing.append(f"{artifact}:{normalized_provided}")
+                    items.append(
+                        make_item(
+                            "missing_artifact",
+                            artifact,
+                            f"{artifact} exists at {normalized_provided}",
+                            "absent",
+                        )
+                    )
                 else:
                     satisfied.append(f"{artifact}: {normalized_provided}")
             else:
@@ -310,6 +389,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                 satisfied.append(f"{artifact}: {path}")
             else:
                 missing.append(f"{artifact}:{path}")
+                items.append(
+                    make_item(
+                        "missing_artifact",
+                        artifact,
+                        f"{artifact} exists at {path}",
+                        "absent",
+                    )
+                )
         elif path:
             required_artifacts.append(path)
 
@@ -359,6 +446,11 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         if sensitive_errors:
             reasons.extend(sensitive_errors)
             missing.append("sensitive_enforcement")
+            items.append(item_from_missing("sensitive_enforcement"))
+            items.extend(
+                item_from_reason(error, "contract_violation")
+                for error in sensitive_errors
+            )
         if args.issue is None:
             duplicate_work_result = {
                 "decision": "needs_human",
@@ -384,8 +476,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             satisfied.append(f"duplicate_work: {item}")
         for item in duplicate_work_result.get("missing", []):
             missing.append(f"duplicate_work:{item}")
+            items.append(item_from_missing(f"duplicate_work:{item}"))
+        duplicate_work_allowed = duplicate_work_result.get("decision") == "allowed"
         for reason in duplicate_work_result.get("reasons", []):
             reasons.append(f"duplicate_work: {reason}")
+            if not duplicate_work_allowed:
+                items.append(
+                    item_from_reason(f"duplicate_work: {reason}", "contract_violation")
+                )
 
     for action, action_body in policies.items():
         allowed_states = [str(state) for state in action_body.get("allowed_from", [])]
@@ -441,6 +539,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         "reasons": reasons,
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),
+        "rejection_items": [] if decision == "allowed" else finalize_items(items),
         "required_artifacts": sorted(set(required_artifacts)),
         "human_gates": human_gates,
         "allowed_actions": sorted(set(allowed_actions)),
@@ -456,6 +555,7 @@ def blocked_result(
     current_state: str | None,
     args: argparse.Namespace,
     reasons: list[str],
+    item_category: str = "invalid_state",
 ) -> dict[str, Any]:
     return {
         "decision": "blocked",
@@ -467,6 +567,9 @@ def blocked_result(
         "reasons": reasons,
         "satisfied": [],
         "missing": [],
+        "rejection_items": finalize_items(
+            item_from_reason(reason, item_category) for reason in reasons
+        ),
         "required_artifacts": [],
         "human_gates": [],
         "allowed_actions": [],
@@ -527,6 +630,7 @@ def main() -> int:
         help="Evaluation enforcement mode",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON output")
+    add_prior_rejection_argument(parser)
     args = parser.parse_args()
 
     try:
@@ -542,12 +646,19 @@ def main() -> int:
             "reasons": [str(exc)],
             "satisfied": [],
             "missing": [],
+            "rejection_items": finalize_items(
+                [item_from_reason(str(exc), "config_error")]
+            ),
             "required_artifacts": [],
             "human_gates": [],
             "allowed_actions": [],
             "blocked_actions": [normalize_route(args.route)],
             "verification_commands": ["python3 checks/check_workflow.py --repo ."],
         }
+
+    result = apply_prior_rejection(
+        result, args.prior_rejection, blocked_actions=[result["route"]]
+    )
 
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
