@@ -31,7 +31,9 @@ GH-137
 - 提供 session telemetry 采集器：从 Codex session jsonl 统计 `context_compacted`
   事件数，作为 `observed_compaction_count` 的来源。
 - `telemetry_source: unavailable` 时禁止 `basis: compaction`（校验期失败），强制
-  降级到可观测 basis。
+  降级到可观测 basis；`basis` 枚举扩展 `runtime_dims`（仅 version 3），使
+  wall-clock/tool-call 等硬预算维度可以独立作为合法 basis，覆盖既无 compaction
+  遥测又无有意义 item cap 的运行时。
 - goal 与 session 解耦：删除 goal-active compaction 豁免，明确 goal 跨 session
   持续、session/tranche 达到 compaction 预算必须结束并 handoff。
 - budget 对象新增四个硬预算维度：`max_wall_clock_minutes`、`max_tool_calls`、
@@ -55,8 +57,10 @@ GH-137
    `budget_override` 时，`runtime_ledger_gate.py` 必须返回 blocked；自报
    `compaction_count` 低于 observed 不得改变结论。
 2. B-002 当 `telemetry_source: unavailable` 且 `basis` 为 `compaction` 或 `both`
-   时，checkpoint 校验必须失败并给出降级指引（改用 `item_cap` 或 wall-clock/
-   tool-call 维度），不得进入预算比较。
+   时，checkpoint 校验必须失败并给出降级指引（改用 `item_cap` 或
+   `runtime_dims`），不得进入预算比较；`basis: runtime_dims`（仅 version 3
+   合法，只按四个硬预算维度判定）必须是 gate 接受的合法 checkpoint 形态，
+   使降级路径存在合法出口而非被迫伪造 item cap。
 3. B-003 telemetry 采集器对同一 session jsonl 的统计必须与文件中
    `context_compacted` 事件行数精确一致；文件不存在或不可读时返回
    `telemetry_source: unavailable`，不得返回 0 计数冒充真实观测。
@@ -66,12 +70,19 @@ GH-137
 5. B-005 `max_wall_clock_minutes`（默认 120）、`max_tool_calls`（默认 250）、
    `max_review_correction_rounds`（默认 2）、`max_full_test_runs_per_head`
    （默认 1）任一观测值超过声明值时 gate 返回 blocked，错误信息必须点名超限维度
-   与 `observed > limit` 的具体数值。
+   与 `observed > limit` 的具体数值。`max_full_test_runs_per_head` 的计数必须
+   绑定被检验的 head：checkpoint 记录 `full_test_head_sha` 与
+   `observed_full_test_runs_current_head` 成对出现（缺 `full_test_head_sha`
+   的 full-test 计数视为非法）；当记录的 head 与当前 PR head 不一致时，计数
+   对新 head 重置为 0 并更新 `full_test_head_sha`，旧 head 的计数保留在历史
+   tranche 记录中不被覆盖，使重置可审计而非代理擅自清零。
 6. B-006 四个新维度均允许显式声明覆盖默认值，但必须为正整数；非法值（0、负数、
    布尔、非整数）在校验期失败，不得静默回退默认值。
 7. B-007 `budget_override` 语义保持不变：有 override 时超预算记 warning 并放行，
    override 必须含引用范围与会话标记；新维度超限同样接受 override，且 override
-   不跨维度共享——每个超限维度需要独立记录。
+   不跨维度共享——version 3 采用按维度的多条 override 结构
+   （`budget_overrides`），同一 checkpoint 多个维度同时超限时每个维度各需一条
+   独立授权记录，缺失其一即对该维度 blocked。
 8. B-008 checkpoint_version 2 的现有 checkpoint 与全部现有 fixture 在本次改动后
    校验结果不变（新字段仅在 version 3 必填）；`python -m pytest tests/` 全绿。
 9. B-009 gate 与 telemetry 采集器均为只读：不写 session 文件、不修改 checkpoint、
@@ -92,7 +103,7 @@ GH-137
 | 重试/幂等：同一 checkpoint 重复跑 gate | 结论幂等；telemetry 重复采集不产生副作用（B-009 只读） |
 | 非法状态/状态转换：observed < self-reported | 取 max 判定（B-001），并输出不一致 warning 供审计 |
 | 兼容/迁移/回滚：version 2 checkpoint | B-008 行为不变；version 3 才要求新字段；回滚 = 继续用 version 2 |
-| 降级/回退：runtime 不暴露 compaction | B-002 强制降级到 item_cap/wall-clock/tool-call，禁止不可验证的 compaction basis |
+| 降级/回退：runtime 不暴露 compaction | B-002 强制降级到 `item_cap` 或 `runtime_dims`（wall-clock/tool-call 硬预算维度），禁止不可验证的 compaction basis |
 | 证据/审计完整：checkpoint 与 telemetry 不一致 | 不一致本身记入 gate 输出（observed、self-reported、source、window_id 全打印） |
 | 取消/中断：tranche 中途 handoff | `stop_reason: budget_exhausted` + resume_prompt 路径保持可用，新维度复用同一 handoff 流程 |
 

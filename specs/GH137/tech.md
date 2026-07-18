@@ -4,6 +4,11 @@
 
 GH-137
 
+<!-- specrail-requires-planned-changes-v1 -->
+<!-- specrail-planned-changes
+{"version":1,"issue":137,"complete":true,"paths":["checks/session_telemetry.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","schemas/runtime_checkpoint.schema.json","skills/specrail-implement-queue/SKILL.md","examples/fixtures/runtime-telemetry-mismatch-blocked.json","examples/fixtures/runtime-telemetry-unavailable-compaction-basis.json","examples/fixtures/runtime-goal-active-second-compaction.json","examples/fixtures/runtime-wall-clock-exceeded-blocked.json","examples/fixtures/runtime-tool-calls-exceeded-blocked.json","examples/fixtures/runtime-review-rounds-exceeded-blocked.json","examples/fixtures/runtime-full-test-runs-exceeded-blocked.json","tests/test_session_telemetry.py","tests/test_runtime_ledger_gate.py"],"spec_refs":["specs/GH137/product.md","specs/GH137/tech.md"]}
+-->
+
 ## Product Spec
 
 见 `product.md`。
@@ -17,6 +22,7 @@ GH-137
 | 预算比较与 override | `checks/runtime_gate_rules.py:319` | `compaction_count > compaction_budget` 时无 override 即报错 | 新维度超限复用同一 blocked/override 分支结构（B-005/B-007） |
 | context budget 形式校验 | `checks/runtime_ledger_gate.py:431` | 仅校验 `0 < soft < hard < critical < 1` | 事故证明纯 schema 校验无控制作用；gate 输出需带 telemetry 不一致审计信息 |
 | ledger gate 字段清单 | `checks/runtime_ledger_gate.py:400` | `context_budget` 在必填键列表中 | version 3 新增 telemetry/goal 字段的接入点 |
+| version 门禁 | `checks/runtime_ledger_gate.py:70`、`schemas/runtime_checkpoint.schema.json` | `CHECKPOINT_VERSIONS = {1, 2}`；schema `checkpoint_version` 枚举 `[1, 2]`；顶层 `tranche_id` 必填 | version 3 必须先在这两处放开，否则 v3 checkpoint 在进入新校验前即被拒绝 |
 | compaction 默认预算 | `skills/specrail-implement-queue/SKILL.md:334` | `compaction_budget` default 1: stop before the second compaction | 与 goal-active 豁免冲突的一侧 |
 | goal-active 豁免 | `skills/specrail-implement-queue/SKILL.md:358` | goal active 时 observed compaction 不是 handoff trigger | B-004 要求整段删除并替换为 goal/session 解耦语义 |
 | 现有 ledger 测试 | `tests/test_runtime_ledger_gate.py:1` | 基于 fixture 的 blocked/allowed 断言风格 | 新增 B-001…B-010 回归用例沿用同一风格 |
@@ -34,25 +40,50 @@ GH-137
 - 纯只读，无网络（B-009）。CLI 入口 `python -m checks.session_telemetry <path>`
   输出 JSON，供 agent 在更新 checkpoint 前调用。
 
-### 2. checkpoint_version 3 schema（`checks/runtime_gate_rules.py`）
+### 2. checkpoint_version 3 schema（版本门禁 + `checks/runtime_gate_rules.py`）
 
-- budget 对象新增：`observed_compaction_count`（非负整数，来源 telemetry）、
-  `telemetry_source`（`runtime` | `session_log` | `unavailable`）、
+- 版本门禁先行放开：`checks/runtime_ledger_gate.py:70` 的
+  `CHECKPOINT_VERSIONS = {1, 2}` 扩展为 `{1, 2, 3}`；
+  `schemas/runtime_checkpoint.schema.json` 的 `checkpoint_version` 枚举
+  `[1, 2]` 扩展为 `[1, 2, 3]`。version 3 的新字段语义校验落在
+  `checks/runtime_gate_rules.py`；不先改这两处门禁，任何 v3 checkpoint 在
+  进入新校验前即被拒绝。
+- budget 对象新增：`observed_compaction_count`、`telemetry_source`
+  （`runtime` | `session_log` | `unavailable`）、
   `last_compaction_window_id`（字符串，可选）。
+- `basis` 枚举扩展 `runtime_dims`（仅 version 3 接受，version 2 仍限
+  `{compaction, item_cap, both}`）：不依赖 compaction 计数与 item_cap，仅按
+  四个硬预算维度判定，是 `telemetry_source: unavailable` 时的合法降级
+  checkpoint 形态（B-002）。
 - version 3 且 `basis ∈ {compaction, both}` 时：`telemetry_source` 必填；为
-  `unavailable` 时校验失败，错误信息给出降级指引（B-002）。
+  `unavailable` 时校验失败，错误信息给出降级指引（改用 `item_cap` 或
+  `runtime_dims`）（B-002）。
+- version 3 必填观测字段（一律非负整数，缺失或非法即校验失败，不得默认 0）：
+  `observed_compaction_count`（`basis: runtime_dims` 且 telemetry 不可用时
+  允许缺省，其余必填）、`observed_wall_clock_minutes`、`observed_tool_calls`、
+  `observed_review_correction_rounds`、`observed_full_test_runs_current_head`。
+  否则默认上限没有比较对象，unbounded-run 会绕过默认硬预算。
 - 预算判定改为 `effective = max(observed_compaction_count, compaction_count)`；
-  `effective > compaction_budget` 走既有 override/blocked 分支（B-001/B-007）。
+  `effective > compaction_budget` 走 override/blocked 分支（B-001/B-007）。
   observed 与自报不一致时追加 warning，包含双方数值与 source（审计边界）。
-- 新增维度：`max_wall_clock_minutes`/`max_tool_calls`/
-  `max_review_correction_rounds`/`max_full_test_runs_per_head` 及对应观测字段
-  `observed_wall_clock_minutes`/`observed_tool_calls`/
-  `observed_review_correction_rounds`/`observed_full_test_runs_current_head`。
+- 新增声明维度：`max_wall_clock_minutes`/`max_tool_calls`/
+  `max_review_correction_rounds`/`max_full_test_runs_per_head`。
   声明值缺省用默认（120/250/2/1），显式声明必须为正整数（B-006）；
-  `observed > limit` → blocked，错误信息含维度名与数值（B-005）。override
-  按维度独立记录，复用现有 `budget_override` 结构加 `dimension` 字段（B-007）。
-- 新增 `goal_id`/`tranche_id`（version 3 可选，成对出现）；同一 goal 下新
-  tranche 观测字段清零（B-010）。version 2 分支代码路径不动（B-008）。
+  `observed > limit` → blocked，错误信息含维度名与数值（B-005）。
+- full-test 维度绑定 head：version 3 必填 `full_test_head_sha`（非空字符串），
+  与 `observed_full_test_runs_current_head` 成对记录；checkpoint 声明的 head
+  与当前 PR head 不一致时，计数对新 head 重置为 0 并更新 `full_test_head_sha`，
+  旧 head 的计数保留在历史 tranche 记录中不被覆盖（product.md B-005）。
+- override 改为 per-dimension 多条结构：version 3 使用 `budget_overrides`
+  （对象数组），每条含 `dimension`
+  （`compaction` | `wall_clock` | `tool_calls` | `review_rounds` |
+  `full_test_runs`）加既有 `budget_override` 的引用范围与会话标记字段。
+  同一 checkpoint 两个维度同时超限时，每个维度各需一条独立记录，缺失其一
+  即对该维度 blocked（B-007）。version 2 的单 `budget_override` 对象结构与
+  校验路径不动（B-008）。
+- 新增 `goal_id`（version 3 可选字符串）。顶层 `tranche_id` 保持全版本必填
+  （既有 schema/gate 契约不变，B-010 的 tranche 边界依赖它）；同一 `goal_id`
+  下新 tranche 观测字段清零（B-010）。version 2 分支代码路径不动（B-008）。
 
 ### 3. SKILL.md 语义修订（`skills/specrail-implement-queue/SKILL.md`）
 
@@ -65,9 +96,14 @@ GH-137
 
 ### 4. Fixtures 与 gate 输出
 
-- 新增 fixtures：`runtime-telemetry-mismatch-blocked.json`（observed=2/自报=0/
-  budget=1）、`runtime-telemetry-unavailable-compaction-basis.json`、
-  `runtime-goal-active-second-compaction.json`、四个维度各一条超限 fixture。
+- 新增 fixtures（`examples/fixtures/`）：`runtime-telemetry-mismatch-blocked.json`
+  （observed=2/自报=0/budget=1）、
+  `runtime-telemetry-unavailable-compaction-basis.json`、
+  `runtime-goal-active-second-compaction.json`，以及四个维度各一条超限 fixture：
+  `runtime-wall-clock-exceeded-blocked.json`、
+  `runtime-tool-calls-exceeded-blocked.json`、
+  `runtime-review-rounds-exceeded-blocked.json`、
+  `runtime-full-test-runs-exceeded-blocked.json`。
 - gate blocked 输出统一格式：`budget exceeded: <dimension> observed <n> >
   limit <m> (telemetry_source=<s>)`。
 
