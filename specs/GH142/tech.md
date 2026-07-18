@@ -31,7 +31,7 @@ GH-142
 - `tools/spec_depth_audit.py`：新增 `LEGACY_RE = re.compile(r"^\s*status:\s*legacy\s*$", re.IGNORECASE | re.MULTILINE)` 与 `is_legacy(ptext)`（`section(ptext, ["Linked Issue"])` 内匹配，镜像 `is_trivial` 的小节限定）。`audit_dir()` 记录 dict 增加 `legacy` 键。`gate_failures()` 开头增加 `if record["legacy"]: return []`，且 legacy 优先于 trivial 分类（B-004：先判 legacy 再判 trivial）。`run_gate()` 输出三段：`exempt (complexity: trivial): ...`、`legacy (status: legacy): ...`、FAIL 行；通过时追加二态计数行 `two-state: pass=<n> trivial=<n> legacy=<n> total=<n>`（B-011）。
 - `checks/specrail_lib.py`：新增 `spec_is_legacy(repo, config, issue) -> bool`——用 `spec_packet_artifact_paths()` 定位 `product.md`，读取失败抛 `SpecRailError`（B-007），Linked Issue 小节内匹配 `status: legacy`。正则与 audit 侧刻意各自持有（tools/ 不 import checks/，保持 audit 零依赖；两处即容忍，第三处出现时抽公共模块）。
 - `checks/route_gate.py`：`evaluate_route()` 的 implement 分支（`route_gate.py:316` 之后）调用 `spec_is_legacy`；legacy 时 `missing.append("non_legacy_spec")`、reasons 加 `spec packet specs/GH<n> is status: legacy; rewrite via write_spec (needs_spec) before implementing`，decision 走既有 missing→blocked 通道。`SpecRailError` 一律 blocked（B-007）。
-- Sweep：28 个老区段 spec 的 `product.md` Linked Issue 小节追加一行 `status: legacy`（B-010，追加式）。
+- Sweep：28 个老区段 spec 的 `product.md` Linked Issue 小节追加一行 `status: legacy`（B-010，追加式）。其中 GH5、GH7、GH9、GH13 为老格式 header（`GitHub issue: \`#N\`` 直接置于标题下方，无 `## Linked Issue` 小节），`section(ptext, ["Linked Issue"])` 对它们返回空串，标记无法被识别；对这 4 个文件在末尾追加最小小节（`## Linked Issue` + `GitHub issue: #<n>` + `status: legacy`，+3 行 0 删除），追加后即为标准 Linked Issue 小节，`is_legacy()` 无需任何解析器改动即可识别。
 - Backfill：GH1（补 Boundary Checklist）、GH95（补 invariants）、GH97（补边界+锚点）、GH100/GH104/GH106/GH111（补 invariants+边界+锚点），逐个达到 8/8/5（B-008）。
 
 ## Product-to-Test Mapping
@@ -39,7 +39,7 @@ GH-142
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
 | B-001 | `is_legacy` + `gate_failures` 豁免分支 | `test_gate_exempts_legacy_spec_in_legacy_list` |
-| B-002 | `is_legacy` 小节限定 | `test_legacy_marker_outside_linked_issue_is_not_exempt` |
+| B-002 | `is_legacy` 小节限定 | `test_legacy_marker_outside_linked_issue_is_not_exempt`（含负例：文件完全没有 Linked Issue 小节、`status: legacy` 落在正文时不计） |
 | B-003 | `run_gate` FAIL 路径（既有） | `test_gate_blocks_shallow_unmarked_spec`（第三态非零退出） |
 | B-004 | legacy 先于 trivial 的分类顺序 | `test_legacy_wins_over_trivial_declaration` |
 | B-005 | `route_gate.py` implement 分支 + `spec_is_legacy` | `test_implement_blocked_on_legacy_spec_with_non_legacy_spec_missing` |
@@ -47,7 +47,8 @@ GH-142
 | B-007 | `spec_is_legacy` 读取失败抛错 | `test_implement_blocked_when_product_md_unreadable` |
 | B-008 | 7 个 backfill spec 文件 | 对每个目录 `python3 tools/spec_depth_audit.py --spec-dir specs/GH<n> --gate` 退出码 0 |
 | B-009 | sweep 枚举流程 | 实现 PR 附 `python3 tools/spec_depth_audit.py --repo . --gate 2>&1 \| awk '/^FAIL /{sub(":","",$2); print $2}'` 输出与 28 个标记文件 diff 一致 |
-| B-010 | sweep 的 diff 形态 | `git diff --stat` 显示 28 个 product.md 均为 +1 行 0 删除；摘除路径由 B-008 命令约束 |
+| B-010 | sweep 的 diff 形态 | `git diff --numstat` 显示 24 个 product.md 为 +1/-0、老格式 4 个（GH5/GH7/GH9/GH13）为 +3/-0，全部 0 删除；摘除路径由 B-008 命令约束 |
+| B-010（老格式追加小节） | 文件末尾追加的最小 Linked Issue 小节 | `test_legacy_recognized_in_appended_minimal_linked_issue_section`（正例：追加小节后 gate 判 legacy）+ B-002 负例（小节外标记不计） |
 | B-011 | `run_gate` 二态计数行 | `test_gate_summary_reports_two_state_counts` |
 | B-012 | 非 gate 输出路径 | `test_non_gate_output_unchanged_for_legacy_spec` |
 
