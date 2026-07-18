@@ -24,6 +24,7 @@ CHECKOUT=${QUEUE_CHECKOUT:?set QUEUE_CHECKOUT (local clone path)}
 CONCURRENCY=${QUEUE_CONCURRENCY:-2}
 LIMIT=${QUEUE_LIMIT:-6}
 LABEL=${QUEUE_LABEL:-}
+SKIP_LABELS=${QUEUE_SKIP_LABELS:-parked}
 CODEX_BIN=${QUEUE_CODEX_BIN:-codex}
 CODEX_FLAGS=${QUEUE_CODEX_FLAGS:---full-auto}
 RUN_DIR=${QUEUE_RUN_DIR:-$HOME/.codex/queue-runner/runs/$(date +%Y%m%d-%H%M%S)}
@@ -37,9 +38,11 @@ git -C "$CHECKOUT" fetch origin --prune --quiet
 # Fetch a larger candidate pool; skips (already-referenced issues) must not
 # consume the session limit.
 POOL=$(( LIMIT * 5 > 30 ? LIMIT * 5 : 30 ))
-list_args=(issue list --repo "$REPO" --state open --limit "$POOL" --json number)
+list_args=(issue list --repo "$REPO" --state open --limit "$POOL" --json number,labels)
 [ -n "$LABEL" ] && list_args+=(--label "$LABEL")
-issues=$(gh "${list_args[@]}" --jq '.[].number')
+skip_re=$(printf '%s' "$SKIP_LABELS" | tr ',' '|')
+issues=$(gh "${list_args[@]}" \
+  --jq ".[] | select([.labels[].name | test(\"^(${skip_re})\$\")] | any | not) | .number")
 
 # Skip issues that already have an open PR referencing them.
 open_pr_text=$(gh pr list --repo "$REPO" --state open --limit 100 \
