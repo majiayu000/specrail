@@ -83,11 +83,42 @@ ending the queue drain. Treat them as blockers only when the user limited the
 run to implementation-only work, the issue lacks enough evidence to draft a
 spec, or a human gate prevents spec creation.
 
+## PR Tier Lanes
+
+Classify every implementation candidate into a `pr_tier` before planning PRs.
+The tier decides process weight — how many PRs carry the work — while the
+verification gates themselves stay identical for every tier.
+
+- `heavy`: architecture changes, schema or migration changes, security
+  surfaces, cross-module rewrites, or anything the spec marks high risk.
+  Keep the full two-PR flow: separate spec PR first, then implementation.
+- `standard`: normal feature or fix work. Ship ONE `mixed_impl` PR carrying
+  the spec packet (or spec delta) and the implementation together. Do not
+  open a separate spec-only PR first.
+- `fastlane`: small low-risk changes — roughly ≤50 changed lines and no
+  protected paths (API schema, migrations, auth or security code, CI
+  workflow definitions). One PR; when the repository's gates accept the
+  `exception_allowed` class, the spec content may live in the PR
+  description; otherwise include the minimal spec delta in the same PR.
+
+Rules:
+
+- Record `pr_tier` with its evidence (changed-line count, touched paths) on
+  the checkpoint item. Where the repository ships a CI tier check, that
+  check is the enforcing authority — never self-declare `fastlane`
+  against it.
+- When in doubt between two tiers, pick the heavier one.
+- Tiering never weakens CI, reviewer-lane, review-thread, or pr_gate
+  evidence requirements.
+
 ## Queue Planning
 
 Build an issue-to-PR plan:
 
 - one issue per implementation PR by default
+- for `standard` and `fastlane` tiers, spec content travels in the same
+  `mixed_impl` PR per PR Tier Lanes; separate spec PRs are a `heavy`-tier
+  pattern
 - several PRs per issue only when the task plan or risk justifies smaller slices
 - combined PRs only when the specs explicitly share one acceptance surface
 - `Refs #<issue>` for partial slices
@@ -228,6 +259,10 @@ Keep ownership boundaries explicit:
 - worker lanes own disjoint files or modules
 - shared verification belongs to one coordinator
 - dependent specs run serially
+- builds and tests run only inside the lane's own worktree: never run
+  `cargo` (or equivalent) in the primary checkout while other sessions are
+  active, and never two build/test commands concurrently in one worktree —
+  the target-dir lock serializes them and stalls both lanes
 
 ## Reviewer Lane Reuse
 
@@ -359,6 +394,37 @@ Default rules:
 
 Prefer artifact paths such as `artifacts/logs/<tranche>/cargo-test.log` and
 summaries such as `artifacts/logs/<tranche>/ci-summary.md`.
+
+## Waiting Discipline
+
+Waiting happens inside a single blocking tool call, never by looping the model.
+Every model turn re-sends the full history, so poll loops — repeated
+`write_stdin` with empty input against a background process, or
+`for i in 1..N; do gh pr view ...; sleep; done` — burn tokens proportional to
+history size times poll count while doing no work (openai/codex#13733). Replace
+each poll loop with one blocking wait:
+
+- CI on a PR: `gh pr checks <n> --repo OWNER/REPO --watch --fail-fast` blocks in
+  one call until every check settles. For a specific run:
+  `gh run watch <run-id> --repo OWNER/REPO --exit-status`.
+- Long local checks (`cargo test`, `cargo clippy`, deterministic checks): run
+  them in the foreground to completion with an adequate command timeout and raw
+  output redirected to an artifact per the Output Firewall. Do not launch them
+  as a background process and then poll `write_stdin` for output.
+- Reviewer / merge-reviewer lanes: keep the existing bounded-wait rule (one
+  bounded wait plus one stop-and-return; see Reviewer Lane Failures). That
+  bounded wait is a single blocking wait on the lane, not a poll loop.
+- When a wait must happen through `exec_command` / `wait` sessions, request the
+  maximum yield each time: set `yield_time_ms` to the configured
+  `background_terminal_max_timeout` (never the 30s habit), and if a task needs
+  multiple waits, grow the yield exponentially between them. Thirty-second
+  slices against a multi-minute check are poll loops with extra steps.
+
+Test layering, to avoid re-paying a full-suite wait on every fix round:
+
+- During iteration, run only the focused tests for the touched behavior.
+- Run the full suite plus clippy plus deterministic checks once, immediately
+  before claiming PR-ready — not after each individual fix.
 
 ## Runtime Checkpoint
 

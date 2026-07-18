@@ -137,6 +137,8 @@ After startup, load `skills/specrail-implement-queue/SKILL.md` for any issue or
 PR queue. That skill owns:
 
 - spec coverage classification
+- PR tier lanes (`fastlane` / `standard` / `heavy` — tier decides one-PR
+  versus two-PR process weight; gates stay identical)
 - implementation candidate selection
 - one-issue-per-PR planning
 - partial versus final closing semantics
@@ -163,6 +165,11 @@ satisfy merge review.
 If no native threads capability is available, continue with the single-agent
 SpecRail flow only after recording the fallback and reporting that no native
 threads were launched.
+
+Wait for CI and long local checks with a single blocking call (e.g.
+`gh pr checks <n> --watch --fail-fast`, or a foreground `cargo test`), never a
+model-driven poll loop. See Waiting Discipline in
+`skills/specrail-implement-queue/SKILL.md`.
 
 ## Boundaries
 

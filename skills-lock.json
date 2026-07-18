@@ -5,7 +5,7 @@
     {
       "name": "implx",
       "path": "skills/implx/SKILL.md",
-      "computedHash": "sha256:90fe951993f75773c6611cf1f61b68065209928233b96c3cfb65277ffb87697e"
+      "computedHash": "sha256:25c33436478e89a38a776ee7913cfb95f5dd4334078e10d237152e45287b784f"
     },
     {
       "name": "specrail-check-impl-against-spec",
@@ -20,7 +20,7 @@
     {
       "name": "specrail-implement-queue",
       "path": "skills/specrail-implement-queue/SKILL.md",
-      "computedHash": "sha256:f25d5885c71c25db020fa16b43a3c3845b13730f7230cc32c5e190bf2e3976cc"
+      "computedHash": "sha256:4185deb5fb7c71fa0fafefb90dac797c91d802c099d5f77a8031f213b5cd69dd"
     },
     {
       "name": "specrail-implement",
