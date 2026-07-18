@@ -180,3 +180,32 @@ def test_cli_outputs_json(tmp_path: Path) -> None:
     assert payload["observed_compaction_count"] == 1
     assert payload["telemetry_source"] == "session_log"
     assert payload["tranche_window"] == {"start_line": 1, "end_line": 2}
+
+
+def test_collect_offset_beyond_session_length_is_unavailable(tmp_path: Path) -> None:
+    session = tmp_path / "session.jsonl"
+    _write_session(
+        session,
+        [_event("context_compacted", "2026-07-17T01:00:00Z", window_id="w-1")],
+    )
+
+    result = collect(session, tranche_start_offset=999)
+
+    assert result["telemetry_source"] == "unavailable"
+    assert "beyond the session length" in result["reason"]
+    assert "observed_compaction_count" not in result
+    assert "tranche_window" not in result
+
+
+def test_collect_offset_equal_to_session_length_is_empty_window(tmp_path: Path) -> None:
+    session = tmp_path / "session.jsonl"
+    _write_session(
+        session,
+        [_event("context_compacted", "2026-07-17T01:00:00Z", window_id="w-1")],
+    )
+
+    result = collect(session, tranche_start_offset=1)
+
+    assert result["telemetry_source"] == "session_log"
+    assert result["observed_compaction_count"] == 0
+    assert result["tranche_window"] == {"start_line": 1, "end_line": 1}

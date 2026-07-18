@@ -127,6 +127,12 @@ def collect(session_path: Path | str, tranche_start_offset: int = 0) -> dict[str
         return _unavailable(f"cannot read session file: {exc}")
 
     lines = raw.splitlines()
+    if tranche_start_offset > len(lines):
+        return _unavailable(
+            f"tranche_start_offset {tranche_start_offset} is beyond the "
+            f"session length ({len(lines)} lines); a stale offset cannot "
+            "produce trusted zero counts"
+        )
     window_lines = lines[tranche_start_offset:]
 
     parsed_events: list[tuple[int, dict[str, Any]]] = []

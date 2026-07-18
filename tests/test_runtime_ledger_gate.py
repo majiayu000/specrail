@@ -748,6 +748,89 @@ def test_v3_unavailable_telemetry_flags_self_reported_provenance() -> None:
     )
 
 
+def test_overridden_overrun_stays_visible_as_warning() -> None:
+    checkpoint, now = _v3_fixture("runtime-override-per-dimension.json")
+
+    result = evaluate_checkpoint(checkpoint, now=now)
+
+    assert any(
+        "budget overridden: tool_calls observed" in warning
+        for warning in result["warnings"]
+    )
+    assert any(
+        "tool_calls budget exceeded under a recorded per-dimension" in entry
+        for entry in result["satisfied"]
+    )
+
+
+def test_v3_item_cap_is_enforced_against_item_records() -> None:
+    checkpoint, now = _v3_fixture("runtime-new-tranche-reset.json")
+    budget = checkpoint["budget"]
+    assert isinstance(budget, dict)
+    budget["basis"] = "item_cap"
+    budget["item_cap"] = 1
+    items = checkpoint["items"]
+    assert isinstance(items, list)
+    items.append(dict(items[0]))
+
+    result = evaluate_checkpoint(checkpoint, now=now)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "budget exceeded: item_cap observed 2 > limit 1" in error
+        for error in result["errors"]
+    )
+
+
+def test_v3_item_cap_overrun_with_override_is_allowed_with_warning() -> None:
+    checkpoint, now = _v3_fixture("runtime-new-tranche-reset.json")
+    budget = checkpoint["budget"]
+    assert isinstance(budget, dict)
+    budget["basis"] = "item_cap"
+    budget["item_cap"] = 1
+    budget["budget_overrides"] = [
+        {
+            "dimension": "item_cap",
+            "scope": "finish the second item in this tranche",
+            "conversation_marker": "user message: keep going past the cap",
+        }
+    ]
+    items = checkpoint["items"]
+    assert isinstance(items, list)
+    items.append(dict(items[0]))
+
+    result = evaluate_checkpoint(checkpoint, now=now)
+
+    assert not any("item_cap" in error for error in result["errors"])
+    assert any(
+        "budget overridden: item_cap observed 2 > limit 1" in warning
+        for warning in result["warnings"]
+    )
+
+
+def test_v3_future_tranche_started_at_is_rejected() -> None:
+    checkpoint, _ = _v3_fixture("runtime-new-tranche-reset.json")
+    early_now = _v3_now(checkpoint, minutes=-10)
+
+    result = evaluate_checkpoint(checkpoint, now=early_now)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "tranche_started_at" in error and "in the future" in error
+        for error in result["errors"]
+    )
+
+
+def test_v3_small_clock_skew_is_tolerated() -> None:
+    checkpoint, _ = _v3_fixture("runtime-new-tranche-reset.json")
+    skew_now = _v3_now(checkpoint, minutes=-1)
+
+    result = evaluate_checkpoint(checkpoint, now=skew_now)
+
+    assert result["decision"] == "allowed"
+    assert not any("in the future" in error for error in result["errors"])
+
+
 def test_v2_budget_fixtures_keep_their_decisions() -> None:
     expectations = {
         "runtime-budget-exhausted-handoff.json": "allowed",

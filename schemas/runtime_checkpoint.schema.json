@@ -24,7 +24,18 @@
     "required": ["checkpoint_version"]
   },
   "then": {
-    "required": ["tranche_started_at", "tranche_session_offset"]
+    "required": ["tranche_started_at", "tranche_session_offset"],
+    "properties": {
+      "tranche_started_at": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}"
+      },
+      "tranche_session_offset": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
   },
   "else": {
     "properties": {
@@ -208,7 +219,8 @@
                   "wall_clock",
                   "tool_calls",
                   "review_rounds",
-                  "full_test_runs"
+                  "full_test_runs",
+                  "item_cap"
                 ]
               },
               "scope": {
