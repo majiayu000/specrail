@@ -55,6 +55,7 @@ EXTENSIONLESS_FILE_LINE_RE = re.compile(
 )
 FILE_RANGE_RE = re.compile(r"[A-Za-z0-9_.\-/]+\.[A-Za-z0-9_+\-]+\s*\(\d+[-–]\d+\)")
 TRIVIAL_RE = re.compile(r"^\s*complexity:\s*trivial\s*$", re.IGNORECASE | re.MULTILINE)
+LEGACY_RE = re.compile(r"^\s*status:\s*legacy\s*$", re.IGNORECASE | re.MULTILINE)
 
 BOUNDARY_CATEGORIES = {
     "empty": ["empty", "missing input", "空", "缺失输入"],
@@ -157,6 +158,12 @@ def is_trivial(ptext: str) -> bool:
     return bool(TRIVIAL_RE.search(linked))
 
 
+def is_legacy(ptext: str) -> bool:
+    """A legacy declaration only counts inside the Linked Issue section (B-002)."""
+    linked = section(ptext, ["Linked Issue"])
+    return bool(LEGACY_RE.search(linked))
+
+
 def audit_dir(d: Path, *, label: str | None = None) -> dict[str, Any] | None:
     prod = d / "product.md"
     tech = d / "tech.md"
@@ -180,11 +187,17 @@ def audit_dir(d: Path, *, label: str | None = None) -> dict[str, Any] | None:
         "anchors": anchor_count(ttext),
         "boundary_names": ",".join(sorted(cov)) or "-",
         "trivial": is_trivial(ptext),
+        "legacy": is_legacy(ptext),
     }
 
 
 def gate_failures(record: dict[str, Any], thresholds: dict[str, int]) -> list[str]:
-    """EARS never gates (B-007); trivial specs are exempt (B-004)."""
+    """EARS never gates (GH130 B-007); trivial specs are exempt (GH130 B-004).
+
+    Legacy specs are exempt too and win over trivial (GH142 B-001/B-004).
+    """
+    if record["legacy"]:
+        return []
     if record["trivial"]:
         return []
     checks = [
@@ -215,9 +228,12 @@ def display_row(record: dict[str, Any]) -> tuple:
 
 def run_gate(records: list[dict[str, Any]], thresholds: dict[str, int]) -> None:
     print("\n=== gate ===")
-    exempt = [r["label"] for r in records if r["trivial"]]
+    legacy = [r["label"] for r in records if r["legacy"]]
+    exempt = [r["label"] for r in records if r["trivial"] and not r["legacy"]]
     if exempt:
         print(f"exempt (complexity: trivial): {', '.join(exempt)}")
+    if legacy:
+        print(f"legacy (status: legacy): {', '.join(legacy)}")
     failing = [
         (r["label"], reasons)
         for r in records
@@ -227,11 +243,17 @@ def run_gate(records: list[dict[str, Any]], thresholds: dict[str, int]) -> None:
         print(f"FAIL {label}: {'; '.join(reasons)}")
     if failing:
         raise SystemExit(1)
+    total = len(records)
+    passing = total - len(exempt) - len(legacy)
     print(
         "gate: PASS "
         f"(min_invariants={thresholds['min_invariants']}, "
         f"min_boundary={thresholds['min_boundary']}, "
         f"min_anchors={thresholds['min_anchors']})"
+    )
+    print(
+        f"two-state: pass={passing} trivial={len(exempt)} "
+        f"legacy={len(legacy)} total={total}"
     )
 
 

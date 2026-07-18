@@ -56,6 +56,14 @@ RUNTIME_STATE_MAPPING = {
 TERMINAL_BLOCKING_STATES = {
     "abandoned", "duplicate", "reserved_internal", "security_private",
 }
+# GH142: legacy declaration parsing. Deliberately mirrors (not imports)
+# tools/spec_depth_audit.py so tools/ keeps zero checks/ dependencies; a third
+# copy is the trigger for extracting a shared module.
+LEGACY_STATUS_RE = re.compile(r"^\s*status:\s*legacy\s*$", re.IGNORECASE | re.MULTILINE)
+_LINKED_ISSUE_SECTION_RE = re.compile(
+    r"^#+\s+Linked Issue.*?$(?P<body>.*?)(?=^#+\s+|\Z)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -328,6 +336,30 @@ def spec_packet_artifact_paths(
     if repo is not None:
         _validate_resolved_spec_packet_paths(repo, configured_root, paths)
     return paths
+
+
+def spec_is_legacy(repo: Path, config: PackConfig, issue: int) -> bool:
+    """Report whether the issue's product.md declares ``status: legacy``.
+
+    The declaration only counts inside the Linked Issue section (GH142 B-002).
+    A missing product.md is not legacy (the missing-artifact gate owns that
+    case). A product.md that exists but cannot be read raises
+    :class:`SpecRailError` so callers fail closed (GH142 B-007).
+    """
+
+    paths = spec_packet_artifact_paths(config, issue, repo=repo)
+    product = resolve_repo_path(
+        repo,
+        paths["product_spec"],
+        label="workflow.yaml: artifacts.product_spec",
+    )
+    if not product.exists():
+        return False
+    text = read_text(product)
+    match = _LINKED_ISSUE_SECTION_RE.search(text)
+    if match is None:
+        return False
+    return bool(LEGACY_STATUS_RE.search(match.group("body")))
 
 
 def resolve_path(path: Path, *, label: str) -> Path:
