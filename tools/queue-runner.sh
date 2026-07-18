@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# codex-queue-runner — drain actionable GitHub issues with one `codex exec`
-# session per issue, each in an isolated git worktree, with a bounded
-# concurrency cap. The model never waits in a poll loop: CI waits happen
+# codex-queue-runner — drain the actionable queue with one `codex exec`
+# session per work item, each in an isolated git worktree, with a bounded
+# concurrency cap. A pass covers BOTH kinds of actionable work:
+#   - issues with no open PR yet   -> implementation session
+#   - existing non-draft open PRs  -> finisher session (reviews, CI, merge) The model never waits in a poll loop: CI waits happen
 # inside the session via blocking `gh pr checks --watch` calls, and queue
 # scheduling lives here, outside any LLM context.
 #
@@ -45,6 +47,30 @@ open_pr_text=$(gh pr list --repo "$REPO" --state open --limit 100 \
   --json number,title,body,headRefName \
   --jq '.[] | "\(.title) \(.body) \(.headRefName)"')
 
+run_pr() {
+  local n=$1
+  local wt="$RUN_DIR/wt-pr$n"
+  local log="$RUN_DIR/pr$n.log"
+  echo "[pr$n] start -> $log"
+  if ! git -C "$CHECKOUT" worktree add --detach "$wt" origin/main \
+      >>"$log" 2>&1; then
+    echo "[pr$n] worktree add failed"; return 1
+  fi
+  local prompt="implx auto: bounded_tranche, only existing PR #$n of $REPO. \
+Finish this PR: gh pr checkout $n, address unresolved review threads, run \
+focused checks, wait for CI with a single blocking \
+'gh pr checks $n --repo $REPO --watch --fail-fast', and merge on complete \
+green evidence (with issue closure semantics). If evidence gaps need a \
+human, report and stop. Do not touch any other PR or issue. Run builds \
+and tests only inside this worktree."
+  local status=0
+  (cd "$wt" && "$CODEX_BIN" exec $CODEX_FLAGS "$prompt") >>"$log" 2>&1 \
+    || status=$?
+  git -C "$CHECKOUT" worktree remove --force "$wt" >>"$log" 2>&1 || true
+  echo "[pr$n] done exit=$status"
+  return "$status"
+}
+
 run_issue() {
   local n=$1
   local wt="$RUN_DIR/wt-gh$n"
@@ -81,6 +107,18 @@ for n in $issues; do
   done
   run_issue "$n" &
 done
+# Existing non-draft open PRs get finisher sessions from the same pool.
+open_prs=$(gh pr list --repo "$REPO" --state open --limit 50 \
+  --json number,isDraft --jq '.[] | select(.isDraft | not) | .number')
+for n in $open_prs; do
+  [ "$started" -ge "$LIMIT" ] && break
+  started=$((started + 1))
+  while [ "$(jobs -rp | wc -l)" -ge "$CONCURRENCY" ]; do
+    wait -n || fail=1
+  done
+  run_pr "$n" &
+done
+
 while [ "$(jobs -rp | wc -l)" -gt 0 ]; do wait -n || fail=1; done
 
 git -C "$CHECKOUT" worktree prune
