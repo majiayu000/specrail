@@ -45,7 +45,11 @@ GH-137
 
 - 不修改 goal 工具的 token budget 契约（工具侧限制，由 wall-clock 上限兜底）。
 - 不改 implx 的 PR 结构收敛、规模预报义务（独立 issue）。
-- 不改 reviewer lane 降级路径与 spec correction 两轮熔断（GH-137 的 P1，后续拆分）。
+- 不改 reviewer lane 降级路径与 SKILL.md 中 spec correction 的流程级两轮熔断
+  文本（GH-137 的 P1，后续拆分）。注意分层：该非目标指 SKILL 流程语义；B-005
+  的 `max_review_correction_rounds`（默认 2）是 checkpoint/gate 侧的硬预算
+  维度，属于本 spec 范围，两者互不替代——实现者应新增 gate 维度而不动 SKILL
+  的 spec correction 流程文本。
 - 不改 `checks/pr_gate.py`、GitHub evidence 链路及现有 fixture 的语义。
 - 不为历史 checkpoint 做数据迁移；仅对 checkpoint_version 3 生效，version 2
   照旧校验。
@@ -72,8 +76,10 @@ GH-137
    （默认 1）任一观测值超过声明值时 gate 返回 blocked，错误信息必须点名超限维度
    与 `observed > limit` 的具体数值。`max_full_test_runs_per_head` 的计数必须
    绑定被检验的 head：checkpoint 记录 `full_test_head_sha` 与
-   `observed_full_test_runs_current_head` 成对出现（缺 `full_test_head_sha`
-   的 full-test 计数视为非法）；当记录的 head 与当前 PR head 不一致时，计数
+   `observed_full_test_runs_current_head` 成对出现——当计数大于 0 或当前
+   tranche 存在被检验的 PR head 时，缺 `full_test_head_sha` 的 full-test 计数
+   视为非法；issue/spec-only 等无 PR head 的 tranche 允许缺省该字段且计数
+   必须为 0，不得为通过校验伪造 SHA；当记录的 head 与当前 PR head 不一致时，计数
    对新 head 重置为 0 并更新 `full_test_head_sha`，旧 head 的计数保留在历史
    tranche 记录中不被覆盖，使重置可审计而非代理擅自清零。
 6. B-006 四个新维度均允许显式声明覆盖默认值，但必须为正整数；非法值（0、负数、
@@ -90,7 +96,9 @@ GH-137
    猜测。
 10. B-010 goal 跨 session 续接语义：checkpoint 新增 `goal_id`/`tranche_id` 后，
     同一 `goal_id` 下新 tranche 的预算独立清零计数，且历史 tranche 的超限记录
-    不被覆盖。
+    不被覆盖；telemetry 统计必须以 tranche 窗口为界（checkpoint 记录新 tranche
+    在 session jsonl 中的起始 offset），同 session rollover 时上一 tranche 的
+    compaction 事件不得计入新 tranche 的 `observed_compaction_count`。
 
 ## Boundary Checklist
 
