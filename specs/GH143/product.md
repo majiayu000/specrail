@@ -26,13 +26,13 @@ GH-143
 1. B-001 当 `auth_mode: review`、PR 的 `pr_tier` 为 `fastlane` 或 `standard`、且全部绿色证据齐备（CI rollup passing、review threads 全部 resolved 且 unresolved_count 为 0、pr_gate decision 为 allowed、独立 reviewer lane verdict 为 clean 或 non_blocking）时，该 PR 免逐 PR 人工授权即为已授权合并；checkpoint item 应记录 `authorization_tier: standard_auto`，且 `merge_authorization.source` 指向 tier 授权策略（引用 GH-143 决策）而非当前会话人工消息。
 2. B-002 当 `pr_tier` 为 `heavy`，或 PR 触及敏感面（gate 代码、enforcement、契约、授权语义、schema/迁移、安全面，含 `enforcement_sensitive: true` 的任何 item）时，review 模式应保持现状：当前会话内逐 PR 显式人工授权，tier 自动授权不适用；item 记录 `authorization_tier: heavy_manual`。
 3. B-003 如果 `pr_tier` 缺失、无证据支撑（缺 changed-line 数或 touched paths 证据）或取值越界，授权判定应 fail-closed 按 `heavy` 处理，要求人工授权，不得默认取较轻 tier。
-4. B-004 当 tier 分类存在争议（CI tier check 结论与自报 tier 不一致、reviewer lane 对 tier 提出异议）时，应按 `heavy` 处理并将争议列入人工决策，不得在争议未决时以 standard_auto 合并。
+4. B-004 当 tier 分类存在争议（CI tier check 结论与自报 tier 不一致、review artifact 中 `tier_attestation.pr_tier` 与 checkpoint 自报 `pr_tier` 不一致、或 review artifact 记录 `tier_dispute: true`）时，应按 `heavy` 处理并将争议列入人工决策，不得在争议未决时以 standard_auto 合并；`tier_dispute: true` 仅可由 reviewer/merge-reviewer lane（或人工）写入 review artifact，实现者 lane 无权设置或解除争议标记，ledger gate 应把任何 `tier_attestation.pr_tier` 与 checkpoint `pr_tier` 的不一致直接视为争议。
 5. B-005 当任一绿色证据缺失或非绿（CI 未全过、存在未 resolved review thread、pr_gate decision 非 allowed、reviewer lane verdict 为 blocking 或缺失）时，standard_auto 不成立；tier 授权不得替代或补足任何证据缺口，该 PR 按既有规则等待证据或人工处理。
-6. B-006 当 `checks/runtime_ledger_gate.py` 校验 merge-ready item 且其 `merge_authorization.source` 声明为 tier 授权时，gate 应额外要求：item 具有 `pr_tier` ∈ {fastlane, standard} 及其证据、`authorization_tier: standard_auto`、且 `enforcement_sensitive` 非 true；任一不满足即 blocked，错误信息指明缺失项。
+6. B-006 当 `checks/runtime_ledger_gate.py` 校验 merge-ready item 且其 `merge_authorization.source` 声明为 tier 授权时，gate 应额外要求：item 具有 `pr_tier` ∈ {fastlane, standard} 及其证据、`authorization_tier: standard_auto`、`enforcement_sensitive` 非 true，且在自报 `pr_tier_evidence` 之外至少一项独立 tier 背书成立——(a) gate 可校验的 CI tier-check artifact 引用，或 (b) 独立 review artifact 中的 reviewer-lane tier 认定（`tier_attestation: {pr_tier, attested: true, basis}` 且其 `pr_tier` 与 checkpoint 自报值一致）；两项独立背书皆缺或任一其他条件不满足即 blocked（fail-closed 落 `heavy_manual`，与 B-002..B-004 同向），错误信息指明缺失项——自报 `pr_tier_evidence` 单独不构成 standard_auto 的充分授权依据。
 7. B-007 当 `checks/pr_gate.py` 的授权项评估遇到 tier-scoped 授权证据（`authorization_tier: standard_auto` + `pr_tier` fastlane/standard 含证据 + 非敏感）时，授权项应判满足，decision 不因缺 `human_authorization` 落入 needs_human；heavy、敏感或 tier 证据缺失时仍要求 `human_authorization.actor`/`source`，行为与现状一致。
-8. B-008 当授权（含 standard_auto 与人工授权）之后 bot/复审 lane 新增 findings、且全部 findings 均为机械性（严重度 ≤ important、不改变 PR 意图、不扩大 planned paths、不改变契约语义）时，应在原授权范围内修复、重新通过独立复审后直接合并，并在事后报告中逐条列明 finding 与处置；不需要重新请求授权。
-9. B-009 当授权后新增 finding 中任一条为 critical，或其修复需要扩大 planned paths、改变契约语义或改变 PR 意图时，应暂停合并并重新请求人工授权；原授权对该 PR 即时失效，恢复合并以新授权为准。
-10. B-010 如果新增 finding 的严重度缺失或无法判定，应按 critical 处理；如果"是否扩大影响面/改变契约语义"无法判定，应按扩大处理——重确认分级自身 fail-closed。
+8. B-008 当授权（含 standard_auto 与人工授权）之后 bot/复审 lane 新增 findings、且全部 findings 均为机械性（严重度 ≤ important、不改变 PR 意图、不扩大 planned paths、不改变契约语义）时，应在原授权范围内修复、重新通过独立复审后直接合并，并在事后报告中逐条列明 finding 与处置；不需要重新请求授权——其中每条 finding 的 `severity`/`mechanical` 分类必须以 reviewer/merge-reviewer lane 的 review artifact 记录为准，实现者 lane 的自报分类不作数。
+9. B-009 当授权后新增 finding 中任一条为 critical，或其修复需要扩大 planned paths、改变契约语义或改变 PR 意图时，应暂停合并并重新请求人工授权；原授权对该 PR 即时失效，恢复合并以新授权为准；critical 与扩面的判定同样以 reviewer lane 的 review artifact 分类为信任来源。
+10. B-010 如果新增 finding 的严重度缺失、无法判定、或其 `severity`/`mechanical` 分类仅有实现者 lane 自报而无 reviewer lane review artifact 记录，应按 critical 处理；如果"是否扩大影响面/改变契约语义"无法判定，应按扩大处理——重确认分级自身 fail-closed。
 11. B-011 当 `auth_mode: auto` 时，本 spec 引入的 tier 授权与重确认规则不改变任何行为：auto 的站立授权、evidence-gap 跳过、self-review authorization 例外均保持现状；tier 授权仅在 review 模式生效，且在两种模式下均不弱化 reviewer-lane、ledger gate、Bounded Tranche 任何既有规则。
 12. B-012 当以 standard_auto 完成一次合并时，checkpoint/报告应留存完整审计记录：`pr_tier` 与其证据、`authorization_tier`、四类绿色证据引用（CI、review_threads、pr_gate、reviewer lane）、以及（如发生）重确认 findings 的逐条处置；记录缺失时 `checks/runtime_ledger_gate.py` 应判 blocked，不得事后补授权。
 
@@ -49,7 +49,7 @@ GH-143
 | --- | --- |
 | Empty / missing input | covered: B-003 B-010（pr_tier 缺失或无证据 fail-closed 按 heavy；finding 严重度缺失按 critical） |
 | Error / failure paths | covered: B-005 B-006（任一证据非绿即 standard_auto 不成立；gate 校验不满足即 blocked 并指明缺失项） |
-| Authorization / permission | covered: B-001 B-002 B-007（tier 决定授权路径；heavy/敏感保留人工授权；pr_gate 授权项识别 tier-scoped 来源） |
+| Authorization / permission | covered: B-001 B-002 B-006 B-007（tier 决定授权路径；standard_auto 额外要求自报之外的独立 tier 背书；heavy/敏感保留人工授权；pr_gate 授权项识别 tier-scoped 来源；tier_dispute 与 findings 分类的写入权归 reviewer lane，B-004 B-008..B-010） |
 | Concurrency / race | N/A: 授权判定为对既有串行 gate 证据的本地只读评估，沿用"gate query 先于 merge、不并行"的既有规则，无新增共享可变状态 |
 | Retry / idempotency | covered: B-006 B-007（gate 对同一 checkpoint/evidence 重复评估结论一致，授权判定只读幂等，无跨进程状态） |
 | Illegal state transitions | covered: B-002 B-006（heavy 或敏感 item 携带 standard_auto 是非法状态，ledger gate 判 blocked；争议未决即合并被 B-004 阻断） |
