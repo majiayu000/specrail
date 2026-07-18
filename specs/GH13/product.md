@@ -98,3 +98,6 @@ Fixture 必须包含：
 - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH13` 通过。
 - `python3 evaluate.py --repo . --spec-dir specs/GH13 --format json` 通过。
 - `python3 -m pytest` 通过。
+## Linked Issue
+GitHub issue: #13
+status: legacy

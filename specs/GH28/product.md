@@ -3,6 +3,7 @@
 ## Linked Issue
 
 GH-28
+status: legacy
 
 ## Problem
 

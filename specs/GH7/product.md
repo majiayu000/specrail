@@ -44,3 +44,6 @@ GitHub issue: `#7`
 - Tests cover allowed, missing authorization, pending CI, and unresolved thread
   cases.
 - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH7` passes.
+## Linked Issue
+GitHub issue: #7
+status: legacy
