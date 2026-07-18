@@ -8,7 +8,10 @@ failures, session budgets, tranche spec/impl mix, and goal candidates.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
+
+from session_telemetry import _parse_timestamp
 
 
 REVIEW_SOURCES = {"independent_lane", "self_review"}
@@ -19,7 +22,34 @@ PR_KINDS = {"spec", "impl", "mixed_impl"}
 IMPL_PR_KINDS = {"impl", "mixed_impl"}
 SPEC_ONLY_STREAK_CAP = 3
 BUDGET_BASES = {"compaction", "item_cap", "both"}
+BUDGET_BASES_V3 = BUDGET_BASES | {"runtime_dims"}
 BUDGET_STOP_REASONS = {"budget_exhausted", "queue_empty", "user_interrupt", "blocked"}
+TELEMETRY_SOURCES = {"runtime", "session_log", "unavailable"}
+TRUSTED_TELEMETRY_SOURCES = {"runtime", "session_log"}
+OVERRIDE_DIMENSIONS = {
+    "compaction",
+    "wall_clock",
+    "tool_calls",
+    "review_rounds",
+    "full_test_runs",
+}
+# (dimension, declared limit key, default limit, observed key)
+HARD_BUDGET_DIMENSIONS = [
+    ("wall_clock", "max_wall_clock_minutes", 120, "observed_wall_clock_minutes"),
+    ("tool_calls", "max_tool_calls", 250, "observed_tool_calls"),
+    (
+        "review_rounds",
+        "max_review_correction_rounds",
+        2,
+        "observed_review_correction_rounds",
+    ),
+    (
+        "full_test_runs",
+        "max_full_test_runs_per_head",
+        1,
+        "observed_full_test_runs_current_head",
+    ),
+]
 
 
 def _require_positive_int(
@@ -251,12 +281,15 @@ def _validate_declaration(
 def _validate_budget(
     data: dict[str, Any],
     errors: list[str],
+    warnings: list[str],
     satisfied: list[str],
+    *,
+    now: datetime | None = None,
 ) -> None:
     budget = data.get("budget")
     if budget is None:
         if (
-            data.get("checkpoint_version") == 2
+            data.get("checkpoint_version") in {2, 3}
             and data.get("queue_mode") == "full_queue_drain"
         ):
             errors.append(
@@ -266,6 +299,10 @@ def _validate_budget(
         return
     if not isinstance(budget, dict):
         errors.append("budget must be an object")
+        return
+
+    if data.get("checkpoint_version") == 3:
+        _validate_budget_v3(data, budget, errors, warnings, satisfied, now=now)
         return
 
     basis = budget.get("basis")
@@ -332,6 +369,320 @@ def _validate_budget(
                 "budget_override; stop and hand off via checkpoint instead"
             )
     elif stop_reason == "budget_exhausted":
+        satisfied.append("budget-exhausted stop is a passing terminal with handoff")
+
+
+def _nonneg_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _validate_budget_overrides(budget: dict[str, Any], errors: list[str]) -> set[str]:
+    """Return the dimensions covered by a valid budget_overrides entry."""
+    if budget.get("budget_override") is not None:
+        errors.append(
+            "budget.budget_override is a version-2 structure; checkpoint_version 3 "
+            "requires per-dimension budget_overrides entries"
+        )
+    overrides = budget.get("budget_overrides")
+    if overrides is None:
+        return set()
+    if not isinstance(overrides, list):
+        errors.append("budget.budget_overrides must be a list")
+        return set()
+    covered: set[str] = set()
+    for index, entry in enumerate(overrides, start=1):
+        if not isinstance(entry, dict):
+            errors.append(f"budget.budget_overrides[{index}] must be an object")
+            continue
+        dimension = entry.get("dimension")
+        if not isinstance(dimension, str) or dimension not in OVERRIDE_DIMENSIONS:
+            allowed = ", ".join(sorted(OVERRIDE_DIMENSIONS))
+            errors.append(
+                f"budget.budget_overrides[{index}].dimension must be one of: {allowed}"
+            )
+            continue
+        valid = True
+        for key in ["scope", "conversation_marker"]:
+            if not _nonempty_string(entry.get(key)):
+                errors.append(
+                    f"budget.budget_overrides[{index}].{key} must be a non-empty string"
+                )
+                valid = False
+        if valid:
+            covered.add(dimension)
+    return covered
+
+
+def _history_count(
+    budget: dict[str, Any], key: str, errors: list[str], entry_matches: Any
+) -> int | None:
+    """Count matching append-only history entries; None means no history."""
+    history = budget.get(key)
+    if history is None:
+        return None
+    if not isinstance(history, list):
+        errors.append(f"budget.{key} must be a list")
+        return None
+    count = 0
+    for index, entry in enumerate(history, start=1):
+        if not isinstance(entry, dict):
+            errors.append(f"budget.{key}[{index}] must be an object")
+        elif entry_matches(entry):
+            count += 1
+    return count
+
+
+def _validate_full_test_head_binding(
+    data: dict[str, Any],
+    budget: dict[str, Any],
+    observed: int | None,
+    errors: list[str],
+) -> str:
+    """Enforce the head binding of the full-test counter (B-005)."""
+    items = data.get("items")
+    heads = {
+        item["head_sha"].strip()
+        for item in (items if isinstance(items, list) else [])
+        if isinstance(item, dict) and _nonempty_string(item.get("head_sha"))
+    }
+    head_sha = budget.get("full_test_head_sha")
+    head = head_sha.strip() if isinstance(head_sha, str) else ""
+    if head_sha is not None and not head:
+        errors.append("budget.full_test_head_sha must be a non-empty string")
+        return ""
+    counted = observed if isinstance(observed, int) else 0
+    if not head:
+        if counted > 0 or heads:
+            errors.append(
+                "budget.full_test_head_sha is required when "
+                "observed_full_test_runs_current_head is above 0 or the tranche "
+                "has a PR head under test"
+            )
+        return ""
+    if not heads:
+        if counted > 0:
+            errors.append(
+                "budget.full_test_head_sha is declared but the tranche has no PR "
+                "head; omit the field and keep the full-test count at 0 instead "
+                "of fabricating a SHA"
+            )
+            return ""
+        return head
+    if head not in heads:
+        errors.append(
+            f"budget.full_test_head_sha {head!r} does not match the current PR "
+            "head; reset the count to 0 for the new head and update "
+            "full_test_head_sha, keeping the old head's count in the append-only "
+            "history"
+        )
+        return ""
+    return head
+
+
+def _validate_budget_v3(
+    data: dict[str, Any],
+    budget: dict[str, Any],
+    errors: list[str],
+    warnings: list[str],
+    satisfied: list[str],
+    *,
+    now: datetime | None = None,
+) -> None:
+    tranche_started = _parse_timestamp(data.get("tranche_started_at"))
+    if tranche_started is None:
+        errors.append(
+            "checkpoint.tranche_started_at must be an ISO8601 timestamp "
+            "(required for checkpoint_version 3)"
+        )
+    if _nonneg_int(data.get("tranche_session_offset")) is None:
+        errors.append(
+            "checkpoint.tranche_session_offset must be a non-negative integer "
+            "(required for checkpoint_version 3; 0 for a session's first tranche)"
+        )
+    goal_id = data.get("goal_id")
+    if goal_id is not None and not _nonempty_string(goal_id):
+        errors.append("checkpoint.goal_id must be a non-empty string when present")
+
+    basis = budget.get("basis")
+    if not isinstance(basis, str) or basis not in BUDGET_BASES_V3:
+        allowed = ", ".join(sorted(BUDGET_BASES_V3))
+        errors.append(f"budget.basis must be one of: {allowed}")
+        basis = ""
+
+    telemetry_source = budget.get("telemetry_source")
+    if telemetry_source is not None and (
+        not isinstance(telemetry_source, str)
+        or telemetry_source not in TELEMETRY_SOURCES
+    ):
+        allowed = ", ".join(sorted(TELEMETRY_SOURCES))
+        errors.append(f"budget.telemetry_source must be one of: {allowed}")
+        telemetry_source = None
+    source_display = telemetry_source if isinstance(telemetry_source, str) else "unset"
+    telemetry_trusted = telemetry_source in TRUSTED_TELEMETRY_SOURCES
+
+    compaction_basis_ok = True
+    if basis in {"compaction", "both"}:
+        if telemetry_source is None:
+            errors.append(
+                "budget.telemetry_source is required when basis is compaction or both"
+            )
+            compaction_basis_ok = False
+        elif telemetry_source == "unavailable":
+            errors.append(
+                "budget.basis compaction is invalid with telemetry_source "
+                "unavailable: compaction counts cannot be verified; downgrade "
+                "the basis to item_cap or runtime_dims"
+            )
+            compaction_basis_ok = False
+
+    window_id = budget.get("last_compaction_window_id")
+    if window_id is not None and not _nonempty_string(window_id):
+        errors.append(
+            "budget.last_compaction_window_id must be a non-empty string when present"
+        )
+        window_id = None
+
+    observed_compaction = _nonneg_int(budget.get("observed_compaction_count"))
+    if observed_compaction is None:
+        if budget.get("observed_compaction_count") is not None:
+            errors.append(
+                "budget.observed_compaction_count must be a non-negative integer"
+            )
+        elif telemetry_trusted:
+            errors.append(
+                "budget.observed_compaction_count is required when "
+                f"telemetry_source is {source_display}"
+            )
+
+    observed_values: dict[str, int | None] = {}
+    for _, _, _, observed_key in HARD_BUDGET_DIMENSIONS:
+        value = _nonneg_int(budget.get(observed_key))
+        if value is None:
+            errors.append(
+                f"budget.{observed_key} must be a recorded non-negative integer "
+                "(checkpoint_version 3 forbids defaulting observed counters to 0)"
+            )
+        observed_values[observed_key] = value
+
+    override_dimensions = _validate_budget_overrides(budget, errors)
+
+    def _judge(dimension: str, effective: int, limit: int) -> None:
+        if effective <= limit:
+            return
+        if dimension in override_dimensions:
+            satisfied.append(
+                f"{dimension} budget exceeded under a recorded per-dimension "
+                "budget_overrides entry"
+            )
+        else:
+            errors.append(
+                f"budget exceeded: {dimension} observed {effective} > "
+                f"limit {limit} (telemetry_source={source_display})"
+            )
+
+    compaction_budget = budget.get("compaction_budget")
+    if basis in {"compaction", "both"}:
+        _require_positive_int(budget, "compaction_budget", "budget", errors)
+    if basis in {"item_cap", "both"}:
+        _require_positive_int(budget, "item_cap", "budget", errors)
+
+    compaction_count = budget.get("compaction_count")
+    if compaction_count is not None and _nonneg_int(compaction_count) is None:
+        errors.append("budget.compaction_count must be a non-negative integer")
+        compaction_count = None
+    if basis in {"compaction", "both"} and compaction_count is None:
+        errors.append(
+            "budget.compaction_count must record the self-reported compaction events"
+        )
+
+    if (
+        basis in {"compaction", "both"}
+        and compaction_basis_ok
+        and isinstance(compaction_count, int)
+        and isinstance(compaction_budget, int)
+        and not isinstance(compaction_budget, bool)
+        and compaction_budget >= 1
+    ):
+        effective = compaction_count
+        if observed_compaction is not None:
+            effective = max(observed_compaction, compaction_count)
+            if observed_compaction != compaction_count:
+                warnings.append(
+                    "compaction telemetry mismatch: observed "
+                    f"{observed_compaction} vs self-reported {compaction_count} "
+                    f"(telemetry_source={source_display}, "
+                    f"window_id={window_id or 'unset'})"
+                )
+        _judge("compaction", effective, compaction_budget)
+
+    stop_reason = budget.get("stop_reason")
+    if stop_reason is not None and (
+        not isinstance(stop_reason, str) or stop_reason not in BUDGET_STOP_REASONS
+    ):
+        allowed = ", ".join(sorted(BUDGET_STOP_REASONS))
+        errors.append(f"budget.stop_reason must be one of: {allowed}")
+
+    tranche_id = data.get("tranche_id")
+    review_history = _history_count(
+        budget,
+        "review_correction_history",
+        errors,
+        lambda entry: entry.get("tranche_id") is None
+        or entry.get("tranche_id") == tranche_id,
+    )
+    current_head = _validate_full_test_head_binding(
+        data, budget, observed_values.get("observed_full_test_runs_current_head"), errors
+    )
+    full_test_history = _history_count(
+        budget,
+        "full_test_history",
+        errors,
+        lambda entry: bool(current_head) and entry.get("head_sha") == current_head,
+    )
+
+    gate_now = now if now is not None else datetime.now(timezone.utc)
+    for dimension, limit_key, default, observed_key in HARD_BUDGET_DIMENSIONS:
+        limit_value = budget.get(limit_key)
+        if limit_value is None:
+            limit = default
+        elif _nonneg_int(limit_value) is None or limit_value < 1:
+            errors.append(f"budget.{limit_key} must be a positive integer")
+            continue
+        else:
+            limit = limit_value
+        observed = observed_values.get(observed_key)
+        if observed is None:
+            continue
+        effective = observed
+        if dimension == "wall_clock" and tranche_started is not None:
+            recomputed = int(max(0.0, (gate_now - tranche_started).total_seconds()) // 60)
+            effective = max(observed, recomputed)
+        elif dimension == "tool_calls" and not telemetry_trusted:
+            warnings.append(
+                "provenance: self_reported: tool_calls has no independent "
+                f"telemetry source (telemetry_source={source_display})"
+            )
+        elif dimension == "review_rounds":
+            if review_history is None:
+                warnings.append(
+                    "provenance: self_reported: review_rounds has no append-only "
+                    "review_correction_history to verify against"
+                )
+            else:
+                effective = max(observed, review_history)
+        elif dimension == "full_test_runs":
+            if full_test_history is None:
+                warnings.append(
+                    "provenance: self_reported: full_test_runs has no append-only "
+                    "full_test_history to verify against"
+                )
+            else:
+                effective = max(observed, full_test_history)
+        _judge(dimension, effective, limit)
+
+    if stop_reason == "budget_exhausted" and not errors:
         satisfied.append("budget-exhausted stop is a passing terminal with handoff")
 
 

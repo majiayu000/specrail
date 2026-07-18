@@ -355,27 +355,53 @@ branches:
   blocked, or `auth_mode: review`), hand off to a fresh session. The handoff
   report must lead with the copy-paste `resume_prompt` as its first line.
 
-Goal-active compaction exemption: while a thread goal created under Goal Use
-is active, an observed compaction is not a handoff trigger. Keep recording
-`compaction_count`, declare a `compaction_budget` that matches the expected
-compaction behavior of the goal-active tranche (with the reason recorded in
-the checkpoint), and after each compaction re-anchor before further queue
-work: re-read the runtime checkpoint and refresh remote truth instead of
-trusting the compaction summary's memory of the queue. Tranche accounting is
-unchanged — every tranche still declares its budget, writes the checkpoint,
-and passes `checks/runtime_ledger_gate.py`. Without an active goal, the
-rules above apply unchanged.
+Goal/session decoupling: a thread goal created under Goal Use never exempts
+a session or tranche from the compaction budget. The goal persists across
+sessions — record a stable `goal_id` in the checkpoint — but the session
+does not. When a session/tranche reaches its compaction budget, goal active
+or not, it must end: write the checkpoint (increment `tranche_id`, record
+`tranche_started_at` and `tranche_session_offset` for the next tranche),
+lead the handoff report with the copy-paste `resume_prompt`, and hand off to
+a fresh session. The new session resumes under the same `goal_id` from the
+checkpoint plus fresh remote truth; observed counters start at zero for the
+new tranche while historical tranche records stay append-only and are never
+overwritten. A second compaction while a goal is active produces exactly
+the same gate outcome as without a goal: blocked unless a per-dimension
+override records the authorization.
 
-Continuing past a compaction budget still requires an explicit user
-`budget_override` recorded with quoted scope and a conversation marker;
+checkpoint_version 3 adds trusted runtime counters and four hard budget
+dimensions. The gate compares `max(observed_compaction_count,
+compaction_count)` against `compaction_budget`; `telemetry_source:
+unavailable` forbids `basis: compaction`/`both` (downgrade to `item_cap` or
+`runtime_dims`); and `max_wall_clock_minutes` (default 120),
+`max_tool_calls` (default 250), `max_review_correction_rounds` (default 2),
+and `max_full_test_runs_per_head` (default 1, bound to
+`full_test_head_sha`) block on `observed > limit`.
+
+Continuing past any exceeded budget dimension still requires an explicit
+user override recorded with quoted scope and a conversation marker — a
+single `budget_override` object for version-2 checkpoints, one
+per-dimension `budget_overrides` entry per exceeded dimension for
+version 3; overrides never cover another dimension.
 `checks/runtime_ledger_gate.py` blocks over-budget continuation without one
-and blocks version-2 drain checkpoints that declare no budget. Reviewer
-lanes stay bounded (the audited well-behaved lanes stayed under ~2M tokens);
-lanes do not inherit the parent budget.
+and blocks version-2/version-3 drain checkpoints that declare no budget.
+Reviewer lanes stay bounded (the audited well-behaved lanes stayed under
+~2M tokens); lanes do not inherit the parent budget.
+
+After every compaction, the first action is the compaction discipline, in
+order: (1) run the read-only telemetry collector
+`python3 -m checks.session_telemetry <session-jsonl> --tranche-start-offset
+<tranche_session_offset>`; (2) write `observed_compaction_count`,
+`telemetry_source`, and `last_compaction_window_id` back into the
+checkpoint budget; (3) re-read the runtime checkpoint; (4) refresh remote
+truth; (5) run `checks/runtime_ledger_gate.py` and obey its decision. Only
+then may other queue work continue.
 
 Do not read raw `~/.codex/sessions` logs, old parent transcripts, or broad
-session JSONL as queue state. Use the checkpoint, repo-local run logs, and fresh
-remote truth.
+session JSONL as queue state. The only permitted session-jsonl access is the
+read-only telemetry collector `checks/session_telemetry.py`, which returns
+event counters, never content. Use the checkpoint, repo-local run logs, and
+fresh remote truth.
 
 ## Output Firewall
 

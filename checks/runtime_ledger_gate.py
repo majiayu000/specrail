@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +68,7 @@ SPEC_PLANNING_STATES = {
 THREAD_YES_VALUES = {"yes", "true", "required", "available"}
 THREAD_REQUIRED_VALUES = {"required", "yes", "true"}
 THREAD_AVAILABLE_VALUES = {"available", "yes", "true"}
-CHECKPOINT_VERSIONS = {1, 2}
+CHECKPOINT_VERSIONS = {1, 2, 3}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -385,7 +386,11 @@ def _validate_full_queue_checkpoint(
 
 
 def evaluate_checkpoint(
-    data: dict[str, Any], *, repo: Path | None = None, config: PackConfig | None = None
+    data: dict[str, Any],
+    *,
+    repo: Path | None = None,
+    config: PackConfig | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -422,7 +427,7 @@ def evaluate_checkpoint(
             errors.append(f"checkpoint.status must be one of: {allowed}")
 
     _validate_goal_candidate(data, errors)
-    _validate_budget(data, errors, satisfied)
+    _validate_budget(data, errors, warnings, satisfied, now=now)
     _validate_tranche_mix(data, errors, satisfied)
     _validate_full_queue_checkpoint(data, errors, warnings)
     queue_mode = data.get("queue_mode")
