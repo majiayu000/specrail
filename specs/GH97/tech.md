@@ -15,14 +15,14 @@ Product: `product.md`
 
 ## Codebase Context
 
-| Area | Files | Current behavior | Why relevant |
+| Area | Files | Current behavior (anchors refreshed against the landed implementation) | Why relevant |
 | --- | --- | --- | --- |
-| Review artifact | `schemas/review_result.schema.json`, `checks/review_json_gate.py` | 支持 basic verdict、comments、review round 和简单 prior finding status；不要求 lane lifecycle、时间、finding ID/source head/关闭证据。 | 必须建立可验证的 terminal exact-head artifact。 |
-| PR evidence | `schemas/pr_review_gate.schema.json`, `checks/github_pr_evidence.py` | 采集 current head、CI、review 和 thread；`review_source` 由调用方提供。 | 必须从 artifact 导出 review completion，不接受 source-only 证明。 |
-| PR gate | `checks/pr_gate.py` | 检查 CI、thread、merge state、authorization；已有部分 resolver role/self-review gate。 | 需要加入 artifact、sensitive classification 和 review→gate 时序。 |
-| Route gate | `checks/route_gate.py` | 验证 state/artifact/duplicate evidence；不知道 sensitive registry。 | implement route 必须验证 sensitive 声明与 approved spec。 |
-| Runtime evidence | `schemas/runtime_checkpoint.schema.json`, `checks/runtime_ledger_gate.py` | 已记录 reviewer lane、lane failures、自审授权。 | 复用语义，避免两个 gate 对同一字段定义冲突。 |
-| Closure | 无 executable check/schema | 只有 PR evidence 内可选 merge dispatch 字段。 | 需要独立 post-dispatch audit 和 payload contract。 |
+| Review artifact | `schemas/review_result.schema.json:6-22`, `checks/review_result_semantics.py:15-21`, `checks/review_result_semantics.py:108` | schema 强制 `reviewer_lane`、`head_sha`、`human_final_review_required` 等 required 字段；semantic 模块定义封闭 status 集（`completed|pending|failed|cancelled|superseded`）、verdict 集（merge-ready 仅 `clean|non_blocking`）与 `validate_review_artifact` 共享验证入口。 | 可验证的 terminal exact-head artifact 契约（B-001、B-002）。 |
+| PR evidence | `checks/github_pr_evidence.py:583`, `checks/github_pr_evidence.py:537`, `checks/github_pr_evidence.py:406` | merge-ready 路径要求 `--review-manifest`；`--review-source` 单独出现被明确拒绝（"cannot prove terminal review"）；`review_completed_at` 从 trusted review evidence 导出。 | manifest 驱动的候选发现，不接受 source-only 证明（B-001、B-004）。 |
+| Terminal review / resolver / 时序契约 | `checks/pr_review_contract.py:21`, `checks/pr_review_contract.py:61-157`, `checks/pr_review_contract.py:348-364` | `BLOCKED_RESOLVER_ROLES = {implementer, orchestrator, coordinator, unknown}`；original/successor reviewer 与 maintainer 授权验证；`review_completed_at <= gate_started_at <= gate_query_completed_at` 时间链验证。 | resolver 身份与 review→gate 顺序（B-005、B-008）。 |
+| Sensitive classification | `checks/sensitive_enforcement.py:46`, `checks/sensitive_enforcement.py:126-149`, `checks/route_gate.py:40-45`, `checks/pr_gate.py:317-328` | `sensitive_registry` 解析 workflow.yaml registry；`classify_sensitive_changes` 用 fnmatch 对 normalized changed paths 自行计算 `matched_paths`；route gate 与 PR gate 都消费该分类。 | registry 命中不信任 caller boolean（B-006、B-007）。 |
+| Runtime evidence | `schemas/runtime_checkpoint.schema.json:1`, `checks/runtime_gate_rules.py:183-200` | runtime ledger 记录 reviewer lane、lane failures；auto 模式 self-review 要求两条独立失败 lane。 | 复用语义，避免两个 gate 对同一字段定义冲突（B-011）。 |
+| Closure audit | `checks/closure_audit.py:135-150`, `checks/closure_audit.py:159`, `schemas/closure_audit_result.schema.json:6-17` | `_required_follow_up` 生成含 `idempotency_key`（`specrail-closure-v1:<digest>`）的稳定 payload；`audit_closure` 验证 `gate_query_completed_at < merge_dispatched_at <= merged_at`；schema 强制 `required_follow_up` 字段。 | 独立 post-dispatch audit 与 payload contract（B-009、B-010）。 |
 
 ## 设计方案
 

@@ -57,3 +57,22 @@ GH-100
    立即记录 `zero_output` lane failure 并按既有失败协议换独立 lane 重试一次；
    禁止对同一 lane 继续重复等待。
 7. B-007 发生真实交接时，交接报告的第一行是完整可粘贴的 `resume_prompt`。
+8. B-008 当 runtime 的 compaction 不可观测（`telemetry_source: unavailable`）
+   时，禁止声明 `basis: compaction` 或 `basis: both`，必须降级为
+   `basis: item_cap`（或 `runtime_dims`）；compaction 可观测时仍优先
+   `basis: compaction`。
+
+## 边界情况清单
+
+| 类别 | 判定（covered: B-xxx / N/A + 原因） |
+| --- | --- |
+| 空/缺失输入 | covered: B-006（lane 一次有界等待加一次显式 stop-and-return 后仍零输出，立即判 `zero_output`，不再无限等待缺失输出） |
+| 错误与失败路径 | covered: B-006（`zero_output` 记入 lane_failures 并走既有失败协议：换独立 lane 重试一次） |
+| 授权/权限 | covered: B-002, B-005（rollover 不得伪造用户 `budget_override` 授权；review 模式 per-PR 人工合并授权与暂停行为完全不变） |
+| 并发/竞态 | covered: B-006（对挂死 lane 与替换 lane 不并行重复等待；恢复路径是串行的一次独立 lane 重试） |
+| 重试/幂等 | covered: B-006（独立 lane 恰好重试一次；禁止对同一挂死 lane 追加等待轮） |
+| 非法状态转换 | covered: B-001, B-003（B-001 条件不全时禁止 rollover 进入新 tranche；rollover 不得绕过 compaction 超限、soft stop、用户打断等终止条件） |
+| 兼容/迁移 | covered: B-002, B-005（同 session 新 tranche + 新 budget 的 checkpoint 与现有 `runtime_ledger_gate` 兼容，无 checks 改动；review 模式零变化） |
+| 降级/回退 | covered: B-003, B-008（出现退化信号即回退到 fresh-session 交接；compaction 不可观测时 basis 降级为 `item_cap`） |
+| 证据与审计完整性 | covered: B-002, B-004（旧 tranche checkpoint 以 `stop_reason: budget_exhausted` 留痕关闭；`item_cap: 1` 必须记录 `item_cap_reason` 高风险理由） |
+| 取消/中断 | covered: B-003, B-007（用户打断仍按现有规则交接或终止；真实交接报告首行是可粘贴的 `resume_prompt`） |

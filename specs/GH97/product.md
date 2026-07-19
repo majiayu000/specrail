@@ -88,14 +88,20 @@ source，甚至 implementer 自行解决的 actionable thread 被误当作可合
 - [ ] `B-011` self-review fixtures 证明缺 lane failure、缺同-head授权或缺 human final review 均阻止。
 - [ ] `python3 -m pytest`、focused tests 和 `python3 checks/check_workflow.py --repo .` 通过。
 
-## 边界情况
+## 边界情况清单
 
-- review artifact 文件不存在、不可读、非 object、schema 不匹配或 head 不匹配。
-- reviewer lane 取消、崩溃、零输出，或 manifest/roster 对同一 current head 发现多个终态结果。
-- 新 head artifact 遗漏旧 finding，或把同一 finding 同时标记为两个状态。
-- GitHub thread outdated 但未解决；resolved thread 没有 resolver，或 resolver role map 不可信。
-- gate 查询期间 PR head 变化；closure audit 发现 merge head 与 gate head 不同。
-- consumer 没有 sensitive registry；只有显式声明 true 时才按敏感路径处理，不能猜测路径。
+| 类别 | 判定（covered: B-xxx / N/A + 原因） |
+| --- | --- |
+| 空/缺失输入 | covered: B-001, B-002, B-012（review artifact 文件不存在、不可读、非 object、empty artifact、缺失字段均阻止；缺 registry 时不猜测敏感路径，但显式 true 仍要求 approved spec，见 B-006） |
+| 错误与失败路径 | covered: B-002, B-012（failed/cancelled lane、schema 不匹配、head 不匹配、格式错误输入均返回明确 blocked/error，不静默降级） |
+| 授权/权限 | covered: B-005, B-007, B-011（resolver 身份与角色验证，implementer/orchestrator/unknown 不能清除阻塞；approved-spec 必须来自 maintainer-controlled adapter；self-review 需独立人类 scoped authorization） |
+| 并发/竞态 | covered: B-004, B-008（同一 current head 出现多个 concurrent terminal artifact 或重复 terminal 均阻止；gate 查询期间 head 变化经 exact-head 绑定检出） |
+| 重试/幂等 | covered: B-010（`required_follow_up` 携带 deterministic idempotency key，重复审计产出可去重的同一 payload） |
+| 非法状态转换 | covered: B-002, B-008, B-009（stale/superseded artifact 不得转为 merge-ready 依据；review→gate→dispatch→merged 时间链顺序不可逆，dispatch-before-gate 判 violation） |
+| 兼容/迁移 | covered: B-001, B-012（裸 `review_source` 与旧 review artifact 不静默兼容新 merge-ready 路径，返回明确 blocked；不支持 `gate_completed_at` alias，见 B-008） |
+| 降级/回退 | covered: B-002, B-012（GitHub thread rollup clean 不能覆盖 artifact finding；证据不完整时不回退到旧行为，fail closed） |
+| 证据与审计完整性 | covered: B-003, B-004, B-006, B-007, B-009, B-010（finding carry-forward 带关闭证据；trusted manifest 发现全部候选；registry 命中自行计算；approved spec 带内容 hash；外部 merge 缺链输出 machine-readable violation） |
+| 取消/中断 | covered: B-002, B-004（cancelled reviewer lane 与 lane 崩溃/零输出的 artifact 状态阻止 merge-ready；中断后 gate 重跑基于同一证据得到同一判定） |
 
 ## 发布说明
 

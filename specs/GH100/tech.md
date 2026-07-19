@@ -10,14 +10,14 @@ Link to `product.md`.
 
 ## Codebase Context
 
-| Area | Files | Current behavior | Why relevant |
+| Area | Files | Current behavior (anchors refreshed against the landed implementation) | Why relevant |
 | --- | --- | --- | --- |
-| Bounded Tranche Hard Stop | `skills/specrail-implement-queue/SKILL.md` | 任何 budget exhaustion 都写 checkpoint 并 hand off to a fresh session | rollover 规则的落点 |
-| item_cap 声明 | `skills/specrail-implement-queue/SKILL.md`、`templates/tranche_checkpoint.md` | `basis`/`item_cap` 由 session 自行声明，无默认值指导 | 实测 agent 声明 `item_cap: 1` 造成过度暂停 |
-| Reviewer Lane Failures | `skills/specrail-implement-queue/SKILL.md` | 定义失败种类与恢复路径，但无等待上限 | 挂死 lane 被反复 wait |
-| auto 模式入口 | `skills/implx/SKILL.md` | auto bullet list 描述 standing merge authorization 与跳过规则 | 需要声明"无退化信号不暂停" |
-| Budget 校验 | `checks/runtime_gate_rules.py:193` | 校验 basis/compaction/item_cap 类型与 compaction 超限，需 `budget_override`；不校验 item 数与 session 边界 | 证明 rollover 与现有 gate 兼容，无需改 checks |
-| Skill hash lock | `skills-lock.json` | 记录每个 SKILL.md 的 sha256 | SKILL.md 变更后必须刷新 |
+| Bounded Tranche Hard Stop | `skills/specrail-implement-queue/SKILL.md:325`, `skills/specrail-implement-queue/SKILL.md:340-356` | budget exhaustion 以 `stop_reason: budget_exhausted` 关闭 checkpoint 后走两分支：Same-Session Tranche Rollover（B-001 条件全部成立时）或 fresh-session handoff（首行 `resume_prompt`） | rollover 规则的落点（B-001、B-002、B-003、B-007） |
+| item_cap 声明 | `skills/specrail-implement-queue/SKILL.md:335-337`, `templates/tranche_checkpoint.md:15-17` | auto 模式声明 `item_cap` 时默认 3；`item_cap: 1` 必须附 `item_cap_reason`；`telemetry_source: unavailable` 时禁止 `basis: compaction`/`both` | 默认值与高风险理由（B-004、B-008） |
+| Reviewer Lane Failures | `skills/specrail-implement-queue/SKILL.md:284-288` | lane 等待有界：一次有界等待 + 一次显式 stop-and-return 后仍零输出即判 `failure_kind: zero_output`，换独立 lane 重试一次，禁止对同一挂死 lane 追加等待 | 等待上限（B-006） |
+| auto 模式入口 | `skills/implx/SKILL.md:91-96` | auto bullet 声明"无退化信号的预算耗尽不暂停"，按 queue skill 的 Same-Session Tranche Rollover 继续；仅 compaction 超限、context soft stop、用户打断、队列排空/全阻塞时交接 | 入口声明（B-001、B-003） |
+| Budget 校验 | `checks/runtime_gate_rules.py:264`, `checks/runtime_gate_rules.py:323-352` | `_validate_budget` 校验 budget 结构；compaction 超限仅在记录 `budget_override` 对象时放行，否则要求 stop-and-handoff；不校验 session 边界，rollover 的"新 tranche + 新 budget" checkpoint 是合法输入 | 证明 rollover 与现有 gate 兼容，无需改 checks（B-002、B-003） |
+| Skill hash lock | `skills-lock.json:6-7`, `skills-lock.json:21-22` | 记录 `implx` 与 `specrail-implement-queue` 两个 SKILL.md 的路径与 sha256 | SKILL.md 变更后必须刷新 |
 
 ## 设计方案
 
