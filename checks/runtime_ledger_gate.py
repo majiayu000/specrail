@@ -27,6 +27,11 @@ from runtime_gate_rules import (
     _validate_terminal_review_summary,
     _validate_tranche_mix,
 )
+from runtime_tier_authorization import (
+    _tier_authorization_declared,
+    _validate_post_authorization_findings,
+    _validate_tier_authorization,
+)
 from specrail_lib import PackConfig, SPEC_STATUSES, load_pack, resolve_path
 
 
@@ -209,6 +214,76 @@ def _validate_pr_gate_artifact(
             f"{label}: sensitive item requires enforcement-sensitive pr_gate evidence"
         )
     return result
+
+
+def _load_review_artifact_payload(raw_item: dict[str, Any]) -> dict[str, Any] | None:
+    """Best-effort load of the reviewer-lane review artifact (GH-143).
+
+    Loaded only when tier authorization or post-authorization findings are
+    declared; a missing or unreadable artifact yields None so the tier rules
+    fail closed (no substantiation, classifications treated as critical).
+    """
+    review = raw_item.get("review")
+    if not isinstance(review, dict):
+        return None
+    path = _resolve_local_evidence_path(review.get("evidence"))
+    if path is None:
+        return None
+    scratch: list[str] = []
+    return _load_local_json(path, "review artifact", scratch)
+
+
+def _validate_item_tier_authorization(
+    data: dict[str, Any],
+    raw_item: dict[str, Any],
+    label: str,
+    errors: list[str],
+) -> None:
+    tier_declared = _tier_authorization_declared(raw_item)
+    findings_declared = raw_item.get("post_authorization_findings") is not None
+    if not tier_declared and not findings_declared:
+        return
+
+    review_artifact = _load_review_artifact_payload(raw_item)
+
+    if tier_declared:
+        ci_tier_check = raw_item.get("ci_tier_check")
+        ci_declared = ci_tier_check is not None
+        ci_payload: dict[str, Any] | None = None
+        if ci_declared:
+            if not isinstance(ci_tier_check, dict):
+                errors.append(
+                    f"{label}: ci_tier_check must be an object with a local "
+                    "evidence path"
+                )
+            else:
+                path = _resolve_local_evidence_path(ci_tier_check.get("evidence"))
+                if path is None:
+                    errors.append(
+                        f"{label}: ci_tier_check.evidence must be a local "
+                        "machine-readable artifact path"
+                    )
+                else:
+                    ci_payload = _load_local_json(
+                        path, f"{label}: ci_tier_check", errors
+                    )
+        _validate_tier_authorization(
+            raw_item,
+            label,
+            errors,
+            auth_mode=str(data.get("auth_mode") or ""),
+            review_artifact=review_artifact,
+            ci_tier_check=ci_payload,
+            ci_tier_check_declared=ci_declared,
+        )
+
+    if findings_declared:
+        _validate_post_authorization_findings(
+            raw_item,
+            label,
+            errors,
+            review_artifact=review_artifact,
+        )
 
 
 def _thread_dispatch_gate(data: dict[str, Any]) -> dict[str, Any]:
@@ -630,6 +705,8 @@ def evaluate_checkpoint(
                         errors.append(
                             f"{label}: merge_authorization.{key} must be a non-empty string"
                         )
+
+            _validate_item_tier_authorization(data, raw_item, label, errors)
 
         blocker = raw_item.get("blocker")
         if blocker and state in {"complete", "merged"}:

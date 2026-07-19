@@ -625,3 +625,85 @@ def test_pr_gate_allowed_result_has_empty_rejection_items() -> None:
     assert result["decision"] == "allowed"
     assert result["rejection_items"] == []
     assert "repeat_rejection" not in result
+
+
+# --- GH-143: tier-scoped authorization item ---
+
+
+def _tier_evidence() -> dict[str, object]:
+    evidence = fixture("pr-missing-human-auth.json")
+    evidence["authorization_tier"] = "standard_auto"
+    evidence["pr_tier"] = "standard"
+    evidence["pr_tier_evidence"] = {
+        "changed_lines": 42,
+        "touched_paths": ["checks/example.py", "tests/test_example.py"],
+    }
+    return evidence
+
+
+def test_pr_gate_tier_scoped_authorization_allowed() -> None:
+    result = evaluate_pr_gate(_tier_evidence())
+
+    assert result["decision"] == "allowed"
+    assert any(
+        "tier authorization: standard_auto (pr_tier=standard)" in item
+        for item in result["satisfied"]
+    )
+    assert "human_authorization" not in result["missing"]
+
+
+def test_pr_gate_tier_authorization_heavy_needs_human() -> None:
+    evidence = _tier_evidence()
+    evidence["pr_tier"] = "heavy"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "needs_human"
+    assert "human_authorization" in result["missing"]
+
+
+def test_pr_gate_tier_authorization_missing_tier_evidence_needs_human() -> None:
+    evidence = _tier_evidence()
+    evidence.pop("pr_tier_evidence")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "needs_human"
+    assert "human_authorization" in result["missing"]
+
+
+def test_pr_gate_tier_authorization_sensitive_needs_human() -> None:
+    evidence = _tier_evidence()
+    evidence["enforcement_sensitive"] = True
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] in {"blocked", "needs_human"}
+    assert "human_authorization" in result["missing"]
+
+
+def test_pr_gate_invalid_authorization_tier_blocked() -> None:
+    evidence = _tier_evidence()
+    evidence["authorization_tier"] = "self_auto"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "authorization_tier must be one of" in reason for reason in result["reasons"]
+    )
+    assert any(
+        item["category"] == "invalid_evidence_value"
+        and "authorization_tier" in item["item_id"]
+        for item in result["rejection_items"]
+    )
+
+
+def test_pr_gate_heavy_manual_tier_keeps_human_authorization_path() -> None:
+    evidence = fixture("pr-clean-authorized.json")
+    evidence["authorization_tier"] = "heavy_manual"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "allowed"
+    assert any("human authorization from" in item for item in result["satisfied"])

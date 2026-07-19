@@ -36,8 +36,16 @@ python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
 3. Confirm evidence includes linked issue and, for new adapter output, a
    self-consistent `issue_reference`; also confirm current PR head SHA, gate-query
    completion timestamp, gate-query head SHA, CI/check rollup, review decision,
-   review source, lane failures, review-thread resolution, merge state, and human
-   merge authorization.
+   review source, lane failures, review-thread resolution, merge state, and the
+   merge authorization: either human merge authorization
+   (`human_authorization.actor`/`source`) or a GH-143 tier-scoped
+   authorization (`authorization_tier: standard_auto` with `pr_tier`
+   fastlane/standard, `pr_tier_evidence` with changed-line count and touched
+   paths, and a non-sensitive classification). Heavy or sensitive PRs, or
+   missing tier evidence, keep the human-authorization requirement
+   (`needs_human`); the runtime ledger gate additionally requires an
+   independent tier endorsement (CI tier-check artifact or reviewer-lane
+   `tier_attestation`) before a standard_auto merge.
 4. Interpret decisions precisely:
    - `allowed`: evidence satisfies the local merge-readiness policy.
    - `needs_human`: deterministic evidence passed, but a human gate is missing.

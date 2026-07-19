@@ -118,6 +118,10 @@ Rules:
 - When in doubt between two tiers, pick the heavier one.
 - Tiering never weakens CI, reviewer-lane, review-thread, or pr_gate
   evidence requirements.
+- The tier also decides the `auth_mode: review` merge authorization path
+  (see Merge Authorization): `fastlane`/`standard` may qualify for
+  `standard_auto`, `heavy` keeps per-PR human authorization, and the
+  pick-the-heavier-when-in-doubt rule applies to authorization too.
 
 ## Queue Planning
 
@@ -565,6 +569,8 @@ For GitHub PRs, current evidence must include:
   `pr_gate.py` run
 - merge state
 - linked issue or closing reference intent
+- `pr_tier` with its evidence (changed-line count, touched paths) and, when
+  tier authorization is used, `authorization_tier`
 - merge authorization per `auth_mode` (see Merge Authorization)
 
 The runtime checkpoint must not mark a PR item `complete`, `merged`,
@@ -629,10 +635,65 @@ unreported lane failures.
   authorization rules, the Bounded Tranche Hard Stop, or the runtime ledger
   gate. Standing merge authorization is not self-review authorization.
 
-`auth_mode: review`:
+`auth_mode: review` — tiered authorization (GH-143 decision B):
 
-- Do not merge without explicit human authorization in the current
-  conversation, per PR.
+- `standard_auto` (no per-PR question): a PR qualifies when ALL of the
+  following hold —
+  - `pr_tier` is `fastlane` or `standard`, recorded with its evidence
+    (`pr_tier_evidence`: changed-line count and touched paths);
+  - all four green evidence classes are current: CI rollup passing, review
+    threads all resolved with `unresolved_count: 0`, pr_gate decision
+    `allowed`, independent reviewer-lane verdict `clean` or `non_blocking`;
+  - the item is not enforcement-sensitive;
+  - at least one independent tier endorsement beyond the self-reported
+    `pr_tier_evidence` exists: (a) a gate-verifiable CI tier-check artifact
+    reference, or (b) a reviewer-lane `tier_attestation`
+    (`{pr_tier, attested: true, basis}`) in the review artifact whose
+    `pr_tier` matches the checkpoint value. Self-reported evidence alone is
+    never sufficient. Until a CI tier check ships, the reviewer-lane
+    attestation is the only accepted endorsement.
+  Record `authorization_tier: standard_auto` and
+  `merge_authorization.source: tier_policy_gh143` (audit anchor — do not
+  rename) on the checkpoint item, with the four green evidence references.
+- `heavy_manual` (per-PR human authorization, unchanged): `heavy` tier PRs
+  and enforcement-sensitive surfaces (gate code, enforcement, contracts,
+  authorization semantics, schemas/migrations, security, any
+  `enforcement_sensitive: true` item). Record
+  `authorization_tier: heavy_manual` with the human actor/source.
+- Fail-closed: missing, unevidenced, or out-of-set `pr_tier` is treated as
+  `heavy`. A tier dispute — CI tier-check disagreement, a reviewer
+  `tier_attestation` that mismatches the checkpoint `pr_tier`, or a
+  reviewer-recorded `tier_dispute: true` — blocks `standard_auto` and routes
+  to a human decision. Only the reviewer/merge-reviewer lane (or a human)
+  may set or clear `tier_dispute`; the implementer lane has no authority
+  over it. `checks/runtime_ledger_gate.py` blocks any violation.
+- Tier authorization never replaces or fills an evidence gap: any non-green
+  evidence means the PR waits or routes to a human, exactly as before.
+
+### Graded Re-confirmation After Authorization (GH-143)
+
+When findings arrive after authorization (standard_auto or human) from bots
+or re-review lanes:
+
+- Mechanical findings — every finding has severity ≤ `important`, is
+  mechanical, does not change PR intent, does not expand planned paths, and
+  does not change contract semantics — are fixed within the original
+  authorization, re-reviewed by an independent lane at the post-fix head,
+  merged, and reported item-by-item afterwards. Record each on the
+  checkpoint item as `post_authorization_findings[]`
+  (`finding_ref`, `severity`, `mechanical`, `disposition:
+  fixed_re_reviewed`). No re-authorization question is needed.
+- Critical or scope-expanding findings — any finding that is `critical`, or
+  whose fix expands planned paths, changes contract semantics, or changes PR
+  intent — pause the merge and require fresh human authorization
+  (`re_authorization` with actor/source); the original authorization is void
+  for that PR (`disposition: paused_re_authorized`).
+- Trust source: each finding's `severity`/`mechanical` classification counts
+  only when it matches a reviewer/merge-reviewer lane
+  `finding_classifications[]` record in the review artifact. Implementer-only
+  classification, a missing reviewer record, or a mismatch between the two
+  is treated as `critical` (fail-closed). Undeterminable severity or
+  undeterminable scope impact is treated as critical/expanding.
 
 ### Safe Merge Path
 
@@ -665,8 +726,11 @@ must never report an outcome without remote confirmation:
 
 - In `auth_mode: auto`, merge only on complete current evidence; evidence gaps
   mean skip and report, not ask.
-- In `auth_mode: review`, do not merge without explicit human authorization and
-  current PR-gate evidence.
+- In `auth_mode: review`, do not merge without current PR-gate evidence and
+  either explicit human authorization or a valid GH-143 `standard_auto` tier
+  authorization (fastlane/standard tier, full green evidence, independent
+  tier endorsement, no dispute). Heavy or sensitive PRs and any tier
+  ambiguity always require per-PR human authorization.
 - Do not dispatch review-thread/pr_gate queries and the merge command in the
   same parallel tool batch or parallel lane; the gate query must complete first.
 - Do not let an implementation lane or orchestrator resolve reviewer-lane
