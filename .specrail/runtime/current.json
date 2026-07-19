@@ -1,0 +1,116 @@
+{
+  "checkpoint_version": 2,
+  "tranche_id": "2026-07-19-t3-gh142-gh143",
+  "repo": "majiayu000/specrail",
+  "scope": "queue fully drained: tranche 3 complete (GH142 impl #151 + fix-forward #152 + backfills #153/#154; GH143 spec #150 + impl #156 with P0 bypass found/fixed/re-verified); issues #142 #143 closed; repo-wide depth gate exit 0 (16 pass / 6 trivial / 28 legacy / 50 total); 687 tests",
+  "status": "complete",
+  "overall_objective": "resolve the actionable open issue and PR queue",
+  "queue_mode": "full_queue_drain",
+  "auth_mode": "review",
+  "budget": {
+    "basis": "both",
+    "compaction_budget": 1,
+    "item_cap": 2,
+    "compaction_count": 0,
+    "stop_reason": "queue_empty",
+    "budget_override": null
+  },
+  "context_budget": {
+    "window_tokens": 200000,
+    "soft_stop_ratio": 0.5,
+    "hard_stop_ratio": 0.65,
+    "critical_stop_ratio": 0.75
+  },
+  "output_firewall": {
+    "raw_log_policy": "file_only",
+    "max_parent_stdout_lines": 150,
+    "max_subagent_final_lines": 150,
+    "artifact_root": "artifacts/logs/2026-07-19-drain"
+  },
+  "spec_coverage": {
+    "complete": [
+      142
+    ],
+    "needs_tasks": [],
+    "needs_spec": [
+      143
+    ],
+    "umbrella_covered": [],
+    "exception_allowed": []
+  },
+  "tranche_mix": {
+    "spec_pr_count": 0,
+    "impl_pr_count": 0,
+    "consecutive_spec_only": 0
+  },
+  "thread_dispatch_gate": {
+    "explicit_thread_request": false,
+    "native_subagents": "available",
+    "spawn_requirement": "required",
+    "fallback_mode": null,
+    "planned_native_threads": [
+      "worker lanes (pr136, pr138, gh141, gh142)",
+      "reviewer lanes (pr136, pr138, pr144, pr146)"
+    ],
+    "native_thread_evidence": {
+      "spawned_agents": [
+        {
+          "lane_id": "worker-pr136",
+          "agent_id_or_thread_id": "native-bg-1",
+          "role": "worker"
+        },
+        {
+          "lane_id": "worker-pr138",
+          "agent_id_or_thread_id": "native-bg-2",
+          "role": "worker"
+        },
+        {
+          "lane_id": "spec-gh141",
+          "agent_id_or_thread_id": "native-bg-3",
+          "role": "worker"
+        },
+        {
+          "lane_id": "spec-gh142",
+          "agent_id_or_thread_id": "native-bg-4",
+          "role": "worker"
+        },
+        {
+          "lane_id": "reviewer-lane-1",
+          "agent_id_or_thread_id": "native-bg-5",
+          "role": "reviewer",
+          "wait_evidence": "single blocking background wait; completion notification received in session",
+          "close_evidence": "task-notification completed with final verdict output",
+          "result_collected": "yes"
+        },
+        {
+          "lane_id": "reviewer-lane-138",
+          "agent_id_or_thread_id": "native-bg-6",
+          "role": "reviewer",
+          "wait_evidence": "single blocking background wait; completion notification received in session",
+          "close_evidence": "task-notification completed with final verdict output",
+          "result_collected": "yes"
+        },
+        {
+          "lane_id": "reviewer-lane-144",
+          "agent_id_or_thread_id": "native-bg-7",
+          "role": "reviewer",
+          "wait_evidence": "single blocking background wait; completion notification received in session",
+          "close_evidence": "task-notification completed with final verdict output",
+          "result_collected": "yes"
+        },
+        {
+          "lane_id": "reviewer-lane-146",
+          "agent_id_or_thread_id": "native-bg-8",
+          "role": "reviewer",
+          "wait_evidence": "single blocking background wait; completion notification received in session",
+          "close_evidence": "task-notification completed with final verdict output",
+          "result_collected": "yes"
+        }
+      ]
+    }
+  },
+  "items": [],
+  "remaining_queue": [],
+  "human_decisions": [],
+  "resume_prompt": "queue empty: no open issues or PRs in majiayu000/specrail as of 2026-07-19; next implx run starts fresh from remote truth"
+}
