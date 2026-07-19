@@ -122,3 +122,18 @@ SpecRail already defines a portable workflow pack with states, labels, schemas, 
 - [ ] Existing workflow-run automation modes remain distinguishable from evaluator severity modes.
 - [ ] Human-facing evaluator messages, issue/PR templates, and agent summaries can be presented in `zh-CN` without translating stable protocol IDs.
 - [ ] The default SpecRail pack remains generic, with repository-specific behavior expressed through overlays or explicit config.
+
+## Boundary Checklist
+
+| Category | Verdict (covered: Behavior N / N/A + reason) |
+| --- | --- |
+| Empty / missing input | covered: Behavior 5, 21 (missing labels, PR metadata, CI status, spec files, or artifacts never produce silent success; unreadable or empty configuration is a first-class `blocked` result) |
+| Error / failure paths | covered: Behavior 5, 9, 21 (unparseable config, unknown states, and evaluator errors surface as explicit decisions with reasons; exit codes distinguish blocked, gate failure, and malformed input) |
+| Authorization / permission | covered: Behavior 3, 6 (human gates map to `needs_human`; universal safety rules — no merge, no final approval, no permission changes, no gate bypass — are enforced regardless of repository configuration) |
+| Concurrency / race | N/A: the evaluator is a single-process read-only decision over a local evidence snapshot; it holds no shared mutable state and performs no writes that could race |
+| Retry / idempotency | covered: Behavior 20 (evaluation is deterministic and offline over provided metadata; rerunning with the same config and evidence returns the same decision, so retries are safe) |
+| Illegal state transitions | covered: Behavior 11, 21 (actions requested from states that do not permit them return `needs_human` or `blocked`; configurations defining impossible transitions are reported as configuration errors) |
+| Compatibility / migration | covered: Behavior 7, 8, 22 (label names, spec path layouts, and readiness values are configurable; the default pack stays generic so consumer repositories migrate via overlays, not forks) |
+| Degradation / fallback | covered: Behavior 9, 19 (`dry_run` and `advisory` modes report without failing; a missing localized message falls back to the default locale without ever changing the machine decision) |
+| Evidence / audit integrity | covered: Behavior 4, 13, 15 (every decision carries applied rules, satisfied evidence, and missing evidence; CI claims must come from real evidence, and agents can quote the structured result verbatim) |
+| Cancellation / interruption | N/A: the evaluator is a short-lived read-only CLI invocation with no long transaction or persisted partial state; an interrupted run is simply rerun |

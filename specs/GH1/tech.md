@@ -8,19 +8,20 @@ GH-1: https://github.com/majiayu000/specrail/issues/1
 
 This spec implements the behavior in `product.md` by turning SpecRail's current workflow assets into a policy-driven evaluator for agents.
 
-Relevant current files:
+Relevant current files (anchors refreshed against the current tree; the evaluator described below has since landed as `checks/route_gate.py`):
 
-- `README.md:5` describes SpecRail as a portable process library, not a bot or agent runtime.
-- `README.md:41` describes adoption as copy/install, run deterministic checks, start in dry-run, and only add automation after trust.
-- `README.md:51` states that agents may suggest, draft, review, and diagnose while humans own readiness labels, security decisions, final approval, merge, and release.
-- `SPEC.md:31` defines the current state model from `new_issue` through spec, implementation, review, merge, and release-note drafting.
-- `SPEC.md:56` defines agent boundaries, including allowed drafting/review actions and forbidden final approval, merge, security disclosure, permission changes, and readiness bypass.
-- `workflow.yaml:15` defines `automation_policy`, currently as static lists of allowed and forbidden agent actions.
-- `workflow.yaml:39` defines artifact path templates for spec packets, agent reviews, and triage results, currently using fixed `specs/GH{issue_number}/...` paths.
-- `states.yaml:1` defines canonical states and transitions, but does not currently describe which actions are allowed from which states.
-- `labels.yaml:2` defines label groups, but does not currently map repository-specific label strings to canonical states in a way an evaluator can consume.
-- `schemas/pr_review_gate.schema.json:1` defines a PR review gate schema, but hard-codes `ready_to_implement` as the only accepted readiness value.
-- `checks/check_workflow.py:12` validates that the workflow pack itself is complete, and `checks/check_workflow.py:122` validates that a spec directory contains `product.md` and `tech.md`. It does not evaluate issue, spec, or PR state against configured policy.
+- `README.md:9` describes SpecRail as a portable process library, not a bot or agent runtime.
+- `SPEC.md:31` (`## Workflow Model`) defines the state model from `new_issue` through spec, implementation, review, merge, and release-note drafting.
+- `SPEC.md:56` (`## Agent Boundary`) defines agent boundaries, including allowed drafting/review actions and forbidden final approval, merge, security disclosure, permission changes, and readiness bypass.
+- `workflow.yaml:15` defines `automation_policy` with allowed and forbidden agent actions plus the persisted `auth_mode: review` safety baseline.
+- `workflow.yaml:69` defines artifact path templates for spec packets, agent reviews, closure audits, and triage results using `specs/GH{issue_number}/...` templates that consumer overlays may replace.
+- `workflow.yaml:79` defines `action_policy` mapping each action (`triage_issue`, `write_spec`, `implement`, `review_pr`, `fix_ci`, `draft_release_note`) to `allowed_from` states, required artifacts, and human gates.
+- `workflow.yaml:149` defines `presentation` with `default_locale`, `supported_locales`, and `fallback_locale`.
+- `states.yaml:1` defines canonical states and transitions consumed by the action policy.
+- `labels.yaml:1` defines label groups (readiness, outcome, review, area, source) mapped onto canonical states.
+- `checks/route_gate.py:72` defines the four-decision ranking (`allowed` < `warn` < `needs_human` < `blocked`), and `checks/route_gate.py:134` (`evaluate_route`) is the deterministic evaluator entry point that loads config, checks allowed states, artifacts, and human gates.
+- `checks/specrail_lib.py:324` (`spec_packet_artifact_paths`) renders configured spec packet paths instead of hard-coding one layout.
+- `locales/zh-CN/messages.yaml:1` carries localized display text while machine identifiers stay untranslated.
 
 The main design constraint is that checks should be deterministic while policy remains configurable. Code should be a policy interpreter, not the policy owner.
 
