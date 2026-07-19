@@ -38,12 +38,12 @@ Link to `product.md`.
 保留 "Goal never replaces the runtime checkpoint, GitHub truth, or SpecRail
 gates"原句（B-008，`SKILL.md:513`）。
 
-### 2. Goal/session 解耦（同文件 `SKILL.md:358-370`，GH112 收紧）
+### 2. Goal/session 解耦（同文件 `SKILL.md:366-378`，GH112 收紧）
 
 goal 激活期间 compaction 预算照常生效：达到 `compaction_budget` 即结束
 tranche 并交接 fresh session；goal 以稳定 `goal_id` 跨 session 持久，新
 session 从 checkpoint + fresh remote truth 恢复（B-003 B-004）。压缩后先走
-compaction discipline 五步（`SKILL.md:391-398`），再继续队列工作（B-005）。
+compaction discipline 五步（`SKILL.md:399-406`），再继续队列工作（B-005）。
 无 goal 时规则原样（B-009）。tranche 记账与 ledger gate 不变（B-006）。
 
 ### 3. 终态协议（同文件 `SKILL.md:511-519`）
