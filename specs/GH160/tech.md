@@ -32,7 +32,8 @@ Extend `checks/session_telemetry.py` with a small parser for Codex
 `token_count` events. A valid observation comes only from:
 
 - event type `token_count` (payload or top-level form);
-- `info.last_token_usage.total_tokens` as current-turn context usage; and
+- `info.last_token_usage.input_tokens` as current-turn context usage (the
+  cached-input field is a subset and is not added again); and
 - `info.model_context_window` as the runtime-declared denominator.
 
 The parser deliberately ignores cumulative `info.total_token_usage` for

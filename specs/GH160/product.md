@@ -41,10 +41,10 @@ a 219K median context while every context-budget check still appeared valid.
 ## Behavior Invariants
 
 1. B-001 When a tranche-window `token_count` event contains
-   `info.last_token_usage.total_tokens` and `info.model_context_window`, the
+   `info.last_token_usage.input_tokens` and `info.model_context_window`, the
    read-only telemetry collector shall emit a valid context observation using
-   those values; it shall not derive current context from cumulative
-   `total_token_usage`.
+   those values; it shall not add the cached-input subset a second time or
+   derive current context from cumulative `total_token_usage`.
 2. B-002 When several valid context observations exist in one tranche window,
    telemetry shall emit the latest observed tokens, the maximum observed
    tokens, the observation count, and the median observed tokens; event order
