@@ -25,6 +25,7 @@ CONCURRENCY=${QUEUE_CONCURRENCY:-2}
 LIMIT=${QUEUE_LIMIT:-6}
 LABEL=${QUEUE_LABEL:-}
 SKIP_LABELS=${QUEUE_SKIP_LABELS:-parked}
+SESSION_TIMEOUT=${QUEUE_SESSION_TIMEOUT:-10800}
 CODEX_BIN=${QUEUE_CODEX_BIN:-codex}
 CODEX_FLAGS=${QUEUE_CODEX_FLAGS:---full-auto}
 RUN_DIR=${QUEUE_RUN_DIR:-$HOME/.codex/queue-runner/runs/$(date +%Y%m%d-%H%M%S)}
@@ -43,6 +44,10 @@ list_args=(issue list --repo "$REPO" --state open --limit "$POOL" --json number,
 skip_re=$(printf '%s' "$SKIP_LABELS" | tr ',' '|')
 issues=$(gh "${list_args[@]}" \
   --jq ".[] | select([.labels[].name | test(\"^(${skip_re})\$\")] | any | not) | .number")
+
+# In-flight work detection: an open PR referencing the issue, or a remote
+# branch named for it (another session may be mid-flight before its PR).
+remote_branches=$(git -C "$CHECKOUT" ls-remote --heads origin 2>/dev/null | awk '{print $2}')
 
 # Skip issues that already have an open PR referencing them.
 open_pr_text=$(gh pr list --repo "$REPO" --state open --limit 100 \
@@ -81,6 +86,19 @@ fi
 # PR-only queues are still actionable: only exit when neither exists.
 [ -n "$issues" ] || [ -n "$open_prs" ] || { echo "no actionable issues or PRs"; exit 0; }
 
+run_session() {
+  # run_session <wt> <log> <prompt> — codex exec with a watchdog timeout.
+  local wt=$1 log=$2 prompt=$3 status=0
+  (cd "$wt" && "$CODEX_BIN" exec $CODEX_FLAGS "$prompt") >>"$log" 2>&1 &
+  local cpid=$!
+  ( sleep "$SESSION_TIMEOUT" && kill "$cpid" 2>/dev/null \
+      && echo "[watchdog] session killed after ${SESSION_TIMEOUT}s" >>"$log" ) &
+  local wpid=$!
+  wait "$cpid" || status=$?
+  kill "$wpid" 2>/dev/null
+  return "$status"
+}
+
 run_pr() {
   local n=$1
   local wt="$RUN_DIR/wt-pr$n"
@@ -98,8 +116,7 @@ green evidence (with issue closure semantics). If evidence gaps need a \
 human, report and stop. Do not touch any other PR or issue. Run builds \
 and tests only inside this worktree."
   local status=0
-  (cd "$wt" && "$CODEX_BIN" exec $CODEX_FLAGS "$prompt") >>"$log" 2>&1 \
-    || status=$?
+  run_session "$wt" "$log" "$prompt" || status=$?
   git -C "$CHECKOUT" worktree remove --force "$wt" >>"$log" 2>&1 || true
   echo "[pr$n] done exit=$status"
   return "$status"
@@ -120,8 +137,7 @@ wait via 'gh pr checks <n> --repo $REPO --watch --fail-fast', reviewer \
 lane, merge on green evidence). Do not touch any other issue. Run cargo \
 only inside this worktree."
   local status=0
-  (cd "$wt" && "$CODEX_BIN" exec $CODEX_FLAGS "$prompt") >>"$log" 2>&1 \
-    || status=$?
+  run_session "$wt" "$log" "$prompt" || status=$?
   git -C "$CHECKOUT" worktree remove --force "$wt" >>"$log" 2>&1 || true
   echo "[gh$n] done exit=$status"
   return "$status"
@@ -144,6 +160,10 @@ for n in $issues; do
   [ "$started" -ge "$LIMIT" ] && break
   if printf '%s' "$open_pr_text" | grep -qE "(#$n\b|gh$n\b|GH$n\b)"; then
     echo "[gh$n] skip: open PR already references it"
+    continue
+  fi
+  if printf '%s' "$remote_branches" | grep -qiE "gh-?$n([^0-9]|\$)"; then
+    echo "[gh$n] skip: remote branch already exists for it"
     continue
   fi
   started=$((started + 1))

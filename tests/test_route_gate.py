@@ -561,6 +561,38 @@ def test_implement_blocked_on_legacy_spec_with_non_legacy_spec_missing(
     )
 
 
+def test_implement_blocked_json_on_undecodable_product_spec(
+    tmp_path: Path,
+) -> None:
+    # GH142 follow-up: product.md exists but is invalid UTF-8. The legacy read
+    # must fail closed as a blocked JSON result, not a UnicodeDecodeError
+    # traceback.
+    repo = _write_implement_pack(
+        tmp_path,
+        "# Product Spec\n\n## Linked Issue\n\nGH-999\n",
+    )
+    (repo / "specs" / "GH999" / "product.md").write_bytes(
+        b"# Product Spec\n\xff\xfe\x81invalid\n"
+    )
+    duplicate_evidence = write_duplicate_evidence(tmp_path)
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        "--duplicate-evidence",
+        str(duplicate_evidence),
+        repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("cannot decode" in reason for reason in payload["reasons"])
+
+
 def test_implement_allows_non_legacy_spec_unchanged(tmp_path: Path) -> None:
     repo = _write_implement_pack(
         tmp_path,

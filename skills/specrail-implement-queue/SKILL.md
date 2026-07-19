@@ -43,9 +43,14 @@ Before planning implementation work, classify every open issue and linked PR:
 use only the canonical `spec_status` values defined by
 `checks/specrail_lib.py` as `SPEC_STATUSES`.
 
-- `complete`: `product.md`, `tech.md`, and `tasks.md` all exist for the issue
+- `complete`: `product.md`, `tech.md`, and `tasks.md` all exist for the issue,
+  and `product.md` does not declare `status: legacy` in its Linked Issue
+  section (GH142). A legacy-marked packet is NOT `complete` even when all
+  three files exist.
 - `needs_tasks`: product and tech specs exist, but `tasks.md` is missing
-- `needs_spec`: product or tech spec is missing
+- `needs_spec`: product or tech spec is missing, or the packet is marked
+  `status: legacy` — legacy packets route to `needs_spec` (rewrite the spec so
+  it passes the depth gate; the rewrite is the only way to shed the marker)
 - `umbrella_covered`: another complete GH spec explicitly includes the issue in
   scope, acceptance criteria, task plan, or linked work
 - `exception_allowed`: dependency bump, focused CI fix, docs-only correction, or
@@ -73,8 +78,11 @@ Readiness labels in auto mode: when `auth_mode: auto` and an issue's
 label (for example `ready_to_implement`) is not a blocker. Add the label,
 record `readiness_label_source: auto_drain` on the checkpoint item, list
 every auto-applied label in the report, and continue routing. Issues with
-`needs_spec` or `needs_tasks` must never receive an auto readiness label.
-In `auth_mode: review`, readiness labels remain a human gate.
+`needs_spec` or `needs_tasks` must never receive an auto readiness label —
+this includes `status: legacy` packets, which classify as `needs_spec` even
+when all three spec files exist. Auto readiness labeling must never apply to
+a legacy-marked packet. In `auth_mode: review`, readiness labels remain a
+human gate.
 
 For `queue_mode: full_queue_drain`, `needs_spec` and `needs_tasks` are
 actionable planning work, not completion. If no implementation-ready tranche is

@@ -634,20 +634,9 @@ def test_route_gate_rejects_inconsistent_trust_metadata(tmp_path: Path) -> None:
 def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence(
     tmp_path: Path,
 ) -> None:
-    # GH16 is status: legacy since GH142; retarget the fixture evidence at the
-    # non-legacy GH142 packet so this test keeps exercising state-trust
-    # compatibility rather than the legacy block.
-    fixture_payload = json.loads(
-        (ROOT / "examples/fixtures/issue-body-hint-ready-to-implement.json")
-        .read_text(encoding="utf-8")
-    )
-    fixture_payload["issue"] = 142
-    fixture_payload["artifacts"] = {
-        name: path.replace("GH16", "GH142")
-        for name, path in fixture_payload.get("artifacts", {}).items()
-    }
-    fixture = tmp_path / "issue-body-hint-ready-to-implement.json"
-    fixture.write_text(json.dumps(fixture_payload), encoding="utf-8")
+    # The shipped fixture targets the non-legacy GH142 packet, so this test
+    # exercises state-trust compatibility rather than the legacy block.
+    fixture = ROOT / "examples/fixtures/issue-body-hint-ready-to-implement.json"
     duplicate_evidence = tmp_path / "duplicate-work-evidence.json"
     duplicate_evidence.write_text(
         json.dumps(
@@ -690,6 +679,55 @@ def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence(
     payload = json.loads(result.stdout)
     assert payload["decision"] == "allowed"
     assert payload["current_state"] == "ready_to_implement"
+
+
+def test_route_gate_shipped_ready_to_implement_fixture_passes(
+    tmp_path: Path,
+) -> None:
+    # GH142 follow-up: the shipped happy-path fixture must target a non-legacy
+    # packet so the documented implement example stays allowed, not blocked.
+    fixture = ROOT / "examples/fixtures/issue-ready-to-implement.json"
+    duplicate_evidence = tmp_path / "duplicate-work-evidence.json"
+    duplicate_evidence.write_text(
+        json.dumps(
+            {
+                "issue": 142,
+                "collected_at": "2026-07-04T00:00:00Z",
+                "open_prs_complete": True,
+                "open_pr_limit": 100,
+                "open_prs": [],
+                "remote_branches": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "checks/route_gate.py",
+            "--repo",
+            ".",
+            "--route",
+            "implement",
+            "--issue",
+            "142",
+            "--evidence",
+            str(fixture),
+            "--duplicate-evidence",
+            str(duplicate_evidence),
+            "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["decision"] == "allowed", payload
+    assert payload["current_state"] == "ready_to_implement"
+    assert "non_legacy_spec" not in payload["missing"]
 
 
 def test_route_gate_blocks_closed_issue_evidence(tmp_path: Path) -> None:

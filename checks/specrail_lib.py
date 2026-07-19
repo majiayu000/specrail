@@ -79,6 +79,10 @@ def read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError as exc:
         raise SpecRailError(f"cannot read {path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        # GH142 B-007 follow-up: an existing-but-undecodable spec must fail
+        # closed as a SpecRailError (blocked JSON) instead of a traceback.
+        raise SpecRailError(f"cannot decode {path} as UTF-8: {exc}") from exc
 
 
 def parse_scalar(value: str) -> Any:
