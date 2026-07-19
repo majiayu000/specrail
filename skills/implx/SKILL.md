@@ -56,8 +56,27 @@ baseline; it never selects or authorizes auto mode.
 `auth_mode: review` — the DEFAULT for plain `implx`, `use implx`, `用 implx`,
 `implx review`, `implx 审核`, and `implx 人工`:
 
-- Preserve per-PR explicit human merge authorization in the current
-  conversation before any merge.
+- Tiered merge authorization (GH-143): a PR whose `pr_tier` is `fastlane` or
+  `standard`, with full green evidence (CI rollup passing, review threads all
+  resolved with zero unresolved, pr_gate `allowed`, independent reviewer-lane
+  verdict `clean` or `non_blocking`) AND independent tier substantiation (a
+  gate-verifiable CI tier-check artifact or a reviewer-lane
+  `tier_attestation` in a schema-valid review artifact whose own
+  `review_source` is `independent_lane`), is authorized to merge without
+  a per-PR question. Record `authorization_tier: standard_auto` and
+  `merge_authorization.source: tier_policy_gh143` on the checkpoint item.
+  A `review_source: self_review` item never qualifies for standard_auto.
+- `heavy` tier PRs and enforcement-sensitive surfaces (gate code,
+  enforcement, contracts, authorization semantics, schemas/migrations,
+  security) keep per-PR explicit human merge authorization in the current
+  conversation before any merge (`authorization_tier: heavy_manual`).
+- Missing, unevidenced, or out-of-set `pr_tier` fails closed to `heavy`. A
+  reviewer-lane `tier_dispute` or a `tier_attestation` that disagrees with
+  the checkpoint `pr_tier` is a dispute: standard_auto is blocked until a
+  human decides. Only the reviewer/merge-reviewer lane (or a human) may set
+  or clear the dispute marker.
+- Tier authorization never replaces or fills any evidence gap; any non-green
+  evidence means wait or route to a human, exactly as before.
 - Route `needs_spec` / `needs_tasks` to spec-writing skills but wait for
   human confirmation before implementing from a freshly drafted spec.
 
@@ -177,7 +196,10 @@ model-driven poll loop. See Waiting Discipline in
   merge state, PR gate, reviewer lane); evidence gaps mean skip and report,
   not ask.
 - In `review` mode, do not merge without explicit human authorization in the
-  current conversation.
+  current conversation, except via GH-143 `standard_auto`: `fastlane` or
+  `standard` tier, full green evidence, independent tier substantiation, and
+  no tier dispute. Heavy or sensitive PRs and any tier ambiguity always
+  require per-PR human authorization.
 - Do not treat green CI as merge readiness without review-thread and merge-state
   truth.
 - Do not close an issue from a partial implementation.

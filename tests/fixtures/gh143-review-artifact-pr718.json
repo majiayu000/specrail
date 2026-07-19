@@ -1,0 +1,22 @@
+{
+  "artifact_id": "pr718-head1-reviewer1",
+  "pr": 718,
+  "reviewer_lane": "merge-reviewer-1",
+  "producer_identity": "reviewer-1",
+  "review_source": "independent_lane",
+  "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "review_started_at": "2026-06-30T11:55:00Z",
+  "review_completed_at": "2026-06-30T12:00:00Z",
+  "status": "completed",
+  "verdict": "clean",
+  "human_final_review_required": false,
+  "findings": [],
+  "prior_findings": [],
+  "body": "## Summary\nTier-attested terminal review for the GH-143 standard_auto fixture.\n\n## Verdict\nclean",
+  "comments": [],
+  "tier_attestation": {
+    "pr_tier": "standard",
+    "attested": true,
+    "basis": "reviewer lane verified changed-line count and touched paths against the standard tier definition"
+  }
+}

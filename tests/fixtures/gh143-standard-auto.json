@@ -1,0 +1,118 @@
+{
+  "checkpoint_version": 1,
+  "tranche_id": "2026-07-19-gh143-standard-auto",
+  "repo": "example/repo",
+  "scope": "close one issue only",
+  "status": "handoff",
+  "auth_mode": "review",
+  "context_budget": {
+    "window_tokens": 258400,
+    "soft_stop_ratio": 0.5,
+    "hard_stop_ratio": 0.65,
+    "critical_stop_ratio": 0.75
+  },
+  "output_firewall": {
+    "raw_log_policy": "file_only",
+    "max_parent_stdout_lines": 150,
+    "max_subagent_final_lines": 150,
+    "artifact_root": "artifacts/logs/t01"
+  },
+  "thread_dispatch_gate": {
+    "explicit_thread_request": "yes",
+    "native_subagents": "available",
+    "spawn_requirement": "required",
+    "fallback_mode": "none",
+    "planned_native_threads": [
+      {
+        "id": "merge-reviewer-1",
+        "role": "merge_reviewer",
+        "target": "PR #718",
+        "write_scope": "read_only",
+        "spawn_status": "spawned",
+        "no_spawn_reason": null
+      }
+    ],
+    "native_thread_evidence": {
+      "spawned_agents": [
+        {
+          "lane_id": "merge-reviewer-1",
+          "spawn_tool": "multi_agent_v1.spawn_agent",
+          "agent_id_or_thread_id": "agent-reviewer-1",
+          "wait_evidence": "wait_agent completed",
+          "close_evidence": "close_agent completed",
+          "result_collected": "yes"
+        }
+      ],
+      "fallback_reason": null
+    },
+    "no_spawn_reason": null
+  },
+  "items": [
+    {
+      "issue": 716,
+      "pr": 718,
+      "state": "merge_ready",
+      "branch": "fix/issue-716",
+      "worktree": "/tmp/example",
+      "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+      "truth_level": "A",
+      "review_source": "independent_lane",
+      "lane_failures": [],
+      "pr_tier": "standard",
+      "pr_tier_evidence": {
+        "changed_lines": 42,
+        "touched_paths": ["checks/example.py", "tests/test_example.py"]
+      },
+      "authorization_tier": "standard_auto",
+      "ci": {
+        "status": "green",
+        "evidence": "artifacts/logs/t01/ci-summary.md"
+      },
+      "local_verification": [
+        {
+          "command": "python3 -m pytest -q tests/test_example.py",
+          "status": "passed",
+          "evidence": "artifacts/logs/t01/pytest.log"
+        }
+      ],
+      "review": {
+        "reviewer_lane": "merge-reviewer-1",
+        "native_thread_id": "agent-reviewer-1",
+        "status": "passed",
+        "review_source": "independent_lane",
+        "evidence": "tests/fixtures/gh143-review-artifact-pr718.json",
+        "manifest": "artifacts/reviews/t01/manifest.json",
+        "artifact_id": "pr718-head1-reviewer1",
+        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "review_completed_at": "2026-06-30T12:00:00Z",
+        "terminal_status": "completed",
+        "verdict": "clean",
+        "human_final_review_required": false,
+        "findings": [],
+        "prior_findings": [],
+        "blocking_findings": []
+      },
+      "review_threads": {
+        "status": "clean",
+        "unresolved_count": 0,
+        "evidence": "artifacts/reviews/t01/review-threads.json",
+        "checked_at": "2026-06-30T12:00:00Z"
+      },
+      "pr_gate": {
+        "status": "passed",
+        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "evidence": "examples/fixtures/pr-clean-authorized.json",
+        "checked_at": "2026-06-30T12:01:00Z"
+      },
+      "blocker": null,
+      "next_action": "merge after final remote refresh",
+      "merge_state": "clean",
+      "merge_authorization": {
+        "actor": "specrail-tier-policy",
+        "source": "tier_policy_gh143",
+        "summary": "GH-143 decision B: fastlane/standard tier with full green evidence and reviewer-lane tier attestation"
+      }
+    }
+  ],
+  "resume_prompt": "Read this checkpoint and refresh remote truth."
+}

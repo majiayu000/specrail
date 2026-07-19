@@ -22,6 +22,11 @@ from rejection_items import (
     item_from_reason,
     items_from_legacy,
 )
+from runtime_tier_authorization import (
+    AUTHORIZATION_TIERS,
+    STANDARD_AUTO_TIERS,
+    _valid_pr_tier_evidence,
+)
 from sensitive_enforcement import (
     evaluate_sensitive_evidence_with_items,
     sensitive_registry,
@@ -195,17 +200,81 @@ def _merge_record_items(evidence: dict[str, Any]) -> tuple[list[str], list[str],
     return satisfied, missing, reasons
 
 
-def _authorization_item(evidence: dict[str, Any]) -> tuple[list[str], list[str]]:
+def _tier_substantiation_reference(evidence: dict[str, Any]) -> str | None:
+    """GH-143 defense in depth: standard_auto needs an independent reference.
+
+    Self-reported pr_tier_evidence alone never satisfies the authorization
+    item; the evidence must also reference independent substantiation —
+    either a ci_tier_check artifact reference or a tier_attestation_ref
+    pointing at review evidence whose review_source is independent_lane.
+    """
+    ci_tier_check = evidence.get("ci_tier_check")
+    if isinstance(ci_tier_check, dict) and _non_empty_string(
+        ci_tier_check.get("evidence")
+    ):
+        return "ci_tier_check artifact reference"
+    if _non_empty_string(evidence.get("tier_attestation_ref")):
+        review_evidence = evidence.get("review_evidence")
+        review_source = (
+            review_evidence.get("review_source")
+            if isinstance(review_evidence, dict)
+            else None
+        )
+        if review_source == "independent_lane":
+            return "tier_attestation_ref backed by independent_lane review evidence"
+    return None
+
+
+def _authorization_item(
+    evidence: dict[str, Any],
+    *,
+    enforcement_sensitive: bool = False,
+) -> tuple[list[str], list[str], list[str]]:
+    """GH-143 B-007: tier-scoped authorization or per-PR human authorization.
+
+    standard_auto on a non-sensitive fastlane/standard PR with tier evidence
+    plus an independent substantiation reference satisfies the authorization
+    item. Every other case (heavy, sensitive, missing tier evidence or
+    substantiation, out-of-set authorization_tier) keeps the existing
+    human_authorization requirement.
+    """
+    reasons: list[str] = []
+    tier = evidence.get("authorization_tier")
+    if tier is not None and tier not in AUTHORIZATION_TIERS:
+        allowed = ", ".join(sorted(AUTHORIZATION_TIERS))
+        reasons.append(f"authorization_tier must be one of: {allowed}")
+        tier = None
+    if tier == "standard_auto":
+        pr_tier = evidence.get("pr_tier")
+        substantiation = _tier_substantiation_reference(evidence)
+        if (
+            pr_tier in STANDARD_AUTO_TIERS
+            and _valid_pr_tier_evidence(evidence.get("pr_tier_evidence"))
+            and not enforcement_sensitive
+            and substantiation is not None
+        ):
+            return (
+                [
+                    f"tier authorization: standard_auto (pr_tier={pr_tier}), "
+                    f"substantiated by {substantiation}"
+                ],
+                [],
+                reasons,
+            )
     authorization = evidence.get("human_authorization")
     if not isinstance(authorization, dict):
-        return [], ["human_authorization"]
+        return [], ["human_authorization"], reasons
     missing = []
     for key in ["actor", "source"]:
         if not _non_empty_string(authorization.get(key)):
             missing.append(f"human_authorization.{key}")
     if missing:
-        return [], missing
-    return [f"human authorization from {authorization['actor']} via {authorization['source']}"], []
+        return [], missing, reasons
+    return (
+        [f"human authorization from {authorization['actor']} via {authorization['source']}"],
+        [],
+        reasons,
+    )
 
 
 def evaluate_pr_gate(
@@ -309,11 +378,6 @@ def evaluate_pr_gate(
     reasons.extend(review_reasons)
     items.extend(review_items)
 
-    auth_satisfied, auth_missing = _authorization_item(evidence)
-    satisfied.extend(auth_satisfied)
-    missing.extend(auth_missing)
-    items.extend(item_from_missing(entry) for entry in auth_missing)
-
     has_sensitive_evidence = any(
         key in evidence
         for key in [
@@ -365,6 +429,24 @@ def evaluate_pr_gate(
             missing.append("sensitive_enforcement")
             items.append(item_from_missing("sensitive_enforcement"))
 
+    enforcement_sensitive_flag = bool(
+        evidence.get("enforcement_sensitive") is True
+        or (
+            sensitive_classification
+            and sensitive_classification.get("enforcement_sensitive")
+        )
+    )
+    auth_satisfied, auth_missing, auth_reasons = _authorization_item(
+        evidence, enforcement_sensitive=enforcement_sensitive_flag
+    )
+    satisfied.extend(auth_satisfied)
+    missing.extend(auth_missing)
+    reasons.extend(auth_reasons)
+    items.extend(item_from_missing(entry) for entry in auth_missing)
+    items.extend(
+        item_from_reason(reason, "invalid_evidence_value") for reason in auth_reasons
+    )
+
     deterministic_missing = [item for item in missing if not item.startswith("human_authorization")]
     if reasons or deterministic_missing:
         decision = "blocked"
@@ -388,13 +470,7 @@ def evaluate_pr_gate(
         "review_source": evidence.get("review_source"),
         "gate_query_completed_at": evidence.get("gate_query_completed_at"),
         "gate_query_head_sha": evidence.get("gate_query_head_sha"),
-        "enforcement_sensitive": bool(
-            evidence.get("enforcement_sensitive") is True
-            or (
-                sensitive_classification
-                and sensitive_classification.get("enforcement_sensitive")
-            )
-        ),
+        "enforcement_sensitive": enforcement_sensitive_flag,
         "sensitive_classification": sensitive_classification,
         "reasons": sorted(set(reasons)),
         "satisfied": sorted(set(satisfied)),

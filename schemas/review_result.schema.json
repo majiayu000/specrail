@@ -151,6 +151,35 @@
         }
       }
     },
+    "tier_attestation": {
+      "description": "GH-143: reviewer/merge-reviewer lane (or human) tier endorsement. Written only by the reviewer lane, never by the implementer lane.",
+      "type": "object",
+      "required": ["pr_tier", "attested", "basis"],
+      "additionalProperties": false,
+      "properties": {
+        "pr_tier": {"enum": ["fastlane", "standard", "heavy"]},
+        "attested": {"type": "boolean"},
+        "basis": {"type": "string", "minLength": 1}
+      }
+    },
+    "finding_classifications": {
+      "description": "GH-143: reviewer-lane severity/mechanical classification of post-authorization findings. Written only by the reviewer/merge-reviewer lane (or human); implementer self-classification is not trusted.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_ref", "severity", "mechanical"],
+        "additionalProperties": false,
+        "properties": {
+          "finding_ref": {"type": "string", "minLength": 1},
+          "severity": {"enum": ["critical", "important", "minor", "nit"]},
+          "mechanical": {"type": "boolean"}
+        }
+      }
+    },
+    "tier_dispute": {
+      "description": "GH-143: tier classification dispute marker. Only the reviewer/merge-reviewer lane (or human) may set or clear it; the implementer lane has no authority over this flag.",
+      "type": "boolean"
+    },
     "spec_alignment": {
       "type": "object",
       "required": ["status"],
