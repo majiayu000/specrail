@@ -176,5 +176,11 @@ done
 while [ "$(jobs -rp | wc -l)" -gt 0 ]; do wait -n || fail=1; done
 
 git -C "$CHECKOUT" worktree prune
-echo "queue pass complete (logs: $RUN_DIR)"
+pass_tokens=0
+for log in "$RUN_DIR"/*.log; do
+  [ -f "$log" ] || continue
+  t=$(awk '/^tokens used/{getline; gsub(/[^0-9]/,""); v=$0} END{print v}' "$log")
+  case "$t" in ''|*[!0-9]*) ;; *) pass_tokens=$((pass_tokens + t));; esac
+done
+echo "queue pass complete: tokens=$pass_tokens (logs: $RUN_DIR)"
 exit "$fail"

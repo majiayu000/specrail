@@ -267,7 +267,9 @@ no native threads were launched.
 
 Keep ownership boundaries explicit:
 
-- planner and reviewer lanes are read-only
+- planner and reviewer lanes are read-only; when the runtime exposes
+  reasoning-effort control, spawn reviewer, awaiter, and other scoped lanes
+  at low effort — scoped inputs do not need deep reasoning budgets
 - worker lanes own disjoint files or modules
 - shared verification belongs to one coordinator
 - dependent specs run serially
@@ -432,6 +434,23 @@ Default rules:
 
 Prefer artifact paths such as `artifacts/logs/<tranche>/cargo-test.log` and
 summaries such as `artifacts/logs/<tranche>/ci-summary.md`.
+
+## Turn Batching
+
+Every model turn re-sends the whole conversation history, so turn count is a
+first-order cost: a 3000-turn session at a 200K-token context costs an order
+of magnitude more than the same work in 300 turns. Batch aggressively:
+
+- Collect evidence in one scripted call: consecutive read-only steps (git
+  queries, gate scripts, `gh` views, file reads) run as a single script whose
+  raw output goes to an artifact, not as one tool call each.
+- Combine edit-verify micro-loops: apply a patch set, then run the focused
+  check, in as few calls as the tooling allows — never one turn per file.
+- Target under 500 turns for a single-PR session. Crossing 1000 turns without
+  a merged outcome is a stall signal: checkpoint, reassess the plan, and
+  prefer a fresh scoped session over grinding forward.
+- Never spend a turn on a no-op: empty polls, re-checking status that was
+  verified earlier in the same turn, or re-reading unchanged files.
 
 ## Waiting Discipline
 
