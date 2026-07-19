@@ -1133,6 +1133,72 @@ def test_standard_auto_stale_attestation_head_not_substantiating(
     )
 
 
+def test_self_review_attestation_cannot_grant_standard_auto(tmp_path: Path) -> None:
+    """P0 regression: a self-authored tier_attestation under review_source
+    self_review must never substantiate standard_auto; the item fails closed
+    to heavy_manual (blocked)."""
+    checkpoint = _standard_auto_checkpoint(
+        tmp_path,
+        review_source="self_review",
+        reviewer_lane="implementer-lane",
+        producer_identity="implementer",
+    )
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["review_source"] = "self_review"
+    review = item["review"]
+    assert isinstance(review, dict)
+    review["review_source"] = "self_review"
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "review_source self_review cannot qualify for standard_auto" in error
+        for error in result["errors"]
+    )
+    assert any(
+        "self-authored attestation cannot grant standard_auto" in error
+        for error in result["errors"]
+    )
+
+
+def test_non_independent_artifact_attestation_not_substantiating(
+    tmp_path: Path,
+) -> None:
+    """P0: even when the checkpoint item claims independent_lane, an
+    attestation inside an artifact whose own review_source is self_review is
+    not independent substantiation."""
+    checkpoint = _standard_auto_checkpoint(tmp_path, review_source="self_review")
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "self-authored attestation cannot grant standard_auto" in error
+        for error in result["errors"]
+    )
+
+
+def test_malformed_review_artifact_fails_closed(tmp_path: Path) -> None:
+    """P3: a review artifact that fails review_result.schema.json validation
+    is a hard error and yields no substantiation."""
+    checkpoint = _standard_auto_checkpoint(tmp_path)
+    payload = _review_artifact_payload()
+    payload.pop("verdict")
+    (tmp_path / "review-artifact.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("review artifact" in error for error in result["errors"])
+    assert any(
+        "independent tier substantiation" in error for error in result["errors"]
+    )
+
+
 def test_standard_auto_missing_audit_fields_blocked(tmp_path: Path) -> None:
     for field in ["pr_tier", "pr_tier_evidence", "authorization_tier"]:
         checkpoint = _standard_auto_checkpoint(tmp_path)

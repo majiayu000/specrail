@@ -200,6 +200,31 @@ def _merge_record_items(evidence: dict[str, Any]) -> tuple[list[str], list[str],
     return satisfied, missing, reasons
 
 
+def _tier_substantiation_reference(evidence: dict[str, Any]) -> str | None:
+    """GH-143 defense in depth: standard_auto needs an independent reference.
+
+    Self-reported pr_tier_evidence alone never satisfies the authorization
+    item; the evidence must also reference independent substantiation —
+    either a ci_tier_check artifact reference or a tier_attestation_ref
+    pointing at review evidence whose review_source is independent_lane.
+    """
+    ci_tier_check = evidence.get("ci_tier_check")
+    if isinstance(ci_tier_check, dict) and _non_empty_string(
+        ci_tier_check.get("evidence")
+    ):
+        return "ci_tier_check artifact reference"
+    if _non_empty_string(evidence.get("tier_attestation_ref")):
+        review_evidence = evidence.get("review_evidence")
+        review_source = (
+            review_evidence.get("review_source")
+            if isinstance(review_evidence, dict)
+            else None
+        )
+        if review_source == "independent_lane":
+            return "tier_attestation_ref backed by independent_lane review evidence"
+    return None
+
+
 def _authorization_item(
     evidence: dict[str, Any],
     *,
@@ -208,8 +233,9 @@ def _authorization_item(
     """GH-143 B-007: tier-scoped authorization or per-PR human authorization.
 
     standard_auto on a non-sensitive fastlane/standard PR with tier evidence
-    satisfies the authorization item. Every other case (heavy, sensitive,
-    missing tier evidence, out-of-set authorization_tier) keeps the existing
+    plus an independent substantiation reference satisfies the authorization
+    item. Every other case (heavy, sensitive, missing tier evidence or
+    substantiation, out-of-set authorization_tier) keeps the existing
     human_authorization requirement.
     """
     reasons: list[str] = []
@@ -220,13 +246,18 @@ def _authorization_item(
         tier = None
     if tier == "standard_auto":
         pr_tier = evidence.get("pr_tier")
+        substantiation = _tier_substantiation_reference(evidence)
         if (
             pr_tier in STANDARD_AUTO_TIERS
             and _valid_pr_tier_evidence(evidence.get("pr_tier_evidence"))
             and not enforcement_sensitive
+            and substantiation is not None
         ):
             return (
-                [f"tier authorization: standard_auto (pr_tier={pr_tier})"],
+                [
+                    f"tier authorization: standard_auto (pr_tier={pr_tier}), "
+                    f"substantiated by {substantiation}"
+                ],
                 [],
                 reasons,
             )

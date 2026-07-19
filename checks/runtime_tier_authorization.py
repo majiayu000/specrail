@@ -42,6 +42,15 @@ def _valid_pr_tier_evidence(value: Any) -> bool:
     )
 
 
+def _item_review_source(raw_item: dict[str, Any]) -> str:
+    review = raw_item.get("review")
+    review = review if isinstance(review, dict) else {}
+    for value in [review.get("review_source"), raw_item.get("review_source")]:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def _tier_authorization_declared(raw_item: dict[str, Any]) -> bool:
     authorization = raw_item.get("merge_authorization")
     source = authorization.get("source") if isinstance(authorization, dict) else None
@@ -123,6 +132,14 @@ def _validate_tier_authorization(
             "closed to heavy_manual"
         )
 
+    item_is_self_review = _item_review_source(raw_item) == "self_review"
+    if item_is_self_review:
+        errors.append(
+            f"{label}: review_source self_review cannot qualify for "
+            "standard_auto; there is no independent party, so the item fails "
+            "closed to heavy_manual regardless of attestation content"
+        )
+
     substantiated: list[str] = []
     if ci_tier_check_declared and ci_tier_check is not None:
         ci_status = str(
@@ -144,8 +161,10 @@ def _validate_tier_authorization(
 
     attestation: dict[str, Any] | None = None
     artifact_head: Any = None
+    artifact_review_source: Any = None
     if isinstance(review_artifact, dict):
         artifact_head = review_artifact.get("head_sha")
+        artifact_review_source = review_artifact.get("review_source")
         if review_artifact.get("tier_dispute") is True:
             errors.append(
                 f"{label}: reviewer lane recorded tier_dispute; standard_auto "
@@ -157,7 +176,14 @@ def _validate_tier_authorization(
 
     if attestation is not None:
         item_head = raw_item.get("head_sha")
-        if attestation.get("attested") is not True or not _nonempty_string(
+        if artifact_review_source != "independent_lane" or item_is_self_review:
+            errors.append(
+                f"{label}: tier_attestation is trusted only from a review "
+                "artifact whose own review_source is independent_lane on a "
+                "non-self_review item; a self-authored attestation cannot "
+                "grant standard_auto (fails closed to heavy_manual)"
+            )
+        elif attestation.get("attested") is not True or not _nonempty_string(
             attestation.get("basis")
         ):
             errors.append(

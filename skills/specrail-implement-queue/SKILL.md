@@ -651,7 +651,13 @@ unreported lane failures.
     (`{pr_tier, attested: true, basis}`) in the review artifact whose
     `pr_tier` matches the checkpoint value. Self-reported evidence alone is
     never sufficient. Until a CI tier check ships, the reviewer-lane
-    attestation is the only accepted endorsement.
+    attestation is the only accepted endorsement. The attestation counts
+    only when the review artifact validates against
+    `schemas/review_result.schema.json` and the artifact's own
+    `review_source` is `independent_lane`; a malformed artifact is a hard
+    error. A `review_source: self_review` item can never qualify for
+    `standard_auto` — with no independent party it fails closed to
+    `heavy_manual` regardless of attestation content.
   Record `authorization_tier: standard_auto` and
   `merge_authorization.source: tier_policy_gh143` (audit anchor — do not
   rename) on the checkpoint item, with the four green evidence references.

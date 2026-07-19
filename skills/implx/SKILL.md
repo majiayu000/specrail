@@ -61,9 +61,11 @@ baseline; it never selects or authorizes auto mode.
   resolved with zero unresolved, pr_gate `allowed`, independent reviewer-lane
   verdict `clean` or `non_blocking`) AND independent tier substantiation (a
   gate-verifiable CI tier-check artifact or a reviewer-lane
-  `tier_attestation` in the review artifact), is authorized to merge without
+  `tier_attestation` in a schema-valid review artifact whose own
+  `review_source` is `independent_lane`), is authorized to merge without
   a per-PR question. Record `authorization_tier: standard_auto` and
   `merge_authorization.source: tier_policy_gh143` on the checkpoint item.
+  A `review_source: self_review` item never qualifies for standard_auto.
 - `heavy` tier PRs and enforcement-sensitive surfaces (gate code,
   enforcement, contracts, authorization semantics, schemas/migrations,
   security) keep per-PR explicit human merge authorization in the current

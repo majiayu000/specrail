@@ -41,11 +41,18 @@ python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
    (`human_authorization.actor`/`source`) or a GH-143 tier-scoped
    authorization (`authorization_tier: standard_auto` with `pr_tier`
    fastlane/standard, `pr_tier_evidence` with changed-line count and touched
-   paths, and a non-sensitive classification). Heavy or sensitive PRs, or
-   missing tier evidence, keep the human-authorization requirement
-   (`needs_human`); the runtime ledger gate additionally requires an
-   independent tier endorsement (CI tier-check artifact or reviewer-lane
-   `tier_attestation`) before a standard_auto merge.
+   paths, a non-sensitive classification, AND a reference to independent
+   substantiation: a `ci_tier_check` artifact reference or a
+   `tier_attestation_ref` backed by `review_evidence` with `review_source`
+   `independent_lane`). Heavy or sensitive PRs, missing tier evidence, or a
+   missing substantiation reference keep the human-authorization requirement
+   (`needs_human`); self-reported tier evidence alone is never sufficient.
+   The runtime ledger gate additionally loads and verifies the artifacts
+   themselves: the review artifact must validate against
+   `schemas/review_result.schema.json`, the `tier_attestation` counts only
+   when the artifact's own `review_source` is `independent_lane` and the
+   item is not `self_review`, and a `self_review` item can never qualify for
+   standard_auto.
 4. Interpret decisions precisely:
    - `allowed`: evidence satisfies the local merge-readiness policy.
    - `needs_human`: deterministic evidence passed, but a human gate is missing.

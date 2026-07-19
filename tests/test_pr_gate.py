@@ -638,6 +638,10 @@ def _tier_evidence() -> dict[str, object]:
         "changed_lines": 42,
         "touched_paths": ["checks/example.py", "tests/test_example.py"],
     }
+    # GH-143 P1 fix: standard_auto additionally requires a reference to
+    # independent substantiation (the fixture's review_evidence is
+    # independent_lane, so the attestation ref is valid).
+    evidence["tier_attestation_ref"] = "artifacts/reviews/t01/merge-reviewer-1.json"
     return evidence
 
 
@@ -696,6 +700,33 @@ def test_pr_gate_invalid_authorization_tier_blocked() -> None:
         item["category"] == "invalid_evidence_value"
         and "authorization_tier" in item["item_id"]
         for item in result["rejection_items"]
+    )
+
+
+def test_pr_gate_standard_auto_without_substantiation_ref_needs_human() -> None:
+    evidence = _tier_evidence()
+    evidence.pop("tier_attestation_ref")
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "needs_human"
+    assert "human_authorization" in result["missing"]
+    assert not any(
+        "tier authorization: standard_auto" in item for item in result["satisfied"]
+    )
+
+
+def test_pr_gate_standard_auto_with_ci_tier_check_ref_allowed() -> None:
+    evidence = _tier_evidence()
+    evidence.pop("tier_attestation_ref")
+    evidence["ci_tier_check"] = {"evidence": "artifacts/ci/tier-check.json"}
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "allowed"
+    assert any(
+        "substantiated by ci_tier_check artifact reference" in item
+        for item in result["satisfied"]
     )
 
 

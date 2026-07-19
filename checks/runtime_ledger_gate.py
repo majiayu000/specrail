@@ -32,7 +32,14 @@ from runtime_tier_authorization import (
     _validate_post_authorization_findings,
     _validate_tier_authorization,
 )
-from specrail_lib import PackConfig, SPEC_STATUSES, load_pack, resolve_path
+from specrail_lib import (
+    PackConfig,
+    SPEC_STATUSES,
+    SpecRailError,
+    load_pack,
+    resolve_path,
+    validate_instance,
+)
 
 
 MERGE_READY_STATES = {"complete", "merge_ready", "ready_to_merge", "merged"}
@@ -216,12 +223,33 @@ def _validate_pr_gate_artifact(
     return result
 
 
-def _load_review_artifact_payload(raw_item: dict[str, Any]) -> dict[str, Any] | None:
-    """Best-effort load of the reviewer-lane review artifact (GH-143).
+_REVIEW_RESULT_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[1] / "schemas" / "review_result.schema.json"
+)
+_review_result_schema_cache: dict[str, Any] | None = None
+
+
+def _review_result_schema() -> dict[str, Any]:
+    global _review_result_schema_cache
+    if _review_result_schema_cache is None:
+        _review_result_schema_cache = json.loads(
+            _REVIEW_RESULT_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+    return _review_result_schema_cache
+
+
+def _load_review_artifact_payload(
+    raw_item: dict[str, Any],
+    label: str,
+    errors: list[str],
+) -> dict[str, Any] | None:
+    """Load the reviewer-lane review artifact (GH-143).
 
     Loaded only when tier authorization or post-authorization findings are
     declared; a missing or unreadable artifact yields None so the tier rules
     fail closed (no substantiation, classifications treated as critical).
+    A loaded artifact that fails review_result.schema.json validation is a
+    hard error (fail-closed) and also yields None.
     """
     review = raw_item.get("review")
     if not isinstance(review, dict):
@@ -230,7 +258,17 @@ def _load_review_artifact_payload(raw_item: dict[str, Any]) -> dict[str, Any] | 
     if path is None:
         return None
     scratch: list[str] = []
-    return _load_local_json(path, "review artifact", scratch)
+    payload = _load_local_json(path, "review artifact", scratch)
+    if payload is None:
+        return None
+    try:
+        validate_instance(
+            _review_result_schema(), payload, f"{label}: review artifact"
+        )
+    except SpecRailError as exc:
+        errors.append(str(exc))
+        return None
+    return payload
 
 
 def _validate_item_tier_authorization(
@@ -244,7 +282,7 @@ def _validate_item_tier_authorization(
     if not tier_declared and not findings_declared:
         return
 
-    review_artifact = _load_review_artifact_payload(raw_item)
+    review_artifact = _load_review_artifact_payload(raw_item, label, errors)
 
     if tier_declared:
         ci_tier_check = raw_item.get("ci_tier_check")
