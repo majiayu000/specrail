@@ -3,6 +3,7 @@
 ## Linked Issue
 
 GH-59
+status: legacy
 
 ## User Problem
 

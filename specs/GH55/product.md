@@ -3,6 +3,7 @@
 ## Linked Issue
 
 GH-55
+status: legacy
 
 ## 用户问题
 

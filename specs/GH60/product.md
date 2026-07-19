@@ -3,6 +3,7 @@
 ## Linked Issue
 
 GH-60
+status: legacy
 
 ## User Problem
 

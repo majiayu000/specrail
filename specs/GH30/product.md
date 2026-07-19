@@ -3,6 +3,7 @@
 ## Linked Issue
 
 GH-30
+status: legacy
 
 ## Problem
 

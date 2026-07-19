@@ -20,6 +20,7 @@ from specrail_lib import (
     resolve_path,
     resolve_repo_path,
     resolve_spec_packet_root,
+    spec_is_legacy,
     spec_packet_artifact_paths,
     state_map,
     validated_repo_relative_path,
@@ -400,7 +401,31 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         elif path:
             required_artifacts.append(path)
 
+    legacy_spec = False
     if route == "implement":
+        # GH142 B-005/B-007: a legacy spec packet is never a basis for
+        # implementation; an unreadable product.md fails closed via the
+        # SpecRailError path in main().
+        if args.issue is not None and spec_is_legacy(repo, config, args.issue):
+            legacy_spec = True
+            legacy_packet = spec_packet_artifact_paths(config, args.issue)[
+                "spec_packet"
+            ]
+            missing.append("non_legacy_spec")
+            reasons.append(
+                f"spec packet {legacy_packet} is status: legacy; "
+                "rewrite via write_spec (needs_spec) before implementing"
+            )
+            items.append(
+                make_item(
+                    "contract_violation",
+                    "non_legacy_spec",
+                    f"spec packet {legacy_packet} without a status: legacy "
+                    "declaration in its Linked Issue section",
+                    "product.md declares status: legacy in its Linked Issue "
+                    "section",
+                )
+            )
         trusted_classification: dict[str, Any] | None = None
         sensitive_input = dict(evidence)
         sensitive_input.pop("sensitive_classification", None)
@@ -511,6 +536,10 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     if duplicate_work_result is not None:
         decision = stricter_decision(decision, str(duplicate_work_result["decision"]))
     if sensitive_errors:
+        decision = "blocked"
+    if legacy_spec:
+        # GH142 B-005: legacy blocks in every mode; dry_run must not soften
+        # this to warn.
         decision = "blocked"
 
     for artifact in creates:

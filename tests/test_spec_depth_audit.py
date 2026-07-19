@@ -125,11 +125,15 @@ def _write_spec(
     tech: bool = True,
     conditional: bool = True,
     trivial_outside_linked_issue: bool = False,
+    legacy: bool = False,
+    legacy_outside_linked_issue: bool = False,
 ) -> None:
     spec_dir.mkdir(parents=True)
     linked = "GH-999\n"
     if trivial:
         linked += "\ncomplexity: trivial\n"
+    if legacy:
+        linked += "\nstatus: legacy\n"
     if conditional:
         inv_lines = [
             f"{i}. B-{i:03d} WHEN the audited set is scanned, the tool reports row {i}."
@@ -145,6 +149,8 @@ def _write_spec(
         for idx, label in enumerate(BOUNDARY_LABELS)
     ]
     extra = "\n## Non-Goals\n\ncomplexity: trivial\n" if trivial_outside_linked_issue else ""
+    if legacy_outside_linked_issue:
+        extra += "\n## Non-Goals\n\nstatus: legacy\n"
     product = (
         "# Product Spec\n\n"
         f"## Linked Issue\n\n{linked}\n"
@@ -254,6 +260,114 @@ def test_gate_is_read_only(tmp_path: Path) -> None:
 
     after = {p: p.read_bytes() for p in sorted(spec_dir.rglob("*")) if p.is_file()}
     assert before == after
+
+
+def test_gate_exempts_legacy_spec_in_legacy_list(tmp_path: Path) -> None:
+    _write_spec(tmp_path / "GH910", invariants=2, boundary_rows=0, anchors=0, legacy=True)
+
+    result = _run_audit("--spec-dir", str(tmp_path / "GH910"), "--gate")
+
+    assert result.returncode == 0
+    assert "legacy (status: legacy): GH910" in result.stdout
+    assert "exempt (complexity: trivial)" not in result.stdout
+
+
+def test_legacy_marker_outside_linked_issue_is_not_exempt(tmp_path: Path) -> None:
+    _write_spec(
+        tmp_path / "GH911",
+        invariants=2,
+        boundary_rows=0,
+        anchors=0,
+        legacy_outside_linked_issue=True,
+    )
+
+    result = _run_audit("--spec-dir", str(tmp_path / "GH911"), "--gate")
+
+    assert result.returncode == 1
+    assert "FAIL GH911" in result.stdout
+    assert "legacy (status: legacy)" not in result.stdout
+
+
+def test_legacy_marker_without_linked_issue_section_is_not_exempt(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "GH912"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "product.md").write_text(
+        "# Product Spec\n\nGitHub issue: `#912`\n\nstatus: legacy\n",
+        encoding="utf-8",
+    )
+
+    result = _run_audit("--spec-dir", str(spec_dir), "--gate")
+
+    assert result.returncode == 1
+    assert "FAIL GH912" in result.stdout
+
+
+def test_gate_blocks_shallow_unmarked_spec(tmp_path: Path) -> None:
+    _write_spec(tmp_path / "GH913", invariants=5, boundary_rows=2, anchors=1)
+
+    result = _run_audit("--spec-dir", str(tmp_path / "GH913"), "--gate")
+
+    assert result.returncode == 1
+    assert "FAIL GH913" in result.stdout
+
+
+def test_legacy_wins_over_trivial_declaration(tmp_path: Path) -> None:
+    _write_spec(
+        tmp_path / "GH914",
+        invariants=2,
+        boundary_rows=0,
+        anchors=0,
+        trivial=True,
+        legacy=True,
+    )
+
+    result = _run_audit("--spec-dir", str(tmp_path / "GH914"), "--gate")
+
+    assert result.returncode == 0
+    assert "legacy (status: legacy): GH914" in result.stdout
+    assert "exempt (complexity: trivial)" not in result.stdout
+
+
+def test_legacy_recognized_in_appended_minimal_linked_issue_section(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "GH915"
+    spec_dir.mkdir(parents=True)
+    old_format = "# Product Spec\n\nGitHub issue: `#915`\n\nSome legacy body.\n"
+    appended = old_format + "## Linked Issue\nGitHub issue: #915\nstatus: legacy\n"
+    (spec_dir / "product.md").write_text(appended, encoding="utf-8")
+
+    result = _run_audit("--spec-dir", str(spec_dir), "--gate")
+
+    assert result.returncode == 0
+    assert "legacy (status: legacy): GH915" in result.stdout
+
+
+def test_gate_summary_reports_two_state_counts(tmp_path: Path) -> None:
+    _write_spec(tmp_path / "GH916", invariants=8, boundary_rows=8, anchors=5)
+    _write_spec(tmp_path / "GH917", invariants=2, boundary_rows=0, anchors=0, trivial=True)
+    _write_spec(tmp_path / "GH918", invariants=2, boundary_rows=0, anchors=0, legacy=True)
+
+    result = _run_audit(
+        "--spec-dir", str(tmp_path / "GH916"),
+        "--spec-dir", str(tmp_path / "GH917"),
+        "--spec-dir", str(tmp_path / "GH918"),
+        "--gate",
+    )
+
+    assert result.returncode == 0
+    assert "two-state: pass=1 trivial=1 legacy=1 total=3" in result.stdout
+
+
+def test_non_gate_output_unchanged_for_legacy_spec(tmp_path: Path) -> None:
+    _write_spec(tmp_path / "GH919", invariants=2, boundary_rows=0, anchors=0, legacy=True)
+
+    result = _run_audit("--spec-dir", str(tmp_path / "GH919"))
+
+    assert result.returncode == 0
+    assert "gate" not in result.stdout
+    assert "legacy" not in result.stdout
+    assert "spec" in result.stdout
 
 
 def test_audit_without_gate_keeps_current_behavior(tmp_path: Path) -> None:

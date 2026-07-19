@@ -418,7 +418,7 @@ def test_route_gate_implement_requires_duplicate_evidence() -> None:
         "--route",
         "implement",
         "--issue",
-        "55",
+        "142",
         "--state",
         "ready_to_implement",
     )
@@ -431,11 +431,11 @@ def test_route_gate_implement_requires_duplicate_evidence() -> None:
 def test_route_gate_blocks_duplicate_open_pr(tmp_path: Path) -> None:
     duplicate_evidence = write_duplicate_evidence(
         tmp_path,
-        issue=55,
+        issue=142,
         open_prs=[
             {
                 "number": 123,
-                "head_ref": "codex/gh55-existing",
+                "head_ref": "codex/gh142-existing",
                 "references_issue": True,
             }
         ],
@@ -445,7 +445,7 @@ def test_route_gate_blocks_duplicate_open_pr(tmp_path: Path) -> None:
         "--route",
         "implement",
         "--issue",
-        "55",
+        "142",
         "--state",
         "ready_to_implement",
         "--duplicate-evidence",
@@ -460,15 +460,15 @@ def test_route_gate_blocks_duplicate_open_pr(tmp_path: Path) -> None:
 def test_route_gate_duplicate_branch_needs_human(tmp_path: Path) -> None:
     duplicate_evidence = write_duplicate_evidence(
         tmp_path,
-        issue=55,
-        remote_branches=["codex/gh55-existing"],
+        issue=142,
+        remote_branches=["codex/gh142-existing"],
     )
 
     result, payload = run_route_gate(
         "--route",
         "implement",
         "--issue",
-        "55",
+        "142",
         "--state",
         "ready_to_implement",
         "--duplicate-evidence",
@@ -508,6 +508,135 @@ def test_route_gate_rejection_items_enumerate_missing_evidence(
     for item in items:
         for key in ["item_id", "category", "expected", "found"]:
             assert isinstance(item[key], str) and item[key].strip()
+
+
+def _write_implement_pack(tmp_path: Path, product_text: str) -> Path:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo, "./specs")
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir()
+    duplicate_schema = schema_dir / "duplicate_work_evidence.schema.json"
+    duplicate_schema.write_text(
+        (ROOT / "schemas" / duplicate_schema.name).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    packet = repo / "specs" / "GH999"
+    packet.mkdir(parents=True)
+    (packet / "product.md").write_text(product_text, encoding="utf-8")
+    (packet / "tech.md").write_text("GitHub issue: `#999`\n", encoding="utf-8")
+    return repo
+
+
+def test_implement_blocked_on_legacy_spec_with_non_legacy_spec_missing(
+    tmp_path: Path,
+) -> None:
+    repo = _write_implement_pack(
+        tmp_path,
+        "# Product Spec\n\n## Linked Issue\n\nGH-999\n\nstatus: legacy\n",
+    )
+    duplicate_evidence = write_duplicate_evidence(tmp_path)
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        "--duplicate-evidence",
+        str(duplicate_evidence),
+        repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert "non_legacy_spec" in payload["missing"]
+    assert any(
+        "status: legacy" in reason and "write_spec (needs_spec)" in reason
+        for reason in payload["reasons"]
+    )
+    assert any(
+        item["item_id"] == "contract_violation:non_legacy_spec"
+        for item in payload["rejection_items"]
+    )
+
+
+def test_implement_allows_non_legacy_spec_unchanged(tmp_path: Path) -> None:
+    repo = _write_implement_pack(
+        tmp_path,
+        "# Product Spec\n\n## Linked Issue\n\nGH-999\n",
+    )
+    duplicate_evidence = write_duplicate_evidence(tmp_path)
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        "--duplicate-evidence",
+        str(duplicate_evidence),
+        "--mode",
+        "required",
+        repo=repo,
+    )
+
+    assert result.returncode == 0, payload
+    assert payload["decision"] == "allowed"
+    assert "non_legacy_spec" not in payload["missing"]
+
+
+def test_legacy_marker_outside_linked_issue_does_not_block_implement(
+    tmp_path: Path,
+) -> None:
+    repo = _write_implement_pack(
+        tmp_path,
+        "# Product Spec\n\n## Linked Issue\n\nGH-999\n\n"
+        "## Non-Goals\n\nstatus: legacy\n",
+    )
+    duplicate_evidence = write_duplicate_evidence(tmp_path)
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        "--duplicate-evidence",
+        str(duplicate_evidence),
+        "--mode",
+        "required",
+        repo=repo,
+    )
+
+    assert result.returncode == 0, payload
+    assert payload["decision"] == "allowed"
+
+
+def test_implement_blocked_when_product_md_unreadable(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo, "./specs")
+    packet = repo / "specs" / "GH999"
+    packet.mkdir(parents=True)
+    # product.md exists but is unreadable as a file: fail closed (B-007).
+    (packet / "product.md").mkdir()
+    (packet / "tech.md").write_text("GitHub issue: `#999`\n", encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any("cannot read" in reason for reason in payload["reasons"])
 
 
 def test_route_gate_allowed_result_has_empty_rejection_items(

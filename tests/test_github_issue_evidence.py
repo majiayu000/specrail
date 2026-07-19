@@ -575,7 +575,7 @@ def test_route_gate_requires_human_for_body_hint_state() -> None:
             "--route",
             "implement",
             "--issue",
-            "16",
+            "142",
             "--evidence",
             str(fixture),
             "--json",
@@ -614,7 +614,7 @@ def test_route_gate_rejects_inconsistent_trust_metadata(tmp_path: Path) -> None:
             "--route",
             "implement",
             "--issue",
-            "16",
+            "142",
             "--evidence",
             str(evidence_path),
             "--json",
@@ -634,12 +634,25 @@ def test_route_gate_rejects_inconsistent_trust_metadata(tmp_path: Path) -> None:
 def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence(
     tmp_path: Path,
 ) -> None:
-    fixture = ROOT / "examples/fixtures/issue-body-hint-ready-to-implement.json"
+    # GH16 is status: legacy since GH142; retarget the fixture evidence at the
+    # non-legacy GH142 packet so this test keeps exercising state-trust
+    # compatibility rather than the legacy block.
+    fixture_payload = json.loads(
+        (ROOT / "examples/fixtures/issue-body-hint-ready-to-implement.json")
+        .read_text(encoding="utf-8")
+    )
+    fixture_payload["issue"] = 142
+    fixture_payload["artifacts"] = {
+        name: path.replace("GH16", "GH142")
+        for name, path in fixture_payload.get("artifacts", {}).items()
+    }
+    fixture = tmp_path / "issue-body-hint-ready-to-implement.json"
+    fixture.write_text(json.dumps(fixture_payload), encoding="utf-8")
     duplicate_evidence = tmp_path / "duplicate-work-evidence.json"
     duplicate_evidence.write_text(
         json.dumps(
             {
-                "issue": 16,
+                "issue": 142,
                 "collected_at": "2026-07-04T00:00:00Z",
                 "open_prs_complete": True,
                 "open_pr_limit": 100,
@@ -658,7 +671,7 @@ def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence(
             "--route",
             "implement",
             "--issue",
-            "16",
+            "142",
             "--state",
             "ready_to_implement",
             "--evidence",

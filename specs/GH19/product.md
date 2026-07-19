@@ -3,6 +3,7 @@
 ## Linked Issue
 
 GitHub issue: `#19`
+status: legacy
 
 ## 用户问题
 

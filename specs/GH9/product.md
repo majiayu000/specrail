@@ -43,3 +43,6 @@ GitHub issue: `#9`
 - Docs and the `specrail-workflow` skill describe the adapter as evidence
   collection, not policy or merge authority.
 - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH9` passes.
+## Linked Issue
+GitHub issue: #9
+status: legacy
