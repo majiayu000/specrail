@@ -763,3 +763,23 @@ def test_review_json_gate_allowed_result_has_empty_rejection_items() -> None:
     assert result["decision"] == "allowed"
     assert result["rejection_items"] == []
     assert "repeat_rejection" not in result
+
+
+def test_review_json_gate_allows_gate_status_unavailable() -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "allowed"
+    assert "gate_status: unavailable" in result["satisfied"]
+
+
+def test_review_json_gate_blocks_unknown_gate_status() -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "skipped"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert "gate_status must be one of: gated, unavailable" in result["reasons"]

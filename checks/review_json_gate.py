@@ -26,6 +26,7 @@ SIDES = {"RIGHT", "LEFT"}
 SEVERITIES = {"critical", "important", "suggestion", "nit"}
 SPEC_ALIGNMENT_STATUSES = {"matched", "drift", "not_applicable"}
 REVIEW_MODES = {"full", "resumed", "diff_only"}
+GATE_STATUSES = {"gated", "unavailable"}
 PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
 FULL_REVIEW_ROUND_CAP = 2
 FORBIDDEN_FINAL_AUTHORITY = {
@@ -190,10 +191,19 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
         "base_head_sha",
         "human_full_review_request",
         "prior_findings",
+        "gate_status",
     }
 
     for key in sorted(set(review) - allowed_keys):
         reasons.append(f"unknown top-level field: {key}")
+
+    if "gate_status" in review:
+        gate_status = review.get("gate_status")
+        if gate_status not in GATE_STATUSES:
+            allowed = ", ".join(sorted(GATE_STATUSES))
+            reasons.append(f"gate_status must be one of: {allowed}")
+        else:
+            satisfied.append(f"gate_status: {gate_status}")
 
     verdict = review.get("verdict")
     if verdict in VERDICTS:
