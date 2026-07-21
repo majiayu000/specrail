@@ -462,7 +462,9 @@ def load_review_manifest(
         "pr": expected_pr,
         "head_sha": expected_head_sha,
         "review_source": next(iter(review_sources), None),
-        "review_execution": next(iter(review_executions), None),
+        "review_execution": (
+            next(iter(review_executions)) if len(review_executions) == 1 else None
+        ),
         "review_completed_at": latest_completed_at,
         "human_final_review_required": manifest.get("human_final_review_required"),
         "lane_roster": lane_roster,

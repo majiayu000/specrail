@@ -545,6 +545,7 @@ def test_review_manifest_blocks_conflicting_execution_provenance(tmp_path: Path)
         "conflicting review_execution" in item
         for item in result["blocking_reasons"]
     )
+    assert result["review_execution"] is None
 
 
 def test_review_manifest_blocks_pending_current_head_alongside_clean_terminal(
