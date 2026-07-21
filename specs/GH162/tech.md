@@ -37,8 +37,12 @@ GH-162
 4. PR evidence schema 要求派生的 `review_execution`；offline gate 重新验证嵌入 artifact，
    因而 hosted 或缺失字段均 blocked。
 5. Runtime checkpoint review summary 新增 `review_execution`，merge-ready
-   independent/self-review 均要求 local。该检查与 native lane id、head、verdict 等既有
-   断言串行执行。
+   independent/self-review 均要求 local。`review.evidence` 必须是本地 JSON artifact；
+   loader 先执行 schema 与共享 `validate_review_artifact()` 语义校验，并传播 errors 与
+   blocking reasons，同时保留已解析 payload 供后续 binding/tier diagnostics。然后将
+   artifact 的 PR、reviewer lane、artifact ID、source、execution、head、完成时间、
+   status、verdict、human gate、findings 与 prior findings 和 summary 逐项比较。URL、
+   缺失/非 JSON、legacy、hosted、字段错配、非法时间戳及 `clean` + findings 均阻断。
 6. Skill/使用文档规定：本地 CLI/native lane 是 primary；`@codex review` 是可选
    supplemental，不能填充 primary artifact 或 reviewer lane evidence。
 
@@ -49,7 +53,7 @@ GH-162
 | B-001 B-002 B-006 B-009 | `review_result_semantics.py`, review schema | `python3 -m pytest -q tests/test_review_json_gate.py` |
 | B-003 B-004 B-010 | manifest aggregation tests | `python3 -m pytest -q tests/test_review_json_gate.py -k execution` |
 | B-007 | `github_pr_evidence.py`, PR evidence schema | `python3 -m pytest -q tests/test_github_pr_evidence.py -k review` |
-| B-008 | PR gate + runtime ledger | `python3 -m pytest -q tests/test_pr_gate_terminal.py tests/test_runtime_ledger_review.py` |
+| B-008 B-011 | PR gate + runtime ledger artifact binding | `python3 -m pytest -q tests/test_pr_gate_terminal.py tests/test_runtime_ledger_review.py tests/test_runtime_ledger_gate.py` |
 | B-005 | `implx`, `specrail-pr-gate`, `AGENT_USAGE.md` | `rg -n "@codex review|review_execution|supplemental" skills AGENT_USAGE.md` and pack check |
 
 ## 数据流
@@ -57,7 +61,9 @@ GH-162
 本地 reviewer CLI/native lane → exact-head terminal artifact（source + execution）→ review
 manifest 聚合 → GitHub PR evidence adapter → offline `pr_gate`。Hosted review 只作为 GitHub
 评论/review 可见，不进入 primary terminal manifest；若显式记录为 hosted artifact，gate
-稳定阻断。Runtime checkpoint 从同一 artifact 摘要复制 execution，并由 ledger gate 复核。
+稳定阻断。Runtime checkpoint 从同一 artifact 摘要复制 execution；ledger gate 重新加载本地
+artifact，执行 schema + semantic validation，并把身份、head、verdict 与 findings 等摘要
+字段逐项绑定后才接受 merge-ready。
 
 ## 备选方案
 
@@ -69,7 +75,9 @@ manifest 聚合 → GitHub PR evidence adapter → offline `pr_gate`。Hosted re
 ## 风险
 
 - Security: provenance 仍由本地 artifact 生产者声明，不是密码学证明；但 gate 不再把
-  GitHub hosted review 自动等价为 local evidence。
+  GitHub hosted review 自动等价为 local evidence，也不允许 checkpoint summary 脱离
+  artifact 自报 local/clean。Artifact 语义错误仍保留 payload 进入 binding/tier diagnostics，
+  但整体决定 fail closed。
 - Compatibility: 旧 artifact 缺字段将不能满足 merge gate，属于预期 fail-closed 迁移。
 - Performance: 仅增加常数级字段校验。
 - Maintenance: PR gate 与 runtime ledger 必须保持规则一致，由双路径回归测试约束。

@@ -49,12 +49,21 @@ review 当成主要审查证据，而本地 `codex review` 从未执行。用户
    读取用于诊断，但不能满足新的主要 review gate；不得默认推断为 local。
 10. B-010 hosted review 阻断或缺失 provenance 后重跑 gate 必须得到稳定、可操作的
     原因；补充有效 exact-head local artifact 后才可恢复。
+11. B-011 runtime merge-ready checkpoint 不得只信调用者填写的 review summary：
+    `review.evidence` 必须指向本地 machine-readable artifact，先通过 schema 与共享
+    `validate_review_artifact()` 语义校验，再把 artifact 的 PR、reviewer lane、artifact
+    ID、source、execution、head、完成时间、status、verdict、human gate、findings 和
+    prior findings 与 summary 逐项绑定。URL、缺失/非 JSON artifact、字段错配、非法
+    时间戳及 `clean` verdict 携带 findings 均须 fail closed；语义错误不得跳过后续
+    binding/tier diagnostics。
 
 ## 验收标准
 
 - [ ] hosted independent artifact 在 review semantic gate、PR gate 和 runtime ledger
       三条路径均不能充当主要 review。
 - [ ] exact-head local independent artifact 在其他证据完整时继续通过。
+- [ ] runtime summary 无法用 unrelated、hosted、legacy 或语义无效 artifact 冒充
+      exact-head local review。
 - [ ] 文档明确区分本地 `codex review` 与 GitHub `@codex review`。
 - [ ] 全量测试与 SpecRail pack checks 通过。
 
@@ -70,7 +79,7 @@ review 当成主要审查证据，而本地 `codex review` 从未执行。用户
 | 非法状态转换 | covered: B-002 B-007（supplemental 不得提升为 primary） |
 | 兼容/迁移 | covered: B-009 |
 | 降级/回退 | covered: B-005 B-006（hosted 只补充，self-review 不放宽） |
-| 证据与审计完整性 | covered: B-001 B-003 B-004 B-007 B-008 |
+| 证据与审计完整性 | covered: B-001 B-003 B-004 B-007 B-008 B-011 |
 | 取消/中断 | N/A：所有 gate 均为只读离线评估，重跑不改变远端状态。 |
 
 ## 发布说明
