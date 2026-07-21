@@ -17,6 +17,7 @@ TERMINAL_STATUSES = REVIEW_STATUSES - {"pending"}
 REVIEW_VERDICTS = {"clean", "non_blocking", "changes_requested", "blocking"}
 MERGE_READY_VERDICTS = {"clean", "non_blocking"}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
+REVIEW_EXECUTIONS = {"hosted", "local"}
 FINDING_SEVERITIES = {"critical", "important", "suggestion", "nit"}
 PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
 
@@ -125,6 +126,7 @@ def validate_review_artifact(
         "reviewer_lane",
         "producer_identity",
         "review_source",
+        "review_execution",
         "head_sha",
         "review_started_at",
         "status",
@@ -148,6 +150,13 @@ def validate_review_artifact(
     source = artifact.get("review_source")
     if source not in REVIEW_SOURCES:
         errors.append(f"review_source must be one of: {', '.join(sorted(REVIEW_SOURCES))}")
+    execution = artifact.get("review_execution")
+    if execution not in REVIEW_EXECUTIONS:
+        errors.append(
+            f"review_execution must be one of: {', '.join(sorted(REVIEW_EXECUTIONS))}"
+        )
+    elif execution == "hosted":
+        errors.append("hosted review is supplemental only and cannot satisfy primary review")
     status = artifact.get("status")
     if status not in REVIEW_STATUSES:
         errors.append(f"status must be one of: {', '.join(sorted(REVIEW_STATUSES))}")
@@ -412,6 +421,7 @@ def load_review_manifest(
 
     blockers: list[str] = []
     review_sources: set[str] = set()
+    review_executions: set[str] = set()
     completed_times: list[str] = []
     for artifact in current_head:
         result = validate_review_artifact(artifact, expected_pr=expected_pr, expected_head_sha=expected_head_sha)
@@ -425,10 +435,14 @@ def load_review_manifest(
             )
         if _nonempty(artifact.get("review_source")):
             review_sources.add(str(artifact["review_source"]))
+        if _nonempty(artifact.get("review_execution")):
+            review_executions.add(str(artifact["review_execution"]))
         if _nonempty(artifact.get("review_completed_at")):
             completed_times.append(str(artifact["review_completed_at"]))
     if len(review_sources) > 1:
         blockers.append("current-head artifacts have conflicting review_source values")
+    if len(review_executions) > 1:
+        blockers.append("current-head artifacts have conflicting review_execution values")
 
     latest_completed_at = None
     latest_completed_time = None
@@ -448,6 +462,9 @@ def load_review_manifest(
         "pr": expected_pr,
         "head_sha": expected_head_sha,
         "review_source": next(iter(review_sources), None),
+        "review_execution": (
+            next(iter(review_executions)) if len(review_executions) == 1 else None
+        ),
         "review_completed_at": latest_completed_at,
         "human_final_review_required": manifest.get("human_final_review_required"),
         "lane_roster": lane_roster,
@@ -479,6 +496,13 @@ def evaluate_review_evidence(
         errors.append("review_evidence.pr must match pr")
     if evidence.get("head_sha") != expected_head_sha:
         errors.append("review_evidence.head_sha must match head_sha")
+    execution = evidence.get("review_execution")
+    if execution not in REVIEW_EXECUTIONS:
+        errors.append(
+            f"review_evidence.review_execution must be one of: {', '.join(sorted(REVIEW_EXECUTIONS))}"
+        )
+    elif execution != "local":
+        errors.append("hosted review evidence is supplemental only; primary review must be local")
     embedded_errors = evidence.get("errors")
     if not isinstance(embedded_errors, list):
         errors.append("review_evidence.errors must be a list")
@@ -494,6 +518,7 @@ def evaluate_review_evidence(
         errors.append("review_evidence.artifacts must be a non-empty list")
     else:
         current = 0
+        current_executions: set[str] = set()
         for index, artifact in enumerate(artifacts):
             result = validate_review_artifact(artifact, expected_pr=expected_pr)
             errors.extend(f"review_evidence.artifacts[{index}]: {item}" for item in result["errors"])
@@ -501,9 +526,13 @@ def evaluate_review_evidence(
                 continue
             if artifact.get("head_sha") == expected_head_sha and artifact.get("status") in TERMINAL_STATUSES:
                 current += 1
+                if _nonempty(artifact.get("review_execution")):
+                    current_executions.add(str(artifact["review_execution"]))
                 blockers.extend(result["blocking_reasons"])
         if current == 0:
             errors.append("review_evidence has no current-head terminal artifact")
+        if len(current_executions) == 1 and execution not in current_executions:
+            errors.append("review_evidence.review_execution must be derived from current-head artifacts")
     if not errors:
         satisfied.append("review manifest and artifacts are semantically valid")
     if not blockers:

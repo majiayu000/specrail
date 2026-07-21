@@ -175,6 +175,7 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
         "reviewer_lane",
         "producer_identity",
         "review_source",
+        "review_execution",
         "review_started_at",
         "review_completed_at",
         "status",

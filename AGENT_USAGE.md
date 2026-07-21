@@ -144,6 +144,14 @@ python3 checks/github_pr_evidence.py \
 python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
 ```
 
+The primary agent review is an exact-head local review artifact with
+`review_source: independent_lane` and `review_execution: local`, produced by a
+local CLI review such as `codex review --base <base>` or by a native local
+reviewer lane. A GitHub comment such as `@codex review` starts a hosted review.
+Hosted reviews remain useful supplemental evidence, but they do not replace
+the local primary reviewer artifact and must be reported as "hosted/cloud
+review", not ambiguously as "Codex review".
+
 For a partial implementation slice whose body contains a standalone
 `Refs #<issue-number>` directive, bind the intended issue explicitly:
 

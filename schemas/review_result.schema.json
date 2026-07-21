@@ -46,6 +46,10 @@
     "review_source": {
       "enum": ["independent_lane", "self_review"]
     },
+    "review_execution": {
+      "enum": ["local", "hosted"],
+      "description": "Execution location. local artifacts may serve as primary review; hosted artifacts are supplemental only and fail the primary review semantic gate."
+    },
     "head_sha": {
       "type": "string",
       "pattern": "^[0-9a-fA-F]{40}$"

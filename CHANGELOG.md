@@ -4,6 +4,11 @@
 
 ### Added
 
+- Local-primary review provenance (GH-162): terminal review artifacts now
+  distinguish `review_execution: local | hosted`; offline PR and runtime
+  ledger gates reject hosted reviews as primary evidence while keeping GitHub
+  `@codex review` available as explicitly supplemental review.
+
 - Spec depth audit tool (GH-93): read-only `tools/spec_depth_audit.py` measures
   per-spec invariant count, EARS conditional ratio, boundary-category coverage,
   and tech.md path:line anchors; supports `--repo` and repeatable `--spec-dir`

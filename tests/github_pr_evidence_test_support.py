@@ -81,6 +81,7 @@ def clean_review_evidence() -> dict[str, object]:
         "reviewer_lane": "reviewer-1",
         "producer_identity": "reviewer",
         "review_source": "independent_lane",
+        "review_execution": "local",
         "head_sha": head_sha,
         "review_started_at": "2026-07-15T23:57:00Z",
         "review_completed_at": "2026-07-15T23:58:00Z",
@@ -98,6 +99,7 @@ def clean_review_evidence() -> dict[str, object]:
         "pr": 10,
         "head_sha": head_sha,
         "review_source": "independent_lane",
+        "review_execution": "local",
         "review_completed_at": "2026-07-15T23:58:00Z",
         "human_final_review_required": False,
         "lane_roster": [
