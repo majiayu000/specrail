@@ -97,6 +97,7 @@ def clean_checkpoint() -> dict[str, object]:
                     "native_thread_id": "agent-reviewer-1",
                     "status": "passed",
                     "review_source": "independent_lane",
+                    "review_execution": "local",
                     "evidence": "artifacts/reviews/t01/merge-reviewer-1.json",
                     "manifest": "artifacts/reviews/t01/manifest.json",
                     "artifact_id": "pr718-head1-reviewer1",

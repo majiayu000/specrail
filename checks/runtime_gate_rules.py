@@ -22,6 +22,7 @@ from session_telemetry import parse_timestamp
 
 
 REVIEW_SOURCES = {"independent_lane", "self_review"}
+REVIEW_EXECUTIONS = {"hosted", "local"}
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
 LANE_FAILURE_BLOCKED_REASON = "reviewer_lane_failure"
 LANE_FAILURE_DOWNGRADE_STATES = {"blocked", "needs_human"}
@@ -220,6 +221,16 @@ def _validate_terminal_review_summary(
             errors.append(f"{label}: terminal review requires review.{key}")
     if review.get("head_sha") != head_sha:
         errors.append(f"{label}: terminal review head_sha must match item head_sha")
+    execution = review.get("review_execution")
+    if execution not in REVIEW_EXECUTIONS:
+        allowed = ", ".join(sorted(REVIEW_EXECUTIONS))
+        errors.append(
+            f"{label}: terminal review requires review.review_execution (one of: {allowed})"
+        )
+    elif execution != "local":
+        errors.append(
+            f"{label}: hosted review is supplemental only; primary review must be local"
+        )
     if review.get("terminal_status") != "completed":
         errors.append(f"{label}: terminal review status must be completed")
     if review.get("verdict") not in {"clean", "non_blocking"}:

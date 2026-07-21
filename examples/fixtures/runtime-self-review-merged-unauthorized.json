@@ -49,6 +49,7 @@
         "reviewer_lane": "self",
         "status": "passed",
         "review_source": "self_review",
+        "review_execution": "local",
         "evidence": "artifacts/reviews/t01/self-review.md",
         "manifest": "artifacts/reviews/t01/self-manifest.json",
         "artifact_id": "pr718-head1-self-review",

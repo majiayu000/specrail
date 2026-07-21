@@ -76,6 +76,26 @@ def test_runtime_ledger_gate_blocks_merge_ready_without_review_source() -> None:
     assert any("review.review_source" in error for error in result["errors"])
 
 
+def test_runtime_ledger_gate_blocks_merge_ready_without_review_execution() -> None:
+    checkpoint = clean_checkpoint()
+    del checkpoint["items"][0]["review"]["review_execution"]  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("review.review_execution" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_hosted_review_as_primary() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint["items"][0]["review"]["review_execution"] = "hosted"  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("supplemental only" in error for error in result["errors"])
+
+
 def test_runtime_ledger_gate_blocks_unauthorized_self_review_merge() -> None:
     result = evaluate_checkpoint(
         _fixture_checkpoint("runtime-self-review-merged-unauthorized.json")
