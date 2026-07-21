@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from runtime_ledger_test_support import (  # noqa: E402
     ROOT,
@@ -94,6 +95,123 @@ def test_runtime_ledger_gate_blocks_hosted_review_as_primary() -> None:
 
     assert result["decision"] == "blocked"
     assert any("supplemental only" in error for error in result["errors"])
+
+
+def _checkpoint_with_review_artifact(
+    tmp_path: Path,
+    *,
+    review_execution: str | None,
+    **artifact_overrides: object,
+) -> dict[str, object]:
+    artifact = json.loads(
+        (ROOT / "tests" / "fixtures" / "gh143-review-artifact-pr718.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if review_execution is None:
+        artifact.pop("review_execution")
+    else:
+        artifact["review_execution"] = review_execution
+    artifact.update(artifact_overrides)
+    artifact_path = tmp_path / "review.json"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    checkpoint = clean_checkpoint()
+    checkpoint["items"][0]["review"]["evidence"] = str(artifact_path)  # type: ignore[index]
+    return checkpoint
+
+
+def test_runtime_ledger_gate_blocks_hosted_artifact_behind_local_summary(
+    tmp_path: Path,
+) -> None:
+    result = evaluate_checkpoint(
+        _checkpoint_with_review_artifact(tmp_path, review_execution="hosted")
+    )
+
+    assert result["decision"] == "blocked"
+    assert any("hosted review artifact" in error for error in result["errors"])
+    assert any("must match review artifact" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_legacy_artifact_behind_local_summary(
+    tmp_path: Path,
+) -> None:
+    result = evaluate_checkpoint(
+        _checkpoint_with_review_artifact(tmp_path, review_execution=None)
+    )
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "review artifact requires review_execution" in error
+        for error in result["errors"]
+    )
+
+
+def test_runtime_ledger_gate_blocks_artifact_for_another_pr(tmp_path: Path) -> None:
+    result = evaluate_checkpoint(
+        _checkpoint_with_review_artifact(
+            tmp_path, review_execution="local", pr=999
+        )
+    )
+
+    assert result["decision"] == "blocked"
+    assert any("artifact.pr must match item pr" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_artifact_from_another_lane(tmp_path: Path) -> None:
+    result = evaluate_checkpoint(
+        _checkpoint_with_review_artifact(
+            tmp_path,
+            review_execution="local",
+            reviewer_lane="unregistered-reviewer",
+        )
+    )
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "review.reviewer_lane must match review artifact.reviewer_lane" in error
+        for error in result["errors"]
+    )
+
+
+def test_runtime_ledger_gate_blocks_artifact_with_invalid_timestamps(
+    tmp_path: Path,
+) -> None:
+    checkpoint = _checkpoint_with_review_artifact(
+        tmp_path,
+        review_execution="local",
+        review_started_at="not-a-time",
+        review_completed_at="also-not-a-time",
+    )
+    checkpoint["items"][0]["review"]["review_completed_at"] = "also-not-a-time"  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "timezone-aware ISO-8601 timestamp" in error for error in result["errors"]
+    )
+
+
+def test_runtime_ledger_gate_blocks_clean_artifact_with_nit_finding(
+    tmp_path: Path,
+) -> None:
+    findings = [
+        {
+            "id": "nit-present",
+            "severity": "nit",
+            "actionable": False,
+            "summary": "A clean verdict cannot contain findings.",
+        }
+    ]
+    checkpoint = _checkpoint_with_review_artifact(
+        tmp_path, review_execution="local", findings=findings
+    )
+    checkpoint["items"][0]["review"]["findings"] = findings  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("clean verdict requires zero findings" in error for error in result["errors"])
 
 
 def test_runtime_ledger_gate_blocks_unauthorized_self_review_merge() -> None:
