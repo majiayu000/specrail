@@ -33,6 +33,31 @@ from github_pr_evidence import (  # noqa: E402
     collect_evidence,
     main as github_evidence_main,
 )
+from github_evidence_common import trusted_ci_coverage  # noqa: E402
+from specrail_lib import PackConfig, load_pack  # noqa: E402
+
+
+PACK = load_pack(ROOT)
+
+
+def _pack_config(
+    repo: Path = ROOT,
+    *,
+    coverage: dict[str, list[str]] | None = None,
+    spec_root: str | None = None,
+) -> PackConfig:
+    workflow = deepcopy(PACK.workflow)
+    if coverage is not None:
+        workflow["evidence"]["ci_component_coverage"] = coverage
+    if spec_root is not None:
+        packet = f"{spec_root}/GH{{issue_number}}"
+        workflow["artifacts"].update({
+            "spec_packet": packet + "/",
+            "product_spec": packet + "/product.md",
+            "tech_spec": packet + "/tech.md",
+            "task_plan": packet + "/tasks.md",
+        })
+    return PackConfig(repo, workflow, PACK.states, PACK.labels)
 
 
 def test_content_binding_code_hash_includes_base_tree() -> None:
@@ -128,7 +153,7 @@ def test_content_binding_workflow_check_is_spec_aware() -> None:
         {"specs/GH1/product.md": b"v2"}, {"title": "PR"},
     )
     evidence = build_evidence(
-        pr_payload(), threads_payload(), content_binding=current
+        pr_payload(), threads_payload(), content_binding=current, config=PACK
     )
     workflow_check = evidence["checks"][0]
 
@@ -137,6 +162,46 @@ def test_content_binding_workflow_check_is_spec_aware() -> None:
     assert not content_bindings_match(
         workflow_check, changed_spec["content_hashes"]
     )
+
+
+def test_ci_component_coverage_comes_only_from_repo_config() -> None:
+    current = build_content_binding(
+        "a" * 40, "b" * 40, b"patch",
+        {"specs/GH1/product.md": b"v1"}, {"title": "PR"},
+    )
+    payload = pr_payload()
+    payload["statusCheckRollup"][0]["name"] = "consumer-check"  # type: ignore[index]
+    config = _pack_config(coverage={"consumer-check": ["pr_metadata"]})
+
+    evidence = build_evidence(
+        payload, threads_payload(), content_binding=current, config=config
+    )
+
+    assert evidence["checks"][0]["covered_categories"] == ["pr_metadata"]
+    assert "content_binding_version" not in evidence["checks"][1]
+    assert trusted_ci_coverage(_pack_config(coverage={}), "lint") is None
+
+
+@pytest.mark.parametrize(
+    ("coverage", "error"),
+    [
+        ({"workflow-check": []}, "non-empty list"),
+        ({"workflow-check": ["code_inputs", "code_inputs"]}, "duplicates"),
+        ({"workflow-check": ["undeclared"]}, "unknown category"),
+    ],
+)
+def test_ci_component_coverage_rejects_invalid_repo_config(
+    coverage: dict[str, list[str]], error: str,
+) -> None:
+    current = build_content_binding(
+        "a" * 40, "b" * 40, b"patch", {}, {"title": "PR"}
+    )
+
+    with pytest.raises(EvidenceError, match=error):
+        build_evidence(
+            pr_payload(), threads_payload(), content_binding=current,
+            config=_pack_config(coverage=coverage),
+        )
 
 
 def test_collect_content_binding_uses_exact_git_base_and_head(tmp_path: Path) -> None:
@@ -173,6 +238,7 @@ def test_collect_content_binding_uses_exact_git_base_and_head(tmp_path: Path) ->
         tmp_path, payload,
         {"head_sha": head, "base_sha": base, "base_ref": "main"},
         {"number": 9, "kind": "closing", "verified": True},
+        _pack_config(tmp_path),
     )
 
     expected_tree = subprocess.run(
@@ -181,6 +247,51 @@ def test_collect_content_binding_uses_exact_git_base_and_head(tmp_path: Path) ->
     ).stdout.strip()
     assert binding["snapshot"]["base_tree_oid"] == expected_tree
     assert binding["snapshot"]["head_sha"] == head
+
+
+def test_collect_content_binding_uses_configured_spec_packet_root(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "SpecRail"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "specrail@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    spec_path = tmp_path / "docs/rail/GH9/product.md"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("v1", encoding="utf-8")
+    (tmp_path / "code.py").write_text("one\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=tmp_path, check=True)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    spec_path.write_text("v2", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "head"], cwd=tmp_path, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    payload = pr_payload()
+    payload.update({
+        "headRefOid": head, "headRefName": "feature", "baseRefName": "main",
+        "title": "Change", "body": "Closes #9",
+    })
+
+    binding = _collect_content_binding(
+        tmp_path, payload,
+        {"head_sha": head, "base_sha": base, "base_ref": "main"},
+        {"number": 9, "kind": "closing", "verified": True},
+        _pack_config(tmp_path, spec_root="docs/rail"),
+    )
+
+    assert binding["content_hashes"]["spec_files"] == hash_spec_files({
+        "docs/rail/GH9/product.md": b"v2"
+    })
 
 
 @pytest.mark.parametrize("drift", ["head_sha", "base_sha", "paths_sha256"])
@@ -205,7 +316,7 @@ def test_content_binding_collector_rejects_snapshot_drift(
     with pytest.raises(EvidenceError, match="snapshot drifted"):
         collect_evidence(
             "majiayu000/specrail", 10, None, repo=ROOT,
-            content_binding_v1=True,
+            config=PACK, content_binding_v1=True,
         )
 
 
@@ -223,6 +334,20 @@ def test_content_binding_requires_explicit_opt_in(
 
     assert "content_binding_version" not in evidence
     assert "reused_components" not in evidence
+
+
+def test_content_binding_v1_requires_repo_owned_workflow_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_pr_view", lambda *_: pr_payload()
+    )
+
+    with pytest.raises(EvidenceError, match="repo-owned workflow configuration"):
+        collect_evidence(
+            "majiayu000/specrail", 10, None, repo=ROOT,
+            content_binding_v1=True,
+        )
 
 
 def test_collector_binding_only_cli_emits_schema_sidecar(
@@ -260,7 +385,7 @@ def test_build_evidence_reuses_previous_head_ci_with_complete_audit() -> None:
     previous_payload = pr_payload()
     previous_payload["headRefOid"] = "b" * 40
     prior_evidence = build_evidence(
-        previous_payload, threads_payload(), content_binding=previous
+        previous_payload, threads_payload(), content_binding=previous, config=PACK
     )
     current_payload = pr_payload()
     current_payload["headRefOid"] = "d" * 40
@@ -273,6 +398,7 @@ def test_build_evidence_reuses_previous_head_ci_with_complete_audit() -> None:
         threads_payload(),
         content_binding=current,
         reusable_ci_evidence=prior_evidence,
+        config=PACK,
     )
 
     reused = evidence["checks"][0]
@@ -288,6 +414,37 @@ def test_build_evidence_reuses_previous_head_ci_with_complete_audit() -> None:
     }]
 
 
+def test_build_evidence_does_not_replace_completed_current_failure() -> None:
+    previous = build_content_binding(
+        "b" * 40, "c" * 40, b"patch",
+        {"specs/GH9/product.md": b"same"}, {"title": "same"},
+    )
+    current = build_content_binding(
+        "d" * 40, "c" * 40, b"patch",
+        {"specs/GH9/product.md": b"same"}, {"title": "same"},
+    )
+    previous_payload = pr_payload()
+    previous_payload["headRefOid"] = "b" * 40
+    prior_evidence = build_evidence(
+        previous_payload, threads_payload(), content_binding=previous, config=PACK
+    )
+    current_payload = pr_payload()
+    current_payload["headRefOid"] = "d" * 40
+    current_payload["statusCheckRollup"][0].update(  # type: ignore[index]
+        {"status": "COMPLETED", "conclusion": "FAILURE"}
+    )
+
+    evidence = build_evidence(
+        current_payload, threads_payload(), content_binding=current,
+        reusable_ci_evidence=prior_evidence, config=PACK,
+    )
+
+    workflow_check = evidence["checks"][0]
+    assert workflow_check["conclusion"] == "FAILURE"
+    assert workflow_check["head_sha"] == "d" * 40
+    assert evidence["reused_components"] == []
+
+
 def test_build_evidence_rejects_previous_ci_when_spec_binding_changed() -> None:
     previous = build_content_binding(
         "b" * 40, "c" * 40, b"patch",
@@ -300,7 +457,7 @@ def test_build_evidence_rejects_previous_ci_when_spec_binding_changed() -> None:
     previous_payload = pr_payload()
     previous_payload["headRefOid"] = "b" * 40
     prior_evidence = build_evidence(
-        previous_payload, threads_payload(), content_binding=previous
+        previous_payload, threads_payload(), content_binding=previous, config=PACK
     )
     current_payload = pr_payload()
     current_payload["headRefOid"] = "d" * 40
@@ -314,6 +471,7 @@ def test_build_evidence_rejects_previous_ci_when_spec_binding_changed() -> None:
             threads_payload(),
             content_binding=current,
             reusable_ci_evidence=prior_evidence,
+            config=PACK,
         )
 
 

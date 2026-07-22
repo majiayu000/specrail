@@ -66,6 +66,15 @@ enforcement:
     paths: []
     specs: []
 
+# Repo-owned coverage contract for CI evidence that may be reused when only
+# unrelated content categories changed. Consumer overlays declare their own
+# check names and covered categories; unknown checks fail closed.
+evidence:
+  ci_component_coverage:
+    workflow-check:
+      - code_inputs
+      - spec_files
+
 artifacts:
   spec_packet: specs/GH{issue_number}/
   product_spec: specs/GH{issue_number}/product.md

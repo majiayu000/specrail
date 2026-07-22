@@ -18,7 +18,7 @@ from evidence_content_binding import (
     validate_component_binding,
     validate_content_binding,
 )
-from github_evidence_common import EvidenceError
+from github_evidence_common import EvidenceError, trusted_ci_coverage
 from pr_review_contract import evaluate_review_contract_with_items
 from review_result_semantics import evaluate_review_evidence
 from rejection_items import (
@@ -94,8 +94,24 @@ def _reusable_components(evidence: dict[str, Any]) -> list[tuple[str, dict[str, 
     return components
 
 
+def _configured_ci_coverage(
+    config: PackConfig | None, check_name: Any,
+) -> tuple[str, ...]:
+    if config is None:
+        raise EvidenceError("repo-owned CI coverage configuration is unavailable")
+    if not _non_empty_string(check_name):
+        raise EvidenceError("check name must be a non-empty string")
+    coverage = trusted_ci_coverage(config, check_name)
+    if coverage is None:
+        raise EvidenceError(
+            f"check {check_name.strip()!r} has no valid trusted CI coverage mapping"
+        )
+    return coverage
+
+
 def _content_binding_items(
     evidence: dict[str, Any],
+    config: PackConfig | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     """Validate v1 components and their complete previous-head reuse audit."""
 
@@ -167,14 +183,29 @@ def _content_binding_items(
         except EvidenceError as exc:
             reasons.append(f"{kind} content binding is invalid: {exc}")
             continue
+        if kind == "CI check":
+            try:
+                trusted_coverage = _configured_ci_coverage(
+                    config, component.get("name")
+                )
+            except EvidenceError as exc:
+                reasons.append(f"v1 CI check trusted coverage is invalid: {exc}")
+                continue
+            check_name = str(component.get("name") or "")
+            if covered != trusted_coverage:
+                reasons.append(
+                    f"v1 CI check {check_name!r} trusted CI coverage must equal "
+                    f"{list(trusted_coverage)}"
+                )
+                continue
         if not matches:
             reasons.append(f"{kind} covered content bindings do not match current snapshot")
             continue
-        if component_head is None or component_head == evidence.get("head_sha"):
-            satisfied.append(f"current-head {kind} content bindings validated")
-            continue
         if not _non_empty_string(component_head):
-            reasons.append(f"reused {kind} head_sha must be non-empty")
+            reasons.append(f"v1 {kind} head_sha must be non-empty")
+            continue
+        if component_head == evidence.get("head_sha"):
+            satisfied.append(f"current-head {kind} content bindings validated")
             continue
         if not _non_empty_string(component_id):
             reasons.append(f"reused {kind} artifact_id must be non-empty")
@@ -500,7 +531,6 @@ def evaluate_pr_gate(
         _check_items,
         _issue_reference_items,
         _merge_record_items,
-        _content_binding_items,
     ]:
         checker_satisfied, checker_missing, checker_reasons = checker(evidence)
         satisfied.extend(checker_satisfied)
@@ -514,6 +544,18 @@ def evaluate_pr_gate(
                 reason_category="invalid_evidence_value",
             )
         )
+    binding_satisfied, binding_missing, binding_reasons = _content_binding_items(
+        evidence, config
+    )
+    satisfied.extend(binding_satisfied)
+    missing.extend(binding_missing)
+    reasons.extend(binding_reasons)
+    items.extend(items_from_legacy(
+        binding_missing,
+        binding_reasons,
+        missing_category="missing_evidence_field",
+        reason_category="invalid_evidence_value",
+    ))
 
     review_satisfied, review_missing, review_reasons, review_items = (
         evaluate_review_contract_with_items(

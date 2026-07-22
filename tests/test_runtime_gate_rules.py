@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from shutil import copyfile
 
+import pytest
+
 from runtime_ledger_test_support import ROOT, clean_checkpoint
 from runtime_ledger_gate import evaluate_checkpoint
 from evidence_content_binding import build_content_binding_evidence
@@ -104,12 +106,104 @@ def _v1_checkpoint(tmp_path: Path) -> dict[str, object]:
     return checkpoint
 
 
+def _use_current_head_legacy_review(checkpoint: dict[str, object]) -> None:
+    item = checkpoint["items"][0]  # type: ignore[index]
+    artifact_path = Path(item["review"]["evidence"])  # type: ignore[index]
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    for key in [
+        "content_binding_version",
+        "covered_categories",
+        "content_bindings",
+        "content_binding_evidence",
+    ]:
+        artifact.pop(key)
+    artifact["head_sha"] = CURRENT_HEAD
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    item["review"]["head_sha"] = CURRENT_HEAD  # type: ignore[index]
+
+
 def test_runtime_allows_previous_head_component_with_matching_v1_bindings(
     tmp_path: Path,
 ) -> None:
     result = evaluate_checkpoint(_v1_checkpoint(tmp_path), repo=tmp_path)
 
     assert result["decision"] in {"allowed", "warn"}, result["errors"]
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "content_binding_version",
+        "snapshot",
+        "content_hashes",
+        "reused_components",
+        "all",
+    ],
+)
+def test_runtime_requires_item_to_copy_every_loaded_pr_gate_binding_field(
+    tmp_path: Path,
+    missing: str,
+) -> None:
+    checkpoint = _v1_checkpoint(tmp_path)
+    _use_current_head_legacy_review(checkpoint)
+    item = checkpoint["items"][0]  # type: ignore[index]
+    binding_keys = [
+        "content_binding_version",
+        "snapshot",
+        "content_hashes",
+        "reused_components",
+    ]
+    omitted = binding_keys if missing == "all" else [missing]
+    for key in omitted:
+        item.pop(key)  # type: ignore[union-attr]
+
+    result = evaluate_checkpoint(checkpoint, repo=tmp_path)
+
+    assert result["decision"] == "blocked"
+    for key in omitted:
+        assert any(
+            f"must copy current pr_gate {key} exactly" in error
+            for error in result["errors"]
+        )
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        "content_binding_version",
+        "snapshot",
+        "content_hashes",
+        "reused_components",
+    ],
+)
+def test_runtime_requires_exact_loaded_pr_gate_binding_values(
+    tmp_path: Path,
+    changed: str,
+) -> None:
+    checkpoint = _v1_checkpoint(tmp_path)
+    item = checkpoint["items"][0]  # type: ignore[index]
+    if changed == "content_binding_version":
+        item[changed] = 2  # type: ignore[index]
+    elif changed == "snapshot":
+        item[changed] = {  # type: ignore[index]
+            **item[changed],  # type: ignore[index]
+            "collector": "caller_supplied",
+        }
+    elif changed == "content_hashes":
+        item[changed] = {  # type: ignore[index]
+            **item[changed],  # type: ignore[index]
+            "pr_metadata": "f" * 64,
+        }
+    else:
+        item[changed][0]["reason"] = "different runtime claim"  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint, repo=tmp_path)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        f"must copy current pr_gate {changed} exactly" in error
+        for error in result["errors"]
+    )
 
 
 def test_runtime_v1_review_sidecar_requires_repository_root(tmp_path: Path) -> None:
@@ -205,6 +299,7 @@ def test_runtime_legacy_item_keeps_extension_compatibility() -> None:
 
     result = evaluate_checkpoint(checkpoint)
 
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]
     assert not any("unknown v1 content-binding field" in error for error in result["errors"])
 
 

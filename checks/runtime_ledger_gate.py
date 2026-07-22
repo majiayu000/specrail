@@ -217,11 +217,15 @@ def _validate_pr_gate_artifact(
     binding_keys = [
         "content_binding_version", "snapshot", "content_hashes", "reused_components"
     ]
-    if any(key in raw_item for key in binding_keys):
+    result_has_binding = (
+        result.get("content_binding_version") == 1
+        or any(result.get(key) is not None for key in binding_keys[1:])
+    )
+    if result_has_binding or any(key in raw_item for key in binding_keys):
         for key in binding_keys:
-            if raw_item.get(key) != result.get(key):
+            if key not in raw_item or raw_item.get(key) != result.get(key):
                 errors.append(
-                    f"{label}: current pr_gate {key} must match runtime item {key}"
+                    f"{label}: runtime item must copy current pr_gate {key} exactly"
                 )
     if raw_item.get("enforcement_sensitive") is True and result.get(
         "enforcement_sensitive"

@@ -245,6 +245,7 @@ def normalize_checks(
     value: Any,
     content_binding: dict[str, Any] | None = None,
     head_sha: str | None = None,
+    config: PackConfig | None = None,
 ) -> list[dict[str, Any]]:
     hashes = None
     if content_binding is not None:
@@ -268,7 +269,7 @@ def normalize_checks(
         url = item.get("detailsUrl") or item.get("targetUrl")
         if isinstance(url, str) and url.strip():
             check["url"] = url.strip()
-        coverage = trusted_ci_coverage(name)
+        coverage = trusted_ci_coverage(config, name) if hashes is not None else None
         if hashes is not None and coverage is not None:
             if not isinstance(head_sha, str) or not head_sha.strip():
                 raise EvidenceError("v1 CI check requires the current head SHA")
@@ -348,10 +349,11 @@ def build_evidence(
         "linked_issue": linked_issue,
         "checks": merge_reusable_ci_checks(
             normalize_checks(
-                pr_payload.get("statusCheckRollup"), content_binding, head_sha
+                pr_payload.get("statusCheckRollup"), content_binding, head_sha, config
             ),
             reusable_ci_evidence,
             content_binding,
+            config,
         ),
         "reviews": normalize_reviews(pr_payload.get("reviews")),
         "review_threads": normalize_review_threads(threads_payload, resolver_roles),
@@ -505,6 +507,10 @@ def collect_evidence(
     binding_enabled = content_binding_v1
     if binding_enabled and repo is None:
         raise EvidenceError("--content-binding-v1 requires a repository checkout")
+    if binding_enabled and config is None:
+        raise EvidenceError(
+            "--content-binding-v1 requires repo-owned workflow configuration"
+        )
     if binding_enabled and not _checkout_is_exact_head(repo, head_sha_before):
         raise EvidenceError("content binding requires an exact-head repository checkout")
     if reusable_ci_evidence is not None and not binding_enabled:
@@ -623,7 +629,7 @@ def collect_evidence(
         if file_snapshot_after is None:
             raise EvidenceError("content binding requires a complete PR file snapshot")
         content_binding = _collect_content_binding(
-            repo, pr_payload_after, file_snapshot_after, issue_reference
+            repo, pr_payload_after, file_snapshot_after, issue_reference, config
         )
 
     review_evidence = None

@@ -77,6 +77,7 @@ def v1_reuse_evidence(
     })
     check = evidence["checks"][0]
     check.update({
+        "name": "workflow-check",
         "artifact_id": "ci-current",
         "head_sha": current_head,
         "content_binding_version": 1,
@@ -228,6 +229,50 @@ def test_pr_gate_allows_sensitive_previous_head_review_sidecar(tmp_path: Path) -
     assert result["decision"] == "allowed", result["reasons"]
     assert result["enforcement_sensitive"] is True
     assert "terminal review evidence has no blocking findings" in result["satisfied"]
+
+
+def test_pr_gate_blocks_forged_trusted_ci_coverage_reduction(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    check = evidence["checks"][0]
+    check["covered_categories"] = ["code_inputs"]
+    check["content_bindings"] = {
+        "code_inputs": evidence["content_hashes"]["code_inputs"],
+    }
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "trusted CI coverage" in reason and "workflow-check" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_pr_gate_blocks_v1_ci_check_without_repo_owned_mapping(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    evidence["checks"][0]["name"] = "untrusted-check"
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "no valid trusted CI coverage mapping" in reason
+        and "untrusted-check" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_pr_gate_blocks_v1_current_component_without_head_sha(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    del evidence["checks"][0]["head_sha"]
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "v1 CI check head_sha must be non-empty" in reason
+        for reason in result["reasons"]
+    )
 
 
 def test_pr_gate_blocks_prior_review_when_spec_binding_changes(tmp_path: Path) -> None:

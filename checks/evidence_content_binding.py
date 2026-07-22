@@ -10,13 +10,16 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from github_evidence_common import EvidenceError, trusted_ci_coverage
+from github_evidence_common import (
+    CONTENT_CATEGORIES,
+    EvidenceError,
+    trusted_ci_coverage,
+)
 from schema_validation import validate_instance
-from specrail_lib import SpecRailError, resolve_repo_path
+from specrail_lib import PackConfig, SpecRailError, resolve_repo_path, spec_packet_root
 
 
 CONTENT_BINDING_VERSION = 1
-CONTENT_CATEGORIES = ("code_inputs", "spec_files", "pr_metadata")
 CONTENT_BINDING_EVIDENCE_VERSION = 1
 HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 OID_PATTERN = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
@@ -348,9 +351,13 @@ def checkout_is_exact_head(repo: Path, head_sha: str) -> bool:
     return git_oid(repo, "HEAD", "checkout head") == head_sha
 
 
-def _collect_spec_files(repo: Path, head_sha: str) -> dict[str, bytes]:
+def _collect_spec_files(
+    repo: Path, head_sha: str, config: PackConfig,
+) -> dict[str, bytes]:
+    configured_root = spec_packet_root(config)
+    tree_root = configured_root.as_posix()
     raw_paths = _git_bytes(
-        repo, ["ls-tree", "-r", "-z", "--name-only", head_sha, "--", "specs"],
+        repo, ["ls-tree", "-r", "-z", "--name-only", head_sha, "--", tree_root],
         "spec file list",
     )
     files: dict[str, bytes] = {}
@@ -361,7 +368,12 @@ def _collect_spec_files(repo: Path, head_sha: str) -> dict[str, bytes]:
             path = raw_path.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise EvidenceError("spec file path must be valid UTF-8") from exc
-        if re.fullmatch(r"specs/GH[1-9][0-9]*/.+", path):
+        candidate = PurePosixPath(path)
+        try:
+            relative = candidate.relative_to(configured_root)
+        except ValueError:
+            continue
+        if len(relative.parts) >= 2 and re.fullmatch(r"GH[1-9][0-9]*", relative.parts[0]):
             files[path] = _git_bytes(
                 repo, ["show", f"{head_sha}:{path}"], f"spec file {path}",
             )
@@ -373,6 +385,7 @@ def collect_content_binding(
     pr_payload: dict[str, Any],
     pr_snapshot: dict[str, Any],
     issue_reference: dict[str, Any] | None,
+    config: PackConfig,
 ) -> dict[str, Any]:
     head_sha = _nonempty_string(pr_payload.get("headRefOid"), "headRefOid")
     if not checkout_is_exact_head(repo, head_sha):
@@ -384,7 +397,7 @@ def collect_content_binding(
         [
             "diff", "--binary", "--full-index", "--no-color", "--no-ext-diff",
             "--no-textconv", "--no-renames", base_sha, head_sha, "--", ".",
-            ":(exclude)specs/GH*/**",
+            f":(exclude){spec_packet_root(config).as_posix().rstrip('/')}/GH*/**",
         ],
         "normalized code patch",
     )
@@ -402,7 +415,11 @@ def collect_content_binding(
         "issue_relation": issue_reference,
     }
     return build_content_binding(
-        head_sha, base_tree_oid, code_patch, _collect_spec_files(repo, head_sha), metadata
+        head_sha,
+        base_tree_oid,
+        code_patch,
+        _collect_spec_files(repo, head_sha, config),
+        metadata,
     )
 
 
@@ -434,6 +451,7 @@ def merge_reusable_ci_checks(
     current_checks: list[dict[str, Any]],
     prior_evidence: dict[str, Any] | None,
     current_binding: dict[str, Any] | None,
+    config: PackConfig | None,
 ) -> list[dict[str, Any]]:
     if prior_evidence is None:
         return current_checks
@@ -452,13 +470,13 @@ def merge_reusable_ci_checks(
         if not isinstance(component, dict):
             raise EvidenceError("reused PR evidence check must be an object")
         name = component.get("name")
-        coverage = trusted_ci_coverage(name) if isinstance(name, str) else None
+        coverage = trusted_ci_coverage(config, name) if isinstance(name, str) else None
         if coverage is None:
             continue
         current_index = indexes.get(name)
         if current_index is not None:
             live = merged[current_index]
-            if live.get("status") == "COMPLETED" and live.get("conclusion") == "SUCCESS":
+            if live.get("status") == "COMPLETED":
                 continue
         covered, _ = validate_component_binding(component)
         if covered != coverage:
