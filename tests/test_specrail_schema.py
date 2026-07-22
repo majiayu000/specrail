@@ -415,6 +415,77 @@ def test_review_result_schema_rejects_legacy_source_only_artifact() -> None:
         validate_instance(review_result_schema(), legacy)
 
 
+def bounded_review_result() -> dict[str, object]:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review.update(
+        {
+            "round_policy_version": 1,
+            "review_round": 2,
+            "review_mode": "resumed",
+            "base_head_sha": "b" * 40,
+            "diff_sha256": "d" * 64,
+            "prior_findings": [
+                {
+                    "finding_id": "F-1",
+                    "source_artifact_id": "round-1",
+                    "status": "resolved",
+                    "evidence_pointer": {"kind": "thread", "value": "PRRT_167"},
+                }
+            ],
+        }
+    )
+    return review
+
+
+def test_review_result_schema_accepts_bounded_compact_finding() -> None:
+    validate_instance(review_result_schema(), bounded_review_result())
+
+
+@pytest.mark.parametrize(
+    ("pointer", "expected"),
+    [
+        ({"kind": "thread", "value": "fixed it"}, "anyOf"),
+        ({"kind": "comment", "value": "PRRT_wrong-kind"}, "anyOf"),
+        ({"kind": "commit", "value": "short"}, "anyOf"),
+        ({"kind": "unknown", "value": "PRRC_1"}, "anyOf"),
+    ],
+)
+def test_review_result_schema_rejects_untyped_compact_pointer(
+    pointer: dict[str, str], expected: str
+) -> None:
+    review = bounded_review_result()
+    review["prior_findings"][0]["evidence_pointer"] = pointer
+    with pytest.raises(InstanceMismatch, match=expected):
+        validate_instance(review_result_schema(), review)
+
+
+def test_review_result_schema_rejects_bounded_history_prose() -> None:
+    review = bounded_review_result()
+    review["prior_findings"][0]["summary"] = "forbidden history replay"
+    with pytest.raises(InstanceMismatch, match="additional property"):
+        validate_instance(review_result_schema(), review)
+
+
+@pytest.mark.parametrize("missing", ["base_head_sha", "diff_sha256"])
+def test_review_result_schema_requires_bounded_scoped_provenance(missing: str) -> None:
+    review = bounded_review_result()
+    review.pop(missing)
+    with pytest.raises(InstanceMismatch, match=rf"{missing}.*missing required field"):
+        validate_instance(review_result_schema(), review)
+
+
+def test_review_result_schema_rejects_bounded_round_two_full() -> None:
+    review = bounded_review_result()
+    review["review_mode"] = "full"
+    review["human_full_review_request"] = "does not expand bounded policy"
+    with pytest.raises(InstanceMismatch, match="review_mode.*enum"):
+        validate_instance(review_result_schema(), review)
+
+
 def test_runtime_checkpoint_inline_valid_instance_matches_schema() -> None:
     validate_instance(runtime_checkpoint_schema(), valid_checkpoint())
 

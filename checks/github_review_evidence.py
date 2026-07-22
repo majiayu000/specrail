@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from datetime import datetime
 from typing import Any
 
 from github_evidence_common import EvidenceError
@@ -10,6 +12,20 @@ from github_evidence_common import EvidenceError
 
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
 THREAD_ROLE_PREFIX = "thread:"
+ROUND_CAP_DECISION = "continue_once"
+ROUND_CAP_FIELDS = {
+    "authorization_id",
+    "pr",
+    "prior_head_sha",
+    "target_head_sha",
+    "review_round",
+    "decision",
+    "actor",
+    "source",
+    "authorized_at",
+}
+SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+AUTHORIZATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 def _read_json_file(path: str, field: str) -> Any:
@@ -176,6 +192,177 @@ def load_resolver_role_map(path: str | None) -> dict[str, dict[str, Any]]:
     if path is None:
         return {}
     return _resolver_role_map(_read_json_file(path, "resolver role map"))
+
+
+def load_maintainer_role_map(path: str | None) -> dict[str, dict[str, Any]]:
+    """Load the explicit human-maintainer map used only for round-cap decisions."""
+
+    if path is None:
+        return {}
+    payload = _require_mapping(
+        _read_json_file(path, "maintainer role map"),
+        "maintainer role map",
+    )
+    if set(payload) != {"maintainer_roles"}:
+        raise EvidenceError(
+            "maintainer role map must contain only maintainer_roles"
+        )
+    raw_roles = _require_mapping(
+        payload.get("maintainer_roles"),
+        "maintainer role map.maintainer_roles",
+    )
+    roles: dict[str, dict[str, Any]] = {}
+    for actor, raw_entry in raw_roles.items():
+        if not isinstance(actor, str) or not actor.strip():
+            raise EvidenceError("maintainer role map actor must be a non-empty string")
+        entry = _require_mapping(
+            raw_entry,
+            f"maintainer role map.maintainer_roles.{actor}",
+        )
+        if set(entry) != {"role", "authorized_human_maintainer"}:
+            raise EvidenceError(
+                f"maintainer role map.maintainer_roles.{actor} must contain only "
+                "role and authorized_human_maintainer"
+            )
+        if entry.get("role") != "maintainer":
+            raise EvidenceError(
+                f"maintainer role map.maintainer_roles.{actor}.role must be maintainer"
+            )
+        if entry.get("authorized_human_maintainer") is not True:
+            raise EvidenceError(
+                f"maintainer role map.maintainer_roles.{actor}."
+                "authorized_human_maintainer must be true"
+            )
+        normalized_actor = actor.strip()
+        if normalized_actor in roles:
+            raise EvidenceError("maintainer role map actors must be unique")
+        roles[normalized_actor] = {
+            "role": "maintainer",
+            "authorized_human_maintainer": True,
+        }
+    return roles
+
+
+def _round_cap_string(payload: dict[str, Any], field: str, index: int) -> str:
+    value = payload.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise EvidenceError(
+            f"round cap authorization #{index}.{field} must be a non-empty string"
+        )
+    return value.strip()
+
+
+def _normalize_round_cap_authorization(
+    payload: Any,
+    index: int,
+    maintainer_roles: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    item = _require_mapping(payload, f"round cap authorization #{index}")
+    unknown = sorted(set(item) - ROUND_CAP_FIELDS)
+    missing = sorted(ROUND_CAP_FIELDS - set(item))
+    if unknown:
+        raise EvidenceError(
+            f"round cap authorization #{index} contains unsupported fields: "
+            + ", ".join(unknown)
+        )
+    if missing:
+        raise EvidenceError(
+            f"round cap authorization #{index} is missing fields: "
+            + ", ".join(missing)
+        )
+
+    authorization_id = _round_cap_string(item, "authorization_id", index)
+    if AUTHORIZATION_ID_PATTERN.fullmatch(authorization_id) is None:
+        raise EvidenceError(
+            f"round cap authorization #{index}.authorization_id has invalid format"
+        )
+    pr = item.get("pr")
+    if not isinstance(pr, int) or isinstance(pr, bool) or pr <= 0:
+        raise EvidenceError(
+            f"round cap authorization #{index}.pr must be a positive integer"
+        )
+    review_round = item.get("review_round")
+    if (
+        not isinstance(review_round, int)
+        or isinstance(review_round, bool)
+        or review_round <= 3
+    ):
+        raise EvidenceError(
+            f"round cap authorization #{index}.review_round must be greater than 3"
+        )
+    prior_head_sha = _round_cap_string(item, "prior_head_sha", index)
+    target_head_sha = _round_cap_string(item, "target_head_sha", index)
+    for field, value in [
+        ("prior_head_sha", prior_head_sha),
+        ("target_head_sha", target_head_sha),
+    ]:
+        if SHA_PATTERN.fullmatch(value) is None:
+            raise EvidenceError(
+                f"round cap authorization #{index}.{field} must be a 40-character Git SHA"
+            )
+    if prior_head_sha.lower() == target_head_sha.lower():
+        raise EvidenceError(
+            f"round cap authorization #{index} must bind distinct prior and target heads"
+        )
+    if item.get("decision") != ROUND_CAP_DECISION:
+        raise EvidenceError(
+            f"round cap authorization #{index}.decision must be {ROUND_CAP_DECISION}"
+        )
+    actor = _round_cap_string(item, "actor", index)
+    source = _round_cap_string(item, "source", index)
+    authorized_at = _round_cap_string(item, "authorized_at", index)
+    try:
+        parsed_at = datetime.fromisoformat(authorized_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise EvidenceError(
+            f"round cap authorization #{index}.authorized_at must be ISO-8601"
+        ) from exc
+    if parsed_at.tzinfo is None:
+        raise EvidenceError(
+            f"round cap authorization #{index}.authorized_at must include a timezone"
+        )
+    role = maintainer_roles.get(actor)
+    if not isinstance(role, dict) or (
+        role.get("role") != "maintainer"
+        or role.get("authorized_human_maintainer") is not True
+    ):
+        raise EvidenceError(
+            f"round cap authorization #{index}.actor is not an explicitly authorized maintainer"
+        )
+    return {
+        "authorization_id": authorization_id,
+        "pr": pr,
+        "prior_head_sha": prior_head_sha.lower(),
+        "target_head_sha": target_head_sha.lower(),
+        "review_round": review_round,
+        "decision": ROUND_CAP_DECISION,
+        "actor": actor,
+        "source": source,
+        "authorized_at": authorized_at,
+        "authorized_human_maintainer": True,
+    }
+
+
+def load_round_cap_authorizations(
+    paths: list[str] | None,
+    maintainer_roles: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, path in enumerate(paths or [], start=1):
+        item = _normalize_round_cap_authorization(
+            _read_json_file(path, f"round cap authorization #{index}"),
+            index,
+            maintainer_roles,
+        )
+        authorization_id = item["authorization_id"]
+        if authorization_id in seen_ids:
+            raise EvidenceError(
+                f"round cap authorization id is duplicated: {authorization_id}"
+            )
+        seen_ids.add(authorization_id)
+        normalized.append(item)
+    return normalized
 
 
 def normalize_review_threads(

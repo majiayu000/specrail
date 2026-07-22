@@ -22,6 +22,8 @@ from github_pr_evidence import (  # noqa: E402
     build_evidence,
     build_human_authorization,
     collect_evidence,
+    load_maintainer_role_map,
+    load_round_cap_authorizations,
     load_resolver_role_map,
     normalize_issue_reference,
     normalize_review_threads,
@@ -29,6 +31,7 @@ from github_pr_evidence import (  # noqa: E402
     references_partial_issue,
 )
 from pr_gate import evaluate_pr_gate  # noqa: E402
+from schema_validation import SpecRailError, validate_instance  # noqa: E402
 from specrail_lib import PackConfig, load_pack  # noqa: E402
 
 
@@ -559,3 +562,206 @@ def test_authorization_flags_must_include_actor_and_source() -> None:
 
     with pytest.raises(EvidenceError):
         build_human_authorization(None, None, "approved")
+
+
+def _round_cap_authorization() -> dict[str, object]:
+    return {
+        "authorization_id": "RCA-10-4",
+        "pr": 10,
+        "prior_head_sha": "a" * 40,
+        "target_head_sha": "b" * 40,
+        "review_round": 4,
+        "decision": "continue_once",
+        "actor": "maintainer",
+        "source": "maintainer decision in issue #10",
+        "authorized_at": "2026-07-23T12:00:00+08:00",
+    }
+
+
+def _write_round_cap_files(
+    tmp_path: Path,
+    authorization: dict[str, object] | None = None,
+    role_entry: dict[str, object] | None = None,
+) -> tuple[Path, Path]:
+    authorization_path = tmp_path / "round-cap-authorization.json"
+    authorization_path.write_text(
+        json.dumps(authorization or _round_cap_authorization()),
+        encoding="utf-8",
+    )
+    role_map_path = tmp_path / "maintainer-role-map.json"
+    role_map_path.write_text(
+        json.dumps(
+            {
+                "maintainer_roles": {
+                    "maintainer": role_entry
+                    or {
+                        "role": "maintainer",
+                        "authorized_human_maintainer": True,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return authorization_path, role_map_path
+
+
+def test_round_cap_authorization_requires_explicit_maintainer_role_map(
+    tmp_path: Path,
+) -> None:
+    authorization_path, role_map_path = _write_round_cap_files(tmp_path)
+
+    normalized = load_round_cap_authorizations(
+        [str(authorization_path)],
+        load_maintainer_role_map(str(role_map_path)),
+    )
+
+    assert normalized == [
+        {
+            **_round_cap_authorization(),
+            "authorized_human_maintainer": True,
+        }
+    ]
+    evidence = build_evidence(
+        pr_payload(),
+        threads_payload(),
+        review_source="independent_lane",
+        review_evidence=clean_review_evidence(),
+        resolver_roles=reviewer_resolver_roles(),
+        round_cap_authorizations=normalized,
+    )
+    assert evidence["round_cap_authorizations"] == normalized
+    with pytest.raises(EvidenceError, match="explicitly authorized maintainer"):
+        load_round_cap_authorizations([str(authorization_path)], {})
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ({"decision": "merge"}, "continue_once"),
+        ({"review_round": 3}, "greater than 3"),
+        ({"pr": True}, "positive integer"),
+        ({"prior_head_sha": "not-a-sha"}, "40-character Git SHA"),
+        ({"target_head_sha": "a" * 40}, "distinct prior and target"),
+        ({"authorized_at": "2026-07-23T12:00:00"}, "include a timezone"),
+        ({"authorized_human_maintainer": True}, "unsupported fields"),
+    ],
+)
+def test_round_cap_authorization_rejects_non_exact_input(
+    tmp_path: Path,
+    mutation: dict[str, object],
+    message: str,
+) -> None:
+    payload = _round_cap_authorization()
+    payload.update(mutation)
+    authorization_path, role_map_path = _write_round_cap_files(
+        tmp_path,
+        authorization=payload,
+    )
+
+    with pytest.raises(EvidenceError, match=message):
+        load_round_cap_authorizations(
+            [str(authorization_path)],
+            load_maintainer_role_map(str(role_map_path)),
+        )
+
+
+def test_round_cap_authorization_role_map_is_closed(
+    tmp_path: Path,
+) -> None:
+    authorization_path, role_map_path = _write_round_cap_files(
+        tmp_path,
+        role_entry={
+            "role": "maintainer",
+            "authorized_human_maintainer": True,
+            "inferred_from_github": True,
+        },
+    )
+
+    with pytest.raises(EvidenceError, match="must contain only"):
+        load_maintainer_role_map(str(role_map_path))
+
+    role_map_path.write_text(
+        json.dumps(
+            {
+                "maintainer_roles": {
+                    "maintainer": {
+                        "role": "reviewer_lane",
+                        "authorized_human_maintainer": True,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(EvidenceError, match="role must be maintainer"):
+        load_round_cap_authorizations(
+            [str(authorization_path)],
+            load_maintainer_role_map(str(role_map_path)),
+        )
+
+
+def test_round_cap_authorization_ids_are_unique(tmp_path: Path) -> None:
+    authorization_path, role_map_path = _write_round_cap_files(tmp_path)
+
+    with pytest.raises(EvidenceError, match="duplicated"):
+        load_round_cap_authorizations(
+            [str(authorization_path), str(authorization_path)],
+            load_maintainer_role_map(str(role_map_path)),
+        )
+
+
+def test_merge_authorization_does_not_create_round_cap_authorization() -> None:
+    evidence = build_evidence(
+        pr_payload(),
+        threads_payload(),
+        {"actor": "maintainer", "source": "implx auto"},
+        review_source="independent_lane",
+        review_evidence=clean_review_evidence(),
+        resolver_roles=reviewer_resolver_roles(),
+    )
+
+    assert "human_authorization" in evidence
+    assert "round_cap_authorizations" not in evidence
+
+
+def test_pr_gate_schema_closes_round_audit_and_cap_authorizations() -> None:
+    schema = json.loads(
+        (ROOT / "schemas" / "pr_review_gate.schema.json").read_text(encoding="utf-8")
+    )
+    authorization_schema = schema["properties"]["round_cap_authorizations"]
+    normalized_authorization = {
+        **_round_cap_authorization(),
+        "authorized_human_maintainer": True,
+    }
+    validate_instance(authorization_schema, [normalized_authorization])
+    unknown_authorization = {
+        **normalized_authorization,
+        "scope_alias": "future rounds",
+    }
+    with pytest.raises(SpecRailError, match="scope_alias"):
+        validate_instance(authorization_schema, [unknown_authorization])
+
+    round_audit_schema = schema["properties"]["review_evidence"]["properties"][
+        "round_audit"
+    ]
+    round_audit = {
+        "policy": "bounded_diff_v1",
+        "cap": 3,
+        "total_rounds": 1,
+        "rounds": [
+            {
+                "artifact_id": "pr10-round-1",
+                "review_round": 1,
+                "review_mode": "full",
+                "base_head_sha": None,
+                "head_sha": "a" * 40,
+                "diff_sha256": None,
+                "escalation_authorization_id": None,
+            }
+        ],
+    }
+    validate_instance(round_audit_schema, round_audit)
+    round_audit["rounds"][0]["caller_claimed_round"] = 99
+    with pytest.raises(SpecRailError, match="caller_claimed_round"):
+        validate_instance(round_audit_schema, round_audit)

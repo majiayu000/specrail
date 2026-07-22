@@ -271,13 +271,10 @@ Rules:
 
 ## Orchestration
 
-Use `integrations/threads.md` and an available threads skill when the queue needs
-parallel lanes, disjoint writable ownership, review-thread checks, CI polling,
-merge gates, or closure audit.
-
-For GitHub issue or PR queues, merge gates, reviewer lanes, and closure audit,
-native thread dispatch is required whenever native subagent capability is
-available. Before implementation, review, push, comment, or merge work, record:
+Use `integrations/threads.md` and an available threads skill for parallel lanes,
+disjoint ownership, review/CI/merge gates, or closure audit. For GitHub queues,
+native dispatch is required when available. Before implementation, review,
+push, comment, or merge, record:
 
 ```yaml
 thread_dispatch_gate:
@@ -291,69 +288,62 @@ thread_dispatch_gate:
   no_spawn_reason:
 ```
 
-If native subagents are available and `spawn_requirement: required`, spawn the
-planned bounded native lanes before claiming threads were used. For PR merge
-work, at least one read-only `reviewer` or `merge_reviewer` lane must be a real
-native thread with recorded `agent_id_or_thread_id`, wait evidence, close
-evidence, and collected output. The coordinator lane is not a reviewer thread.
+When `spawn_requirement: required`, dispatch the planned bounded native lanes.
+PR merge work needs a real read-only `reviewer`/`merge_reviewer` thread with
+`agent_id_or_thread_id`, wait/close evidence, and output; the coordinator is not
+that reviewer.
 
-If threads is unavailable, continue with the normal single-agent SpecRail flow
-only after recording `fallback_mode: single_agent` and the reason; report that
-no native threads were launched.
+If threads is unavailable, record `fallback_mode: single_agent` and its reason,
+use the normal SpecRail flow, and report that no native threads launched.
 
 Keep ownership boundaries explicit:
 
-- planner and reviewer lanes are read-only; when the runtime exposes
-  reasoning-effort control, spawn reviewer, awaiter, and other scoped lanes
-  at low effort — scoped inputs do not need deep reasoning budgets
+- planner/reviewer lanes are read-only and use low effort when configurable
 - worker lanes own disjoint files or modules
 - shared verification belongs to one coordinator
 - dependent specs run serially
-- builds and tests run only inside the lane's own worktree: never run
-  `cargo` (or equivalent) in the primary checkout while other sessions are
-  active, and never two build/test commands concurrently in one worktree —
-  the target-dir lock serializes them and stalls both lanes
+- builds/tests run only in the lane's worktree; never use the primary checkout
+  during other sessions or run two build/test commands in one worktree
 
-## Reviewer Lane Reuse
+## Bounded Review Contract
 
-Reviewer lane input is scoped: the diff (or diff since the previously
-reviewed head), the linked spec packet, and the prior-findings checklist.
-Never forward coordinator conversation history into a reviewer lane. For
-re-review after fixes, resume or message the existing reviewer lane first;
-if the runtime cannot resume, spawn a `diff_only` lane instead of a new
-full-history fork. Full reviews are capped at 2 rounds per PR unless a human
-explicitly requests another full pass (see Review Rounds And Modes in
-`skills/specrail-review-pr/SKILL.md`).
+<!-- specrail-bounded-review-contract-v1:start -->
+Bounded review contract (`manifest.version: 2`,
+`round_policy: {name: "bounded_diff_v1", cap: 3}`):
 
-## Reviewer Lane Failures
+- `rounds[]` is the source of truth. Each entry is the closed set
+  `{artifact_id, review_round, review_mode, base_head_sha, head_sha, diff_sha256, escalation_authorization_id}`;
+  the loader derives continuous rounds `1..N` from the artifact set.
+- Round 1 may use `full`. Every `review_round >= 2` must use `review_mode:
+  resumed | diff_only`, never `full`; `base_head_sha` must equal the previous
+  round's `head_sha`, and the supplied bytes and `diff_sha256` must match the
+  exact `git diff --no-ext-diff --binary <base_head_sha>..<head_sha> --` output.
+- `prior_findings[]` is compact typed carry only:
+  `{finding_id, source_artifact_id, status, evidence_pointer}` with
+  `evidence_pointer.kind: thread | comment | artifact | commit`; do not replay
+  historical finding prose. Carry every still-unresolved historical finding.
+- Before every `review_round >= 4`, stop. Continue exactly once only with an
+  external, role-mapped maintainer authorization whose `decision` is
+  `continue_once` and whose id, PR, prior/target heads, and round match exactly.
+- The over-cap `round_cap_escalation.unresolved_findings[]` must equal the full
+  union of historical unresolved findings and current critical, important, or
+  otherwise actionable findings; no finding may disappear or be invented.
+- `auth_mode: auto` merge authorization and `human_full_review_request` do not
+  authorize an over-cap review round and cannot replace that exact cap evidence.
+<!-- specrail-bounded-review-contract-v1:end -->
 
-A reviewer or merge-reviewer lane failure is a gate event, not an implementation
-detail to hide. Failures include usage limits, crashes, zero output, or a lane
-closed before it produced a complete review verdict.
+## Reviewer Lane Execution
 
-Lane waits are bounded. After spawning a lane, allow at most one bounded wait
-plus one explicit stop-and-return request. A lane that still returns nothing is
-failed immediately as `failure_kind: zero_output` and enters the recovery path
-below (a different independent lane, retried once). Do not issue further waits
-against the same hung lane.
-
-When a reviewer lane fails:
-
-- record `lane_failures[]` with lane id, failure kind, and observed marker
-- downgrade the affected item to `blocked` or `needs_human` with
-  `blocked_reason: reviewer_lane_failure`
-- report the failure in the handoff/checkpoint before any merge decision
-- recover only by launching a different independent reviewer lane, or by getting
-  fresh explicit self-review authorization after reporting the failure
-
-If recovery uses a new independent reviewer lane, record
-`review_source: independent_lane`, `review_execution: local`, and keep the lane
-failure history in evidence.
-If recovery uses self-review, record `review_source: self_review` and
-`review_execution: local`, plus `self_review_authorization` with actor, source,
-and scope from the current conversation after the failure was reported. Prior
-queue-drain or generic merge authorization does not cover a later self-review
-substitution unless it explicitly scoped that failure path.
+Give the reviewer only the exact diff, linked spec packet, and compact carry, never
+coordinator history. Resume/message it first; otherwise dispatch the next bounded
+`diff_only` lane. One bounded wait plus one stop request precedes `zero_output`.
+Record every usage-limit, crash, zero-output, or early-close in `lane_failures[]`
+with lane id, kind, optional `other` detail, and marker; report and downgrade to
+`blocked`/`needs_human` with `blocked_reason: reviewer_lane_failure`. Recover via
+a different local lane or authorized local `self_review` recording actor, source,
+quoted scope, and marker; generic authorization cannot substitute.
+Only two distinct recorded lane failures let `implx auto` authorize scoped
+self-review; one requires retry, review mode has no exception, and gates enforce it.
 
 ## Context Budget
 
@@ -630,79 +620,29 @@ For each issue slice:
 
 ## Review And Verification
 
-Before a PR is considered ready:
-
-- run focused tests for touched behavior
-- run repository deterministic checks
-- run `python3 checks/check_workflow.py --repo .`
-- run `python3 checks/check_workflow.py --repo . --spec-dir specs/GH<issue>`
-  when the spec packet changed
-- use `skills/specrail-check-impl-against-spec/SKILL.md` to compare the PR or
-  diff to the linked specs
-- use `skills/specrail-pr-gate/SKILL.md` before reporting merge readiness
+Before readiness, run focused tests, repository deterministic checks, and
+`python3 checks/check_workflow.py --repo .`; when specs changed also use
+`--spec-dir specs/GH<issue>`. Compare the diff with the linked specs via
+`skills/specrail-check-impl-against-spec/SKILL.md`, then use
+`skills/specrail-pr-gate/SKILL.md` before reporting merge readiness.
 
 For GitHub PRs, current evidence must include:
 
-- PR head SHA
-- CI/check rollup
-- review decision when available
-- independent reviewer or merge-reviewer lane evidence
-- native reviewer thread evidence when native subagents are available
-- `review_source` (`independent_lane` or `self_review`)
-- `review_execution: local` for the terminal primary artifact; hosted GitHub
-  review is supplemental only
-- `lane_failures[]`, empty when no reviewer lane failed
-- `self_review_authorization` when `review_source: self_review`
-- GraphQL review-thread state
-- per-thread resolver identity and resolver lane role
-- gate-query completion timestamp and gate-query head SHA from the serial
-  `pr_gate.py` run
-- merge state
-- linked issue or closing reference intent
-- `pr_tier` with its evidence (changed-line count, touched paths) and, when
-  tier authorization is used, `authorization_tier`
-- merge authorization per `auth_mode` (see Merge Authorization)
+- PR head, CI/check rollup, review decision, merge state, and linked issue/closing intent
+- independent reviewer evidence and native reviewer-thread evidence when
+  available; terminal `review_execution: local` (hosted review is supplemental)
+- `review_source`, `lane_failures[]` (empty when none), and required
+  `self_review_authorization`
+- GraphQL threads plus each resolver's identity/lane role
+- serial `pr_gate.py` query timestamp and head SHA
+- `pr_tier`, changed-line/path evidence, optional `authorization_tier`, and
+  merge authorization for the selected `auth_mode`
 
 The runtime checkpoint must not mark a PR item `complete`, `merged`,
 `merge_ready`, or `ready_to_merge` unless `checks/runtime_ledger_gate.py` accepts
 the checkpoint. When the gate is evaluating a merged or merge-ready PR, local
 `pr_gate.evidence` must exist and either be an allowed PR gate result JSON or a
 raw PR evidence JSON that re-evaluates to `allowed`.
-
-### Reviewer-Lane Failure Protocol
-
-A reviewer or merge-reviewer lane that dies before returning a usable result —
-usage limit, crash, zero output, or closed early — is a blocking event, not a
-license to continue:
-
-1. Record the failure on the checkpoint item as `lane_failures[]` with
-   `lane_id`, `failure_kind` (`usage_limit` | `crash` | `zero_output` |
-   `closed` | `other` + `detail`), and the observed marker.
-2. Downgrade the item to `blocked` or `needs_human` with `blocked_reason`
-   (for example `reviewer_lane_failure`) and report it in the handoff, or
-3. Recover by spawning a new independent reviewer lane; the retry lane must be
-   a different lane than the failed one and its review recorded with
-   `review.review_source: independent_lane` and
-   `review.review_execution: local`.
-
-Silent self-review substitution is forbidden. `review.review_source:
-self_review` never satisfies the independent-review requirement on its own;
-merging on self-review requires explicit `self_review_authorization` on the
-item, recording the quoted user scope and a conversation marker.
-
-Auto-mode exception: when `auth_mode: auto` and two distinct independent
-reviewer lanes have failed on the same PR, each recorded in
-`lane_failures[]`, the implx auto invocation itself constitutes the scoped
-self-review authorization. Record `self_review_authorization` as usual
-with `actor: user`, `source: implx auto invocation`, and a `scope` naming
-the PR and the double-lane-failure path. A single lane failure still
-requires the retry lane; this exception never applies in
-`auth_mode: review`. Declare the
-review source when collecting evidence
-(`python3 checks/github_pr_evidence.py ... --review-source independent_lane`);
-`pr_gate.py` blocks evidence without `review_source` and
-`runtime_ledger_gate.py` blocks unauthorized self-review merges and
-unreported lane failures.
 
 ### Merge Authorization
 
@@ -769,28 +709,15 @@ unreported lane failures.
 
 ### Graded Re-confirmation After Authorization (GH-143)
 
-When findings arrive after authorization (standard_auto or human) from bots
-or re-review lanes:
+When bot or re-review findings arrive after standard-auto or human authorization:
 
-- Mechanical findings — every finding has severity ≤ `important`, is
-  mechanical, does not change PR intent, does not expand planned paths, and
-  does not change contract semantics — are fixed within the original
-  authorization, re-reviewed by an independent lane at the post-fix head,
-  merged, and reported item-by-item afterwards. Record each on the
-  checkpoint item as `post_authorization_findings[]`
-  (`finding_ref`, `severity`, `mechanical`, `disposition:
-  fixed_re_reviewed`). No re-authorization question is needed.
-- Critical or scope-expanding findings — any finding that is `critical`, or
-  whose fix expands planned paths, changes contract semantics, or changes PR
-  intent — pause the merge and require fresh human authorization
-  (`re_authorization` with actor/source); the original authorization is void
-  for that PR (`disposition: paused_re_authorized`).
-- Trust source: each finding's `severity`/`mechanical` classification counts
-  only when it matches a reviewer/merge-reviewer lane
-  `finding_classifications[]` record in the review artifact. Implementer-only
-  classification, a missing reviewer record, or a mismatch between the two
-  is treated as `critical` (fail-closed). Undeterminable severity or
-  undeterminable scope impact is treated as critical/expanding.
+- Mechanical findings (all severity <= `important`, no intent/path/contract change)
+  stay authorized: fix, independently re-review the post-fix head, then record
+  `finding_ref`, `severity`, `mechanical`, and `disposition: fixed_re_reviewed`.
+- Any critical or intent/path/contract-expanding fix pauses merge and voids the
+  old authorization until human `re_authorization` (actor/source), recorded as `disposition: paused_re_authorized`.
+- Classification counts only when it matches reviewer/merge-reviewer
+  `finding_classifications[]`; missing/mismatched/implementer-only/indeterminate fails closed as critical/expanding.
 
 ### Safe Merge Path
 
@@ -830,12 +757,8 @@ must never report an outcome without remote confirmation:
   ambiguity always require per-PR human authorization.
 - Do not dispatch review-thread/pr_gate queries and the merge command in the
   same parallel tool batch or parallel lane; the gate query must complete first.
-- Do not let an implementation lane or orchestrator resolve reviewer-lane
-  review threads. If the reviewer lane is unavailable, route through the GH-59
-  reviewer-lane failure path or a human decision.
-- Do not silently replace a failed reviewer lane with coordinator self-review.
-  Self-review can proceed only after the failure is reported and fresh scoped
-  self-review authorization is recorded.
+- Reviewer-lane thread resolution and self-review recovery must follow Reviewer
+  Lane Execution; implementation/coordinator roles cannot resolve those threads.
 - Do not treat green CI as merge readiness without review-thread and merge-state
   truth.
 - Do not close an issue from a partial implementation.
