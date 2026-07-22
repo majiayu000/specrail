@@ -34,6 +34,38 @@ SPEC_ALIGNMENT_STATUSES = {"matched", "drift", "not_applicable"}
 REVIEW_MODES = {"full", "resumed", "diff_only"}
 PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
 FULL_REVIEW_ROUND_CAP = 2
+REVIEW_TOP_LEVEL_KEYS = {
+    "artifact_id",
+    "base_head_sha",
+    "body",
+    "comments",
+    "content_binding_evidence",
+    "content_binding_version",
+    "content_bindings",
+    "covered_categories",
+    "finding_classifications",
+    "findings",
+    "gate_authorization",
+    "gate_status",
+    "head_sha",
+    "human_final_review_required",
+    "human_full_review_request",
+    "pr",
+    "prior_findings",
+    "producer_identity",
+    "review_completed_at",
+    "review_execution",
+    "review_mode",
+    "review_round",
+    "review_source",
+    "review_started_at",
+    "reviewer_lane",
+    "spec_alignment",
+    "status",
+    "tier_attestation",
+    "tier_dispute",
+    "verdict",
+}
 FORBIDDEN_FINAL_AUTHORITY = {
     "approved for merge": re.compile(r"\bapproved\s+for\s+merge\b", re.IGNORECASE),
     "I approve this PR": re.compile(r"\bi\s+approve\s+this\s+pr\b", re.IGNORECASE),
@@ -175,33 +207,7 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
     satisfied: list[str] = []
     missing: list[str] = []
     reasons: list[str] = []
-    allowed_keys = {
-        "verdict",
-        "artifact_id",
-        "reviewer_lane",
-        "producer_identity",
-        "review_source",
-        "review_execution",
-        "review_started_at",
-        "review_completed_at",
-        "status",
-        "human_final_review_required",
-        "findings",
-        "body",
-        "comments",
-        "spec_alignment",
-        "pr",
-        "head_sha",
-        "review_round",
-        "review_mode",
-        "base_head_sha",
-        "human_full_review_request",
-        "prior_findings",
-        "gate_status",
-        "gate_authorization",
-    }
-
-    for key in sorted(set(review) - allowed_keys):
+    for key in sorted(set(review) - REVIEW_TOP_LEVEL_KEYS):
         reasons.append(f"unknown top-level field: {key}")
 
     degraded_satisfied, degraded_reasons = validate_degraded_review_provenance(review)
