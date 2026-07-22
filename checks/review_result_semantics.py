@@ -28,6 +28,7 @@ H2_HEADING_RE = re.compile(r"^##\s+[^\n]+$", re.MULTILINE)
 DEGRADED_POSITIVE_CLAIM_RE = re.compile(
     r"\b(?:this|the)\s+(?:review|result)\s+"
     r"(?:is|was|remains|has\s+been)\s+"
+    r"(?!(?:not|never)\b)(?:[\w-]+\s+){0,2}"
     r"(?:SpecRail[- ]gated|verified|merge[- ]ready)\b"
     r"|\b(?:SpecRail[- ]gated|verified|merge[- ]ready)\s+"
     r"(?:review|result)\b",

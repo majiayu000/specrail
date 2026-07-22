@@ -605,6 +605,7 @@ def test_review_manifest_blocks_unavailable_marker_outside_summary(
     [
         "This review is SpecRail-gated.",
         "This review is verified.",
+        "This review is fully verified and suitable for delivery.",
         "This result is merge-ready.",
     ],
 )
@@ -1006,6 +1007,7 @@ def test_review_json_gate_blocks_unavailable_marker_outside_summary() -> None:
     [
         "This review is SpecRail-gated.",
         "This review is verified.",
+        "This review is fully verified and suitable for delivery.",
         "This result is merge-ready.",
     ],
 )
