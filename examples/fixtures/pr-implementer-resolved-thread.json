@@ -17,6 +17,7 @@
     "pr": 718,
     "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
     "review_source": "independent_lane",
+    "review_execution": "local",
     "review_completed_at": "2026-07-03T23:58:00Z",
     "human_final_review_required": false,
     "lane_roster": [
@@ -29,6 +30,7 @@
         "reviewer_lane": "merge-reviewer-2",
         "producer_identity": "reviewer-1",
         "review_source": "independent_lane",
+        "review_execution": "local",
         "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
         "review_started_at": "2026-07-03T23:57:00Z",
         "review_completed_at": "2026-07-03T23:58:00Z",
@@ -69,5 +71,6 @@
   "reviews": [],
   "state": "OPEN",
   "review_source": "independent_lane",
+  "review_execution": "local",
   "lane_failures": []
 }

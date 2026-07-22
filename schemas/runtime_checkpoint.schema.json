@@ -595,6 +595,10 @@
                 "enum": ["independent_lane", "self_review", null],
                 "description": "Where the passing review came from. self_review never satisfies the independent-review requirement without explicit self_review_authorization."
               },
+              "review_execution": {
+                "enum": ["local", "hosted", null],
+                "description": "Execution provenance for the primary review. hosted reviews are supplemental only and cannot satisfy merge readiness."
+              },
               "evidence": {
                 "type": ["string", "null"]
               },

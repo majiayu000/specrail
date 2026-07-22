@@ -215,6 +215,7 @@ def _source_and_lane_items(
     missing: list[str] = []
     reasons: list[str] = []
     source = evidence.get("review_source")
+    execution = evidence.get("review_execution")
     review_evidence = evidence.get("review_evidence")
     if not _nonempty(source):
         return satisfied, ["review_source"], ["review_source evidence is missing"]
@@ -228,6 +229,15 @@ def _source_and_lane_items(
         ]
     if review_evidence.get("review_source") != source:
         reasons.append("review_source must be derived from review_evidence")
+    if not _nonempty(execution):
+        missing.append("review_execution")
+        reasons.append("primary review execution evidence is missing")
+    elif review_evidence.get("review_execution") != execution:
+        reasons.append("review_execution must be derived from review_evidence")
+    elif execution != "local":
+        reasons.append("hosted review is supplemental only; primary review must be local")
+    else:
+        satisfied.append("review_execution: local")
     if source == "independent_lane":
         satisfied.append("review_source: independent_lane")
     else:
@@ -307,6 +317,7 @@ def _manifest_trust_items(
         "pr",
         "head_sha",
         "review_source",
+        "review_execution",
         "review_completed_at",
         "human_final_review_required",
         "lane_roster",

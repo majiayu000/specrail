@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 artifacts/
 
+.specrail/runtime/rejections/

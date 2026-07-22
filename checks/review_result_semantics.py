@@ -6,6 +6,7 @@ from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from schema_validation import validate_instance
@@ -17,8 +18,22 @@ TERMINAL_STATUSES = REVIEW_STATUSES - {"pending"}
 REVIEW_VERDICTS = {"clean", "non_blocking", "changes_requested", "blocking"}
 MERGE_READY_VERDICTS = {"clean", "non_blocking"}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
+REVIEW_EXECUTIONS = {"hosted", "local"}
 FINDING_SEVERITIES = {"critical", "important", "suggestion", "nit"}
 PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
+GATE_STATUSES = {"gated", "unavailable"}
+UNGATED_DISCLOSURE_MARKER = "SpecRail gate status: unavailable"
+SUMMARY_HEADING_RE = re.compile(r"^## Summary\s*$", re.MULTILINE)
+H2_HEADING_RE = re.compile(r"^##\s+[^\n]+$", re.MULTILINE)
+DEGRADED_POSITIVE_CLAIM_RE = re.compile(
+    r"\b(?:this|the)\s+(?:review|result)\s+"
+    r"(?:is|was|remains|has\s+been)\s+"
+    r"(?!(?:not|never)\b)(?:[\w-]+\s+){0,2}"
+    r"(?:SpecRail[- ]gated|verified|merge[- ]ready)\b"
+    r"|\b(?:SpecRail[- ]gated|verified|merge[- ]ready)\s+"
+    r"(?:review|result)\b",
+    re.IGNORECASE,
+)
 
 
 class ReviewSemanticError(SpecRailError):
@@ -31,6 +46,91 @@ def _nonempty(value: Any) -> bool:
 
 def _positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _summary_section(body: str) -> str | None:
+    heading = SUMMARY_HEADING_RE.search(body)
+    if heading is None:
+        return None
+    next_heading = H2_HEADING_RE.search(body, heading.end())
+    end = next_heading.start() if next_heading is not None else len(body)
+    return body[heading.end() : end]
+
+
+def _published_review_texts(artifact: dict[str, Any]) -> list[str]:
+    texts: list[str] = []
+    body = artifact.get("body")
+    if isinstance(body, str):
+        texts.append(body)
+    comments = artifact.get("comments")
+    if isinstance(comments, list):
+        for comment in comments:
+            if isinstance(comment, dict) and isinstance(comment.get("body"), str):
+                texts.append(comment["body"])
+    return texts
+
+
+def validate_degraded_review_provenance(
+    artifact: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Validate the bidirectional degraded-review status/auth/body contract."""
+
+    satisfied: list[str] = []
+    errors: list[str] = []
+    gate_status = artifact.get("gate_status")
+    has_gate_status = "gate_status" in artifact
+    gate_authorization = artifact.get("gate_authorization")
+    has_gate_authorization = "gate_authorization" in artifact
+    body = artifact.get("body")
+    body_text = body if isinstance(body, str) else ""
+    marker_present = UNGATED_DISCLOSURE_MARKER in body_text
+
+    if has_gate_status:
+        if gate_status not in GATE_STATUSES:
+            allowed = ", ".join(sorted(GATE_STATUSES))
+            errors.append(f"gate_status must be one of: {allowed}")
+        else:
+            satisfied.append(f"gate_status: {gate_status}")
+
+    if gate_status == "unavailable":
+        if _nonempty(gate_authorization):
+            satisfied.append("gate_authorization present")
+        else:
+            errors.append(
+                "gate_status unavailable requires a non-empty gate_authorization"
+            )
+
+        summary = _summary_section(body_text)
+        summary_has_marker = (
+            summary is not None
+            and UNGATED_DISCLOSURE_MARKER in summary
+        )
+        if summary_has_marker:
+            satisfied.append("body discloses unavailable SpecRail gate")
+            if any(
+                DEGRADED_POSITIVE_CLAIM_RE.search(text)
+                for text in _published_review_texts(artifact)
+            ):
+                errors.append(
+                    "gate_status unavailable published review text must not claim "
+                    "the review is SpecRail-gated, verified, or merge-ready"
+                )
+        elif body_text:
+            errors.append(
+                "gate_status unavailable requires the ## Summary marker: "
+                f"{UNGATED_DISCLOSURE_MARKER}"
+            )
+    else:
+        if has_gate_authorization:
+            errors.append(
+                "gate_authorization is allowed only when gate_status is unavailable"
+            )
+        if marker_present:
+            errors.append(
+                "the unavailable disclosure marker requires gate_status unavailable"
+            )
+
+    return satisfied, errors
 
 
 def parse_timestamp(value: Any, field: str, errors: list[str]) -> datetime | None:
@@ -125,6 +225,7 @@ def validate_review_artifact(
         "reviewer_lane",
         "producer_identity",
         "review_source",
+        "review_execution",
         "head_sha",
         "review_started_at",
         "status",
@@ -148,12 +249,22 @@ def validate_review_artifact(
     source = artifact.get("review_source")
     if source not in REVIEW_SOURCES:
         errors.append(f"review_source must be one of: {', '.join(sorted(REVIEW_SOURCES))}")
+    execution = artifact.get("review_execution")
+    if execution not in REVIEW_EXECUTIONS:
+        errors.append(
+            f"review_execution must be one of: {', '.join(sorted(REVIEW_EXECUTIONS))}"
+        )
+    elif execution == "hosted":
+        errors.append("hosted review is supplemental only and cannot satisfy primary review")
     status = artifact.get("status")
     if status not in REVIEW_STATUSES:
         errors.append(f"status must be one of: {', '.join(sorted(REVIEW_STATUSES))}")
     verdict = artifact.get("verdict")
     if verdict not in REVIEW_VERDICTS:
         errors.append(f"verdict must be one of: {', '.join(sorted(REVIEW_VERDICTS))}")
+
+    _, degraded_errors = validate_degraded_review_provenance(artifact)
+    errors.extend(degraded_errors)
 
     started = parse_timestamp(artifact.get("review_started_at"), "review_started_at", errors)
     completed = None
@@ -208,6 +319,10 @@ def validate_review_artifact(
         blockers.append(f"review status is not completed: {status}")
     if verdict not in MERGE_READY_VERDICTS:
         blockers.append(f"review verdict is not merge-ready: {verdict}")
+    if artifact.get("gate_status") == "unavailable":
+        blockers.append(
+            "gate_status unavailable cannot satisfy merge-ready review evidence"
+        )
     if verdict == "clean" and normalized_findings:
         blockers.append("clean verdict requires zero findings")
     for finding in normalized_findings:
@@ -412,6 +527,7 @@ def load_review_manifest(
 
     blockers: list[str] = []
     review_sources: set[str] = set()
+    review_executions: set[str] = set()
     completed_times: list[str] = []
     for artifact in current_head:
         result = validate_review_artifact(artifact, expected_pr=expected_pr, expected_head_sha=expected_head_sha)
@@ -425,10 +541,14 @@ def load_review_manifest(
             )
         if _nonempty(artifact.get("review_source")):
             review_sources.add(str(artifact["review_source"]))
+        if _nonempty(artifact.get("review_execution")):
+            review_executions.add(str(artifact["review_execution"]))
         if _nonempty(artifact.get("review_completed_at")):
             completed_times.append(str(artifact["review_completed_at"]))
     if len(review_sources) > 1:
         blockers.append("current-head artifacts have conflicting review_source values")
+    if len(review_executions) > 1:
+        blockers.append("current-head artifacts have conflicting review_execution values")
 
     latest_completed_at = None
     latest_completed_time = None
@@ -448,6 +568,9 @@ def load_review_manifest(
         "pr": expected_pr,
         "head_sha": expected_head_sha,
         "review_source": next(iter(review_sources), None),
+        "review_execution": (
+            next(iter(review_executions)) if len(review_executions) == 1 else None
+        ),
         "review_completed_at": latest_completed_at,
         "human_final_review_required": manifest.get("human_final_review_required"),
         "lane_roster": lane_roster,
@@ -479,6 +602,13 @@ def evaluate_review_evidence(
         errors.append("review_evidence.pr must match pr")
     if evidence.get("head_sha") != expected_head_sha:
         errors.append("review_evidence.head_sha must match head_sha")
+    execution = evidence.get("review_execution")
+    if execution not in REVIEW_EXECUTIONS:
+        errors.append(
+            f"review_evidence.review_execution must be one of: {', '.join(sorted(REVIEW_EXECUTIONS))}"
+        )
+    elif execution != "local":
+        errors.append("hosted review evidence is supplemental only; primary review must be local")
     embedded_errors = evidence.get("errors")
     if not isinstance(embedded_errors, list):
         errors.append("review_evidence.errors must be a list")
@@ -494,6 +624,7 @@ def evaluate_review_evidence(
         errors.append("review_evidence.artifacts must be a non-empty list")
     else:
         current = 0
+        current_executions: set[str] = set()
         for index, artifact in enumerate(artifacts):
             result = validate_review_artifact(artifact, expected_pr=expected_pr)
             errors.extend(f"review_evidence.artifacts[{index}]: {item}" for item in result["errors"])
@@ -501,9 +632,13 @@ def evaluate_review_evidence(
                 continue
             if artifact.get("head_sha") == expected_head_sha and artifact.get("status") in TERMINAL_STATUSES:
                 current += 1
+                if _nonempty(artifact.get("review_execution")):
+                    current_executions.add(str(artifact["review_execution"]))
                 blockers.extend(result["blocking_reasons"])
         if current == 0:
             errors.append("review_evidence has no current-head terminal artifact")
+        if len(current_executions) == 1 and execution not in current_executions:
+            errors.append("review_evidence.review_execution must be derived from current-head artifacts")
     if not errors:
         satisfied.append("review manifest and artifacts are semantically valid")
     if not blockers:

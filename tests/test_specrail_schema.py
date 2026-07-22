@@ -280,6 +280,22 @@ def test_pr_gate_schema_requires_root_comment_identity(missing: str) -> None:
         validate_instance(pr_review_gate_schema(), evidence)
 
 
+@pytest.mark.parametrize("location", ["top_level", "review_evidence"])
+def test_pr_gate_schema_requires_review_execution(location: str) -> None:
+    evidence = json.loads(
+        (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if location == "top_level":
+        evidence.pop("review_execution")
+    else:
+        evidence["review_evidence"].pop("review_execution")
+
+    with pytest.raises(InstanceMismatch, match="review_execution.*missing required field"):
+        validate_instance(pr_review_gate_schema(), evidence)
+
+
 def test_pr_gate_schema_accepts_structured_partial_issue_reference() -> None:
     evidence = json.loads(
         (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
@@ -308,6 +324,34 @@ def test_review_result_v2_fixture_validates_against_schema() -> None:
     )
 
     validate_instance(review_result_schema(), review)
+
+
+def test_review_result_schema_rejects_orphan_gate_authorization() -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review["gate_authorization"] = "stale degraded-review authorization"
+
+    with pytest.raises(InstanceMismatch, match="gate_status.*missing required field"):
+        validate_instance(review_result_schema(), review)
+
+
+def test_review_result_schema_rejects_blank_gate_authorization() -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "   \t"
+    review["body"] = review["body"].replace(
+        "## Summary", "## Summary\n\nSpecRail gate status: unavailable"
+    )
+
+    with pytest.raises(InstanceMismatch, match="gate_authorization.*pattern"):
+        validate_instance(review_result_schema(), review)
 
 
 @pytest.mark.parametrize("missing", ["review_round", "review_mode"])
