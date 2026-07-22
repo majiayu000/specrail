@@ -17,12 +17,12 @@ GH-167
 
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
-| 单 artifact gate | `checks/review_json_gate.py` | CLI 只接收一个 `--review` 与 `--diff`；`_validate_review_round()` 信任 artifact 自报轮次，只有 `diff_only` 要求 base，无法看到 artifact 集合 | 只能校验当前 artifact 与可信 diff，不能派生总轮数或授权 |
-| 共享 artifact/manifest 语义 | `checks/review_result_semantics.py` | 强制旧 `prior_findings` 结构，并由 `load_review_manifest()` 加载全部 lanes/artifacts、检查 carry-forward；manifest 只接受 `version == 1` | B-001/B-006/B-008/B-011 的正确强制点，原规划遗漏 |
-| review result schema | `schemas/review_result.schema.json` | `additionalProperties: false`；旧 prior 条目为 `{id, source_head_sha, summary, status, closure_evidence}`，允许历史正文增长 | 需用 feature marker 区分旧 v1 单轮与新 bounded v2 形态 |
-| PR evidence adapter | `checks/github_pr_evidence.py`, `checks/github_review_evidence.py` | 可加载 review manifest、human/self-review 与 resolver role map；没有 round-cap 授权输入或 maintainer role binding | 外部 maintainer 授权必须在这里构造，不能由 reviewer artifact 自报 |
-| PR 终审合同 | `checks/pr_review_contract.py` | 从安全路径重载 manifest，并与闭集 `review_evidence` 字段比对；未复核 round audit/authorization | B-002/B-003/B-013 的最终 fail-closed 点 |
-| PR evidence schema | `schemas/pr_review_gate.schema.json` | `review_evidence.additionalProperties: false`，没有 `round_audit` 或 `round_cap_authorizations` | 不扩 schema 会让新证据在入口被拒 |
+| 单 artifact gate | `checks/review_json_gate.py:252` | CLI 只接收一个 `--review` 与 `--diff`；`_validate_review_round()` 信任 artifact 自报轮次，只有 `diff_only` 要求 base，无法看到 artifact 集合 | 只能校验当前 artifact 与可信 diff，不能派生总轮数或授权 |
+| 共享 artifact/manifest 语义 | `checks/review_result_semantics.py:363` | 强制旧 `prior_findings` 结构，并由 `load_review_manifest()` 加载全部 lanes/artifacts、检查 carry-forward；manifest 只接受 `version == 1` | B-001/B-006/B-008/B-011 的正确强制点，原规划遗漏 |
+| review result schema | `schemas/review_result.schema.json:120` | `additionalProperties: false`；旧 prior 条目为 `{id, source_head_sha, summary, status, closure_evidence}`，允许历史正文增长 | 需用 feature marker 区分旧 v1 单轮与新 bounded v2 形态 |
+| PR evidence adapter | `checks/github_pr_evidence.py:568`, `checks/github_review_evidence.py:255` | 可加载 review manifest、human/self-review 与 resolver role map；没有 round-cap 授权输入或 maintainer role binding | 外部 maintainer 授权必须在这里构造，不能由 reviewer artifact 自报 |
+| PR 终审合同 | `checks/pr_review_contract.py:282` | 从安全路径重载 manifest，并与闭集 `review_evidence` 字段比对；未复核 round audit/authorization | B-002/B-003/B-013 的最终 fail-closed 点 |
+| PR evidence schema | `schemas/pr_review_gate.schema.json:354` | `review_evidence.additionalProperties: false`，没有 `round_audit` 或 `round_cap_authorizations` | 不扩 schema 会让新证据在入口被拒 |
 | 文档与 skills | `review/agent_first_review.md`, `skills/specrail-review-pr/SKILL.md`, `skills/implx/SKILL.md` | 允许 full round 2、round>2 用 `human_full_review_request` 解锁；carry-forward 未限制体积 | 需同步停止条件、v2 输出与 maintainer escalation |
 
 ## Proposed Design
