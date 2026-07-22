@@ -18,7 +18,11 @@ from rejection_items import (
     item_from_reason,
     items_from_legacy,
 )
-from review_result_semantics import REVIEW_VERDICTS, validate_review_artifact
+from review_result_semantics import (
+    REVIEW_VERDICTS,
+    validate_review_artifact,
+    validate_degraded_review_provenance,
+)
 
 
 VERDICTS = REVIEW_VERDICTS
@@ -26,8 +30,6 @@ SIDES = {"RIGHT", "LEFT"}
 SEVERITIES = {"critical", "important", "suggestion", "nit"}
 SPEC_ALIGNMENT_STATUSES = {"matched", "drift", "not_applicable"}
 REVIEW_MODES = {"full", "resumed", "diff_only"}
-GATE_STATUSES = {"gated", "unavailable"}
-UNGATED_DISCLOSURE_MARKER = "SpecRail gate status: unavailable"
 PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
 FULL_REVIEW_ROUND_CAP = 2
 FORBIDDEN_FINAL_AUTHORITY = {
@@ -200,26 +202,9 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
     for key in sorted(set(review) - allowed_keys):
         reasons.append(f"unknown top-level field: {key}")
 
-    gate_status = review.get("gate_status")
-    if "gate_status" in review:
-        if gate_status not in GATE_STATUSES:
-            allowed = ", ".join(sorted(GATE_STATUSES))
-            reasons.append(f"gate_status must be one of: {allowed}")
-        else:
-            satisfied.append(f"gate_status: {gate_status}")
-
-    gate_authorization = review.get("gate_authorization")
-    if gate_status == "unavailable":
-        if _non_empty_string(gate_authorization):
-            satisfied.append("gate_authorization present")
-        else:
-            reasons.append(
-                "gate_status unavailable requires a non-empty gate_authorization"
-            )
-    elif "gate_authorization" in review:
-        reasons.append(
-            "gate_authorization is allowed only when gate_status is unavailable"
-        )
+    degraded_satisfied, degraded_reasons = validate_degraded_review_provenance(review)
+    satisfied.extend(degraded_satisfied)
+    reasons.extend(degraded_reasons)
 
     verdict = review.get("verdict")
     if verdict in VERDICTS:
@@ -243,14 +228,6 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
             satisfied.append("body includes ## Verdict")
         else:
             reasons.append("body must include ## Verdict heading")
-        if gate_status == "unavailable":
-            if UNGATED_DISCLOSURE_MARKER.casefold() in body.casefold():
-                satisfied.append("body discloses unavailable SpecRail gate")
-            else:
-                reasons.append(
-                    "gate_status unavailable requires the ## Summary marker: "
-                    f"{UNGATED_DISCLOSURE_MARKER}"
-                )
     elif "body" in review:
         reasons.append("body must be a non-empty string")
     else:

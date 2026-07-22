@@ -38,8 +38,29 @@
       "then": {
         "required": ["gate_authorization"],
         "properties": {
-          "body": {"pattern": "SpecRail gate status: unavailable"}
+          "body": {
+            "pattern": "(^|\\n)## Summary[ \\t]*(\\n|$)(?:(?!\\n## )[\\s\\S])*SpecRail gate status: unavailable"
+          }
         }
+      }
+    },
+    {
+      "if": {"required": ["gate_authorization"]},
+      "then": {
+        "required": ["gate_status"],
+        "properties": {"gate_status": {"const": "unavailable"}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "body": {"pattern": "SpecRail gate status: unavailable"}
+        },
+        "required": ["body"]
+      },
+      "then": {
+        "required": ["gate_status", "gate_authorization"],
+        "properties": {"gate_status": {"const": "unavailable"}}
       }
     },
     {
@@ -140,7 +161,7 @@
       ]
     },
     "gate_status": {"enum": ["gated", "unavailable"]},
-    "gate_authorization": {"type": "string", "minLength": 1},
+    "gate_authorization": {"type": "string", "minLength": 1, "pattern": "\\S"},
     "body": {
       "type": "string",
       "minLength": 1,

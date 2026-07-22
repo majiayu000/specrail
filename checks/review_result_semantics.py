@@ -6,6 +6,7 @@ from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from schema_validation import validate_instance
@@ -20,6 +21,18 @@ REVIEW_SOURCES = {"independent_lane", "self_review"}
 REVIEW_EXECUTIONS = {"hosted", "local"}
 FINDING_SEVERITIES = {"critical", "important", "suggestion", "nit"}
 PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
+GATE_STATUSES = {"gated", "unavailable"}
+UNGATED_DISCLOSURE_MARKER = "SpecRail gate status: unavailable"
+SUMMARY_HEADING_RE = re.compile(r"^## Summary\s*$", re.MULTILINE)
+H2_HEADING_RE = re.compile(r"^##\s+[^\n]+$", re.MULTILINE)
+DEGRADED_POSITIVE_CLAIM_RE = re.compile(
+    r"\b(?:this|the)\s+(?:review|result)\s+"
+    r"(?:is|was|remains|has\s+been)\s+"
+    r"(?:SpecRail[- ]gated|verified|merge[- ]ready)\b"
+    r"|\b(?:SpecRail[- ]gated|verified|merge[- ]ready)\s+"
+    r"(?:review|result)\b",
+    re.IGNORECASE,
+)
 
 
 class ReviewSemanticError(SpecRailError):
@@ -32,6 +45,75 @@ def _nonempty(value: Any) -> bool:
 
 def _positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _summary_section(body: str) -> str | None:
+    heading = SUMMARY_HEADING_RE.search(body)
+    if heading is None:
+        return None
+    next_heading = H2_HEADING_RE.search(body, heading.end())
+    end = next_heading.start() if next_heading is not None else len(body)
+    return body[heading.end() : end]
+
+
+def validate_degraded_review_provenance(
+    artifact: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Validate the bidirectional degraded-review status/auth/body contract."""
+
+    satisfied: list[str] = []
+    errors: list[str] = []
+    gate_status = artifact.get("gate_status")
+    has_gate_status = "gate_status" in artifact
+    gate_authorization = artifact.get("gate_authorization")
+    has_gate_authorization = "gate_authorization" in artifact
+    body = artifact.get("body")
+    body_text = body if isinstance(body, str) else ""
+    marker_present = UNGATED_DISCLOSURE_MARKER.casefold() in body_text.casefold()
+
+    if has_gate_status:
+        if gate_status not in GATE_STATUSES:
+            allowed = ", ".join(sorted(GATE_STATUSES))
+            errors.append(f"gate_status must be one of: {allowed}")
+        else:
+            satisfied.append(f"gate_status: {gate_status}")
+
+    if gate_status == "unavailable":
+        if _nonempty(gate_authorization):
+            satisfied.append("gate_authorization present")
+        else:
+            errors.append(
+                "gate_status unavailable requires a non-empty gate_authorization"
+            )
+
+        summary = _summary_section(body_text)
+        summary_has_marker = (
+            summary is not None
+            and UNGATED_DISCLOSURE_MARKER.casefold() in summary.casefold()
+        )
+        if summary_has_marker:
+            satisfied.append("body discloses unavailable SpecRail gate")
+            if DEGRADED_POSITIVE_CLAIM_RE.search(summary):
+                errors.append(
+                    "gate_status unavailable ## Summary must not claim the review "
+                    "is SpecRail-gated, verified, or merge-ready"
+                )
+        elif body_text:
+            errors.append(
+                "gate_status unavailable requires the ## Summary marker: "
+                f"{UNGATED_DISCLOSURE_MARKER}"
+            )
+    else:
+        if has_gate_authorization:
+            errors.append(
+                "gate_authorization is allowed only when gate_status is unavailable"
+            )
+        if marker_present:
+            errors.append(
+                "the unavailable disclosure marker requires gate_status unavailable"
+            )
+
+    return satisfied, errors
 
 
 def parse_timestamp(value: Any, field: str, errors: list[str]) -> datetime | None:
@@ -163,6 +245,9 @@ def validate_review_artifact(
     verdict = artifact.get("verdict")
     if verdict not in REVIEW_VERDICTS:
         errors.append(f"verdict must be one of: {', '.join(sorted(REVIEW_VERDICTS))}")
+
+    _, degraded_errors = validate_degraded_review_provenance(artifact)
+    errors.extend(degraded_errors)
 
     started = parse_timestamp(artifact.get("review_started_at"), "review_started_at", errors)
     completed = None
