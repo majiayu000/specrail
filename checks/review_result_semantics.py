@@ -6,6 +6,7 @@ from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from schema_validation import validate_instance
@@ -20,6 +21,19 @@ REVIEW_SOURCES = {"independent_lane", "self_review"}
 REVIEW_EXECUTIONS = {"hosted", "local"}
 FINDING_SEVERITIES = {"critical", "important", "suggestion", "nit"}
 PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
+GATE_STATUSES = {"gated", "unavailable"}
+UNGATED_DISCLOSURE_MARKER = "SpecRail gate status: unavailable"
+SUMMARY_HEADING_RE = re.compile(r"^## Summary\s*$", re.MULTILINE)
+H2_HEADING_RE = re.compile(r"^##\s+[^\n]+$", re.MULTILINE)
+DEGRADED_POSITIVE_CLAIM_RE = re.compile(
+    r"\b(?:this|the)\s+(?:review|result)\s+"
+    r"(?:is|was|remains|has\s+been)\s+"
+    r"(?!(?:not|never)\b)(?:[\w-]+\s+){0,2}"
+    r"(?:SpecRail[- ]gated|verified|merge[- ]ready)\b"
+    r"|\b(?:SpecRail[- ]gated|verified|merge[- ]ready)\s+"
+    r"(?:review|result)\b",
+    re.IGNORECASE,
+)
 
 
 class ReviewSemanticError(SpecRailError):
@@ -32,6 +46,91 @@ def _nonempty(value: Any) -> bool:
 
 def _positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _summary_section(body: str) -> str | None:
+    heading = SUMMARY_HEADING_RE.search(body)
+    if heading is None:
+        return None
+    next_heading = H2_HEADING_RE.search(body, heading.end())
+    end = next_heading.start() if next_heading is not None else len(body)
+    return body[heading.end() : end]
+
+
+def _published_review_texts(artifact: dict[str, Any]) -> list[str]:
+    texts: list[str] = []
+    body = artifact.get("body")
+    if isinstance(body, str):
+        texts.append(body)
+    comments = artifact.get("comments")
+    if isinstance(comments, list):
+        for comment in comments:
+            if isinstance(comment, dict) and isinstance(comment.get("body"), str):
+                texts.append(comment["body"])
+    return texts
+
+
+def validate_degraded_review_provenance(
+    artifact: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Validate the bidirectional degraded-review status/auth/body contract."""
+
+    satisfied: list[str] = []
+    errors: list[str] = []
+    gate_status = artifact.get("gate_status")
+    has_gate_status = "gate_status" in artifact
+    gate_authorization = artifact.get("gate_authorization")
+    has_gate_authorization = "gate_authorization" in artifact
+    body = artifact.get("body")
+    body_text = body if isinstance(body, str) else ""
+    marker_present = UNGATED_DISCLOSURE_MARKER in body_text
+
+    if has_gate_status:
+        if gate_status not in GATE_STATUSES:
+            allowed = ", ".join(sorted(GATE_STATUSES))
+            errors.append(f"gate_status must be one of: {allowed}")
+        else:
+            satisfied.append(f"gate_status: {gate_status}")
+
+    if gate_status == "unavailable":
+        if _nonempty(gate_authorization):
+            satisfied.append("gate_authorization present")
+        else:
+            errors.append(
+                "gate_status unavailable requires a non-empty gate_authorization"
+            )
+
+        summary = _summary_section(body_text)
+        summary_has_marker = (
+            summary is not None
+            and UNGATED_DISCLOSURE_MARKER in summary
+        )
+        if summary_has_marker:
+            satisfied.append("body discloses unavailable SpecRail gate")
+            if any(
+                DEGRADED_POSITIVE_CLAIM_RE.search(text)
+                for text in _published_review_texts(artifact)
+            ):
+                errors.append(
+                    "gate_status unavailable published review text must not claim "
+                    "the review is SpecRail-gated, verified, or merge-ready"
+                )
+        elif body_text:
+            errors.append(
+                "gate_status unavailable requires the ## Summary marker: "
+                f"{UNGATED_DISCLOSURE_MARKER}"
+            )
+    else:
+        if has_gate_authorization:
+            errors.append(
+                "gate_authorization is allowed only when gate_status is unavailable"
+            )
+        if marker_present:
+            errors.append(
+                "the unavailable disclosure marker requires gate_status unavailable"
+            )
+
+    return satisfied, errors
 
 
 def parse_timestamp(value: Any, field: str, errors: list[str]) -> datetime | None:
@@ -164,6 +263,9 @@ def validate_review_artifact(
     if verdict not in REVIEW_VERDICTS:
         errors.append(f"verdict must be one of: {', '.join(sorted(REVIEW_VERDICTS))}")
 
+    _, degraded_errors = validate_degraded_review_provenance(artifact)
+    errors.extend(degraded_errors)
+
     started = parse_timestamp(artifact.get("review_started_at"), "review_started_at", errors)
     completed = None
     if status == "pending" and artifact.get("review_completed_at") is None:
@@ -217,6 +319,10 @@ def validate_review_artifact(
         blockers.append(f"review status is not completed: {status}")
     if verdict not in MERGE_READY_VERDICTS:
         blockers.append(f"review verdict is not merge-ready: {verdict}")
+    if artifact.get("gate_status") == "unavailable":
+        blockers.append(
+            "gate_status unavailable cannot satisfy merge-ready review evidence"
+        )
     if verdict == "clean" and normalized_findings:
         blockers.append("clean verdict requires zero findings")
     for finding in normalized_findings:
