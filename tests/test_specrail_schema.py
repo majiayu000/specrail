@@ -326,6 +326,34 @@ def test_review_result_v2_fixture_validates_against_schema() -> None:
     validate_instance(review_result_schema(), review)
 
 
+def test_review_result_schema_rejects_orphan_gate_authorization() -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review["gate_authorization"] = "stale degraded-review authorization"
+
+    with pytest.raises(InstanceMismatch, match="gate_status.*missing required field"):
+        validate_instance(review_result_schema(), review)
+
+
+def test_review_result_schema_rejects_blank_gate_authorization() -> None:
+    review = json.loads(
+        (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "   \t"
+    review["body"] = review["body"].replace(
+        "## Summary", "## Summary\n\nSpecRail gate status: unavailable"
+    )
+
+    with pytest.raises(InstanceMismatch, match="gate_authorization.*pattern"):
+        validate_instance(review_result_schema(), review)
+
+
 @pytest.mark.parametrize("missing", ["review_round", "review_mode"])
 def test_review_result_schema_requires_paired_round_fields(missing: str) -> None:
     review = json.loads(

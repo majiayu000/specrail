@@ -19,6 +19,7 @@ from review_json_gate import evaluate_review_gate  # noqa: E402
 from pr_review_contract import evaluate_review_contract  # noqa: E402
 from review_result_semantics import (  # noqa: E402
     ReviewSemanticError,
+    UNGATED_DISCLOSURE_MARKER,
     evaluate_review_evidence,
     load_review_manifest,
     validate_review_artifact,
@@ -522,6 +523,184 @@ def test_review_manifest_allows_clean_current_head(tmp_path: Path) -> None:
     assert result["review_execution"] == "local"
 
 
+def test_review_manifest_allows_explicit_ungated_review_fields(tmp_path: Path) -> None:
+    artifact = clean_terminal_artifact()
+    artifact["gate_status"] = "unavailable"
+    artifact["gate_authorization"] = "Human authorization: continue without gate"
+    body = artifact["body"]
+    assert isinstance(body, str)
+    artifact["body"] = body.replace(
+        "## Summary", "## Summary\n\nSpecRail gate status: unavailable"
+    )
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert result["errors"] == []
+    assert any(
+        "unavailable cannot satisfy merge-ready review evidence" in item
+        for item in result["blocking_reasons"]
+    )
+
+
+def test_review_manifest_blocks_orphan_gate_authorization(tmp_path: Path) -> None:
+    artifact = clean_terminal_artifact()
+    artifact["gate_authorization"] = "stale degraded-review authorization"
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("gate_status" in item for item in result["errors"])
+
+
+def test_review_manifest_blocks_blank_gate_authorization(tmp_path: Path) -> None:
+    artifact = clean_terminal_artifact()
+    artifact["gate_status"] = "unavailable"
+    artifact["gate_authorization"] = "   \t"
+    body = artifact["body"]
+    assert isinstance(body, str)
+    artifact["body"] = body.replace(
+        "## Summary", "## Summary\n\nSpecRail gate status: unavailable"
+    )
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("gate_authorization" in item for item in result["errors"])
+
+
+def test_review_manifest_blocks_unavailable_marker_outside_summary(
+    tmp_path: Path,
+) -> None:
+    artifact = clean_terminal_artifact()
+    artifact["gate_status"] = "unavailable"
+    artifact["gate_authorization"] = "Human authorization: continue without gate"
+    artifact["body"] = f"{artifact['body']}\n\n{UNGATED_DISCLOSURE_MARKER}"
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("## Summary marker" in item for item in result["errors"])
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "This review is SpecRail-gated.",
+        "This review is verified.",
+        "This review is fully verified and suitable for delivery.",
+        "This result is merge-ready.",
+    ],
+)
+def test_review_manifest_blocks_degraded_positive_gate_claims(
+    tmp_path: Path,
+    claim: str,
+) -> None:
+    artifact = clean_terminal_artifact()
+    artifact["gate_status"] = "unavailable"
+    artifact["gate_authorization"] = "Human authorization: continue without gate"
+    body = artifact["body"]
+    assert isinstance(body, str)
+    artifact["body"] = body.replace(
+        "## Summary",
+        f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}\n\n{claim}",
+    )
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("must not claim" in item for item in result["errors"])
+
+
+@pytest.mark.parametrize("location", ["verdict", "comment"])
+def test_review_manifest_blocks_degraded_claims_in_all_published_text(
+    tmp_path: Path,
+    location: str,
+) -> None:
+    artifact = clean_terminal_artifact()
+    artifact["gate_status"] = "unavailable"
+    artifact["gate_authorization"] = "Human authorization: continue without gate"
+    body = artifact["body"]
+    assert isinstance(body, str)
+    artifact["body"] = body.replace(
+        "## Summary", f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}"
+    )
+    if location == "verdict":
+        artifact["body"] = artifact["body"].replace(
+            "## Verdict", "## Verdict\n\nThis review is verified and merge-ready."
+        )
+    else:
+        artifact["comments"] = [
+            {
+                "path": "checks/example.py",
+                "line": 1,
+                "side": "RIGHT",
+                "severity": "suggestion",
+                "body": "This review is verified and merge-ready.",
+            }
+        ]
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("must not claim" in item for item in result["errors"])
+
+
+@pytest.mark.parametrize("gate_status", [None, "gated"])
+def test_review_manifest_blocks_marker_without_matching_status(
+    tmp_path: Path,
+    gate_status: str | None,
+) -> None:
+    artifact = clean_terminal_artifact()
+    if gate_status is not None:
+        artifact["gate_status"] = gate_status
+    body = artifact["body"]
+    assert isinstance(body, str)
+    artifact["body"] = body.replace(
+        "## Summary", f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}"
+    )
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("gate_status" in item for item in result["errors"])
+
+
 def test_review_manifest_blocks_conflicting_execution_provenance(tmp_path: Path) -> None:
     hosted = clean_terminal_artifact(
         artifact_id="hosted-current",
@@ -811,3 +990,156 @@ def test_review_json_gate_allowed_result_has_empty_rejection_items() -> None:
     assert result["decision"] == "allowed"
     assert result["rejection_items"] == []
     assert "repeat_rejection" not in result
+
+
+def test_review_json_gate_allows_gate_status_unavailable() -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "Human authorization: continue without gate"
+    review["body"] = review["body"].replace(
+        "## Summary", "## Summary\n\nSpecRail gate status: unavailable"
+    )
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "allowed"
+    assert "gate_status: unavailable" in result["satisfied"]
+    assert "gate_authorization present" in result["satisfied"]
+    assert "body discloses unavailable SpecRail gate" in result["satisfied"]
+
+
+def test_review_json_gate_blocks_unavailable_without_authorization() -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+    review["body"] = review["body"].replace(
+        "## Summary", "## Summary\n\nSpecRail gate status: unavailable"
+    )
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("requires a non-empty gate_authorization" in item for item in result["reasons"])
+
+
+def test_review_json_gate_blocks_unavailable_without_summary_disclosure() -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "Human authorization: continue without gate"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("requires the ## Summary marker" in item for item in result["reasons"])
+
+
+def test_review_json_gate_blocks_unavailable_marker_outside_summary() -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "Human authorization: continue without gate"
+    review["body"] = f"{review['body']}\n\n{UNGATED_DISCLOSURE_MARKER}"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("requires the ## Summary marker" in item for item in result["reasons"])
+
+
+def test_review_json_gate_requires_exact_case_unavailable_marker() -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "Human authorization: continue without gate"
+    review["body"] = review["body"].replace(
+        "## Summary", "## Summary\n\nspecrail gate status: unavailable"
+    )
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("requires the ## Summary marker" in item for item in result["reasons"])
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "This review is SpecRail-gated.",
+        "This review is verified.",
+        "This review is fully verified and suitable for delivery.",
+        "This result is merge-ready.",
+    ],
+)
+def test_review_json_gate_blocks_degraded_positive_gate_claims(claim: str) -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "Human authorization: continue without gate"
+    review["body"] = review["body"].replace(
+        "## Summary",
+        f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}\n\n{claim}",
+    )
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("must not claim" in item for item in result["reasons"])
+
+
+@pytest.mark.parametrize("location", ["verdict", "comment"])
+def test_review_json_gate_blocks_degraded_claims_in_all_published_text(
+    location: str,
+) -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "Human authorization: continue without gate"
+    review["body"] = review["body"].replace(
+        "## Summary", f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}"
+    )
+    if location == "verdict":
+        review["body"] = review["body"].replace(
+            "## Verdict", "## Verdict\n\nThis review is verified and merge-ready."
+        )
+    else:
+        comments = review["comments"]
+        assert isinstance(comments, list)
+        assert isinstance(comments[0], dict)
+        comments[0]["body"] = "This review is verified and merge-ready."
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("must not claim" in item for item in result["reasons"])
+
+
+@pytest.mark.parametrize("gate_status", [None, "gated"])
+def test_review_json_gate_blocks_unavailable_marker_without_matching_status(
+    gate_status: str | None,
+) -> None:
+    review = load_review("review-valid.json")
+    if gate_status is not None:
+        review["gate_status"] = gate_status
+    review["body"] = review["body"].replace(
+        "## Summary", f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}"
+    )
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("requires gate_status unavailable" in item for item in result["reasons"])
+
+
+def test_review_json_gate_blocks_unknown_gate_status() -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "skipped"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert "gate_status must be one of: gated, unavailable" in result["reasons"]
+
+
+def test_review_json_gate_blocks_authorization_without_unavailable_status() -> None:
+    review = load_review("review-valid.json")
+    review["gate_authorization"] = "stale authorization"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("allowed only when gate_status is unavailable" in item for item in result["reasons"])

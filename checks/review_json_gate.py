@@ -18,7 +18,11 @@ from rejection_items import (
     item_from_reason,
     items_from_legacy,
 )
-from review_result_semantics import REVIEW_VERDICTS, validate_review_artifact
+from review_result_semantics import (
+    REVIEW_VERDICTS,
+    validate_review_artifact,
+    validate_degraded_review_provenance,
+)
 
 
 VERDICTS = REVIEW_VERDICTS
@@ -191,10 +195,16 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
         "base_head_sha",
         "human_full_review_request",
         "prior_findings",
+        "gate_status",
+        "gate_authorization",
     }
 
     for key in sorted(set(review) - allowed_keys):
         reasons.append(f"unknown top-level field: {key}")
+
+    degraded_satisfied, degraded_reasons = validate_degraded_review_provenance(review)
+    satisfied.extend(degraded_satisfied)
+    reasons.extend(degraded_reasons)
 
     verdict = review.get("verdict")
     if verdict in VERDICTS:
