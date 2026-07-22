@@ -347,12 +347,13 @@ When a reviewer lane fails:
   fresh explicit self-review authorization after reporting the failure
 
 If recovery uses a new independent reviewer lane, record
-`review_source: independent_lane` and keep the lane failure history in evidence.
+`review_source: independent_lane`, `review_execution: local`, and keep the lane
+failure history in evidence.
 If recovery uses self-review, record `review_source: self_review` and
-`self_review_authorization` with actor, source, and scope from the current
-conversation after the failure was reported. Prior queue-drain or generic merge
-authorization does not cover a later self-review substitution unless it
-explicitly scoped that failure path.
+`review_execution: local`, plus `self_review_authorization` with actor, source,
+and scope from the current conversation after the failure was reported. Prior
+queue-drain or generic merge authorization does not cover a later self-review
+substitution unless it explicitly scoped that failure path.
 
 ## Context Budget
 
@@ -648,6 +649,8 @@ For GitHub PRs, current evidence must include:
 - independent reviewer or merge-reviewer lane evidence
 - native reviewer thread evidence when native subagents are available
 - `review_source` (`independent_lane` or `self_review`)
+- `review_execution: local` for the terminal primary artifact; hosted GitHub
+  review is supplemental only
 - `lane_failures[]`, empty when no reviewer lane failed
 - `self_review_authorization` when `review_source: self_review`
 - GraphQL review-thread state
@@ -679,7 +682,8 @@ license to continue:
    (for example `reviewer_lane_failure`) and report it in the handoff, or
 3. Recover by spawning a new independent reviewer lane; the retry lane must be
    a different lane than the failed one and its review recorded with
-   `review.review_source: independent_lane`.
+   `review.review_source: independent_lane` and
+   `review.review_execution: local`.
 
 Silent self-review substitution is forbidden. `review.review_source:
 self_review` never satisfies the independent-review requirement on its own;

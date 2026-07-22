@@ -29,6 +29,28 @@ def test_pr_gate_blocks_unknown_review_source() -> None:
     assert any("review_source must be one of" in reason for reason in result["reasons"])
 
 
+def test_pr_gate_blocks_missing_primary_review_execution() -> None:
+    evidence = clean_evidence()
+    del evidence["review_execution"]
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "review_execution" in result["missing"]
+
+
+def test_pr_gate_blocks_hosted_review_as_primary() -> None:
+    evidence = clean_evidence()
+    evidence["review_execution"] = "hosted"
+    evidence["review_evidence"]["review_execution"] = "hosted"
+    evidence["review_evidence"]["artifacts"][0]["review_execution"] = "hosted"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any("supplemental only" in reason for reason in result["reasons"])
+
+
 def test_pr_gate_allows_confirmed_merge_record() -> None:
     result = evaluate_pr_gate(fixture("pr-merge-confirmed.json"))
 
