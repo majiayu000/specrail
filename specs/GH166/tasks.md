@@ -11,25 +11,27 @@ GH-166
 
 ## 实现任务
 
-- [ ] `SP166-T1` `checks/github_evidence_common.py` 新增内容 hash 与注入校验辅助：`compute_content_hashes(pr_payload, diff_text, spec_files) -> {code_diff_hash, spec_files_hash, pr_metadata_hash}`（各类别 SHA-256，diff 规范化去噪、spec markdown 内容拼接、body/title 归一化）；`require_injected_sha(evidence, field, label)` 校验机械 SHA 字段携带 `sha_provenance` 注入来源标记，缺失或与 live head 不一致即 EvidenceError。配套单元用例。Covers: B-001 B-007 B-008。Owner: agent. Done when: 三类 hash 稳定可复算且注入校验覆盖缺失/不一致分支、用例全绿. Verify: `python3 -m pytest -q tests/test_github_pr_evidence.py -k hash`
-- [ ] `SP166-T2` `checks/github_pr_evidence.py` 采集接线：在 `head_sha` 采集处（:291-311）调用 `compute_content_hashes` 写入可选 `content_hashes`，并写入 `sha_provenance` 标记 head_sha/gate_query_head_sha 注入来源；snapshot 一致性（:325）与 head 漂移（:512）分支改为按相关类别 hash 判定复用、仅对变化类别重采，任一相关类别 hash 缺失 fail-closed 回退现状全量重采；未声明 content_hashes 的输入走现状路径零变化。Covers: B-001 B-006 B-011。Owner: agent. Done when: 类别复用/漂移重采用例全绿且既有 github_pr_evidence 用例零改动全绿. Verify: `python3 -m pytest -q tests/test_github_pr_evidence.py`
-- [ ] `SP166-T3` `checks/pr_gate.py` 证据项（:325）扩展：evidence 声明 `content_hashes` + `reuse_binding` 时按类别复用判定 CI/review 证据有效性（B-002/B-004），`pr_metadata_hash` 单独变化不作废任何 CI/review 项（B-005）；机械 SHA 经 `require_injected_sha` 校验；未声明 content_hashes 走现状整体 head_sha 路径零变化。Covers: B-002 B-004 B-005 B-007。Owner: agent. Done when: 类别复用用例通过且既有 pr_gate 用例零改动全绿. Verify: `python3 -m pytest -q tests/test_pr_gate.py`
-- [ ] `SP166-T4` `checks/runtime_gate_rules.py` `_validate_terminal_review_summary`（:210）改造：head_sha 比对（:221）前插入 `code_diff_hash` 一致判定——一致则 review 仍有效跳过 head_sha 逐字要求，缺失/变化回退现状严格校验（fail-closed）；`enforcement_sensitive` item 额外要求相关 hash（spec_files/code_diff）全部一致方可复用，不弱于 GH-97。Covers: B-009 B-010。Owner: agent. Done when: terminal review 复用用例与敏感面严格用例全绿、既有用例零改动. Verify: `python3 -m pytest -q tests/test_runtime_gate_rules.py -k terminal`
-- [ ] `SP166-T5` `checks/runtime_ledger_gate.py` merge-ready 证据校验块接线：类别复用成立时强制审计字段（`content_hashes` 三类齐全、各 `reuse_binding.original_hash` 与来源、机械 SHA 的 `sha_provenance`），任一缺失 → error(blocked)；类别复用不替代任何绿色证据检查。Covers: B-003 B-012。Owner: agent. Done when: 审计字段缺失 fixture blocked、spec_files_hash 复用 fixture allowed、既有用例零改动全绿. Verify: `python3 -m pytest -q tests/test_runtime_ledger_gate.py`
-- [ ] `SP166-T6` 端到端回归与审计演练：构造「仅改 spec markdown 新 head」与「仅改 PR body 新 head」两个 fixture，各跑一次采集 + 四个 gate CLI，确认未变化类别 CI/review 证据判复用、decision 不变；再构造「code_diff_hash 变化」fixture 确认该类别被要求重取。Covers: B-002 B-003 B-004 B-005 B-006。Owner: agent. Done when: 演练脚本化为测试或记录于 PR 描述附命令输出. Verify: `python3 checks/check_workflow.py --repo .`
+- [ ] `SP166-T1` 新增 `checks/evidence_content_binding.py`：实现 base-tree-bound code hash、path+length+bytes spec hash、canonical metadata hash、v1 shape/coverage matcher。Covers: B-001 B-002 B-003 B-008。Owner: implementation lane。Depends on: none。Done when: base advance、rename/split、拼接碰撞、coverage key mismatch 全部有负例。Verify: `/usr/bin/python3 -m pytest -q tests/test_github_pr_evidence.py -k content_binding`。
+- [ ] `SP166-T2` 扩展 `checks/github_evidence_common.py`/`checks/github_pr_evidence.py`：在稳定 final head/base/file/relation snapshot 计算三类 hash，为每个 check 从可信 mapping 注入 coverage；漂移整份 current snapshot 重采。Covers: B-001 B-004 B-008 B-009。Owner: implementation lane。Depends on: T1。Done when: `workflow-check` 覆盖 spec，head/base/files/relation drift 不产生 mixed snapshot。Verify: `/usr/bin/python3 -m pytest -q tests/test_github_pr_evidence.py`。
+- [ ] `SP166-T3` 扩展 `schemas/pr_review_gate.schema.json`、`schemas/review_result.schema.json`、`schemas/runtime_checkpoint.schema.json` 与 schema tests：v1 字段 closed/conditional，legacy 无 provenance 仍合法，partial/unknown/mixed version 拒绝。Covers: B-007 B-008 B-010。Owner: schema lane。Depends on: T1 field contract。Done when: 三 schema 对相同 fixture 判定一致且文件均 ≤800 行。Verify: `/usr/bin/python3 -m pytest -q tests/test_specrail_schema.py tests/test_review_json_gate.py`。
+- [ ] `SP166-T4` 扩展 `checks/review_result_semantics.py` 与 `checks/pr_review_contract.py`：review artifact 声明 covered categories/bindings；previous-head component 仅在全部 covered hash 匹配时复用，spec/metadata covered 变更必失效。Covers: B-003 B-005 B-006 B-011 B-013。Owner: review-contract lane。Depends on: T1 T3。Done when: current/previous-head、spec-aware、sensitive、legacy matrix 全绿且无只看 code hash 的快捷路径。Verify: `/usr/bin/python3 -m pytest -q tests/test_review_json_gate.py tests/test_pr_gate.py`。
+- [ ] `SP166-T5` 更新 `checks/pr_gate.py`：每个 current head 重新采集 live gates，只复用 coverage-matched CI/review components并输出完整 reuse audit；旧 pr_gate decision 不可复用。Covers: B-004 B-006 B-012 B-014。Owner: pr-gate lane。Depends on: T2–T4。Done when: metadata/spec/component cases正确，threads/merge/auth/query freshness 始终 current-head。Verify: `/usr/bin/python3 -m pytest -q tests/test_pr_gate.py tests/test_pr_gate_terminal.py`。
+- [ ] `SP166-T6` 更新 `checks/runtime_gate_rules.py`/`checks/runtime_ledger_gate.py`：previous-head review 走共享 coverage matcher；loaded pr_gate result 与 item `pr_gate.head_sha` 仍严格等于 current item head，只验证内部 reuse audit。Covers: B-011 B-012 B-013 B-014。Owner: runtime lane。Depends on: T3–T5。Done when: current wrapper+reused component allowed，old gate result/missing audit/category mismatch blocked；ledger 文件 ≤800 行。Verify: `/usr/bin/python3 -m pytest -q tests/test_runtime_gate_rules.py tests/test_runtime_ledger_gate.py tests/test_runtime_ledger_review.py`。
+- [ ] `SP166-T7` 端到端覆盖 spec-only、metadata-only、base-advance-same-patch 与 mixed change，运行 full suite/workflow/depth/size gates；不得弱化 legacy assertions。Covers: B-001..B-014。Owner: coordinator。Depends on: T1–T6。Done when: 仅真正 coverage-matched组件复用，current gate与所有实时 gate 重跑，全量绿。Verify: `/usr/bin/python3 -m pytest -q && python3 checks/check_workflow.py --repo . --all-specs && python3 tools/spec_depth_audit.py --spec-dir specs/GH166 --gate`。
 
 ## 并行拆分
 
-T1 先行（定义 hash 计算与字段名）；T2 依赖 T1；T3/T4/T5 各改独立 checks 文件，字段名以 T1 落定后可并行，各自不重叠文件所有权（`checks/pr_gate.py` / `checks/runtime_gate_rules.py` / `checks/runtime_ledger_gate.py`）；T6 依赖 T2-T5。
+T1 先固定 contract；T2 与 T3 可分离。T4 依赖 schema；T5 依赖 collector/review；T6 最后接 runtime。不同 lane 不共享 writable files，reviewer 只读。
 
-## 验证
+## Verification
 
-- `python3 -m pytest -q tests/test_github_pr_evidence.py tests/test_pr_gate.py tests/test_runtime_gate_rules.py tests/test_runtime_ledger_gate.py`
-- `python3 checks/check_workflow.py --repo .`
+- `/usr/bin/python3 -m pytest -q`
+- `python3 checks/check_workflow.py --repo . --all-specs`
+- `python3 tools/spec_depth_audit.py --spec-dir specs/GH166 --gate`
+- `git diff --check`
 
 ## Handoff Notes
 
-- 本实现触及 gate/enforcement 证据语义，`pr_tier: heavy`/敏感：实现 PR 逐 PR 人工授权合并，不得用类别复用给自己的证据松绑。
-- 三类 hash 计算口径集中在 `github_evidence_common.py` 单一来源，勿在各 gate 各算，避免绑定漂移。
-- 兼容硬约束（B-009/B-010）：未声明 content_hashes 的既有 checkpoint/evidence 必须输出逐字节不变，以既有四个 gate 测试零改动为准绳。
-- fail-closed 是本 spec 的安全底线：hash 缺失/无法比对一律按「已变化」，敏感面复用不弱于 GH-97。
+- legacy evidence 不要求 provenance；只有 `content_binding_version: 1` opt-in。
+- `workflow-check` 读取 specs，必须覆盖 `spec_files`。
+- 不复用旧 `pr_gate` decision；implementation PR 用 `Closes #166` 并按 heavy/敏感授权。
