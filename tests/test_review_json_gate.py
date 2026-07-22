@@ -542,7 +542,10 @@ def test_review_manifest_allows_explicit_ungated_review_fields(tmp_path: Path) -
     )
 
     assert result["errors"] == []
-    assert result["blocking_reasons"] == []
+    assert any(
+        "unavailable cannot satisfy merge-ready review evidence" in item
+        for item in result["blocking_reasons"]
+    )
 
 
 def test_review_manifest_blocks_orphan_gate_authorization(tmp_path: Path) -> None:
@@ -622,6 +625,45 @@ def test_review_manifest_blocks_degraded_positive_gate_claims(
         "## Summary",
         f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}\n\n{claim}",
     )
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any("must not claim" in item for item in result["errors"])
+
+
+@pytest.mark.parametrize("location", ["verdict", "comment"])
+def test_review_manifest_blocks_degraded_claims_in_all_published_text(
+    tmp_path: Path,
+    location: str,
+) -> None:
+    artifact = clean_terminal_artifact()
+    artifact["gate_status"] = "unavailable"
+    artifact["gate_authorization"] = "Human authorization: continue without gate"
+    body = artifact["body"]
+    assert isinstance(body, str)
+    artifact["body"] = body.replace(
+        "## Summary", f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}"
+    )
+    if location == "verdict":
+        artifact["body"] = artifact["body"].replace(
+            "## Verdict", "## Verdict\n\nThis review is verified and merge-ready."
+        )
+    else:
+        artifact["comments"] = [
+            {
+                "path": "checks/example.py",
+                "line": 1,
+                "side": "RIGHT",
+                "severity": "suggestion",
+                "body": "This review is verified and merge-ready.",
+            }
+        ]
     manifest_path = write_review_manifest(tmp_path, [artifact])
 
     result = load_review_manifest(
@@ -1002,6 +1044,20 @@ def test_review_json_gate_blocks_unavailable_marker_outside_summary() -> None:
     assert any("requires the ## Summary marker" in item for item in result["reasons"])
 
 
+def test_review_json_gate_requires_exact_case_unavailable_marker() -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "Human authorization: continue without gate"
+    review["body"] = review["body"].replace(
+        "## Summary", "## Summary\n\nspecrail gate status: unavailable"
+    )
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("requires the ## Summary marker" in item for item in result["reasons"])
+
+
 @pytest.mark.parametrize(
     "claim",
     [
@@ -1019,6 +1075,32 @@ def test_review_json_gate_blocks_degraded_positive_gate_claims(claim: str) -> No
         "## Summary",
         f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}\n\n{claim}",
     )
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("must not claim" in item for item in result["reasons"])
+
+
+@pytest.mark.parametrize("location", ["verdict", "comment"])
+def test_review_json_gate_blocks_degraded_claims_in_all_published_text(
+    location: str,
+) -> None:
+    review = load_review("review-valid.json")
+    review["gate_status"] = "unavailable"
+    review["gate_authorization"] = "Human authorization: continue without gate"
+    review["body"] = review["body"].replace(
+        "## Summary", f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}"
+    )
+    if location == "verdict":
+        review["body"] = review["body"].replace(
+            "## Verdict", "## Verdict\n\nThis review is verified and merge-ready."
+        )
+    else:
+        comments = review["comments"]
+        assert isinstance(comments, list)
+        assert isinstance(comments[0], dict)
+        comments[0]["body"] = "This review is verified and merge-ready."
 
     result = evaluate_review_gate(review, load_diff())
 

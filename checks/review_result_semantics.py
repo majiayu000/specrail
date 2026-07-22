@@ -57,6 +57,19 @@ def _summary_section(body: str) -> str | None:
     return body[heading.end() : end]
 
 
+def _published_review_texts(artifact: dict[str, Any]) -> list[str]:
+    texts: list[str] = []
+    body = artifact.get("body")
+    if isinstance(body, str):
+        texts.append(body)
+    comments = artifact.get("comments")
+    if isinstance(comments, list):
+        for comment in comments:
+            if isinstance(comment, dict) and isinstance(comment.get("body"), str):
+                texts.append(comment["body"])
+    return texts
+
+
 def validate_degraded_review_provenance(
     artifact: dict[str, Any],
 ) -> tuple[list[str], list[str]]:
@@ -70,7 +83,7 @@ def validate_degraded_review_provenance(
     has_gate_authorization = "gate_authorization" in artifact
     body = artifact.get("body")
     body_text = body if isinstance(body, str) else ""
-    marker_present = UNGATED_DISCLOSURE_MARKER.casefold() in body_text.casefold()
+    marker_present = UNGATED_DISCLOSURE_MARKER in body_text
 
     if has_gate_status:
         if gate_status not in GATE_STATUSES:
@@ -90,14 +103,17 @@ def validate_degraded_review_provenance(
         summary = _summary_section(body_text)
         summary_has_marker = (
             summary is not None
-            and UNGATED_DISCLOSURE_MARKER.casefold() in summary.casefold()
+            and UNGATED_DISCLOSURE_MARKER in summary
         )
         if summary_has_marker:
             satisfied.append("body discloses unavailable SpecRail gate")
-            if DEGRADED_POSITIVE_CLAIM_RE.search(summary):
+            if any(
+                DEGRADED_POSITIVE_CLAIM_RE.search(text)
+                for text in _published_review_texts(artifact)
+            ):
                 errors.append(
-                    "gate_status unavailable ## Summary must not claim the review "
-                    "is SpecRail-gated, verified, or merge-ready"
+                    "gate_status unavailable published review text must not claim "
+                    "the review is SpecRail-gated, verified, or merge-ready"
                 )
         elif body_text:
             errors.append(
@@ -303,6 +319,10 @@ def validate_review_artifact(
         blockers.append(f"review status is not completed: {status}")
     if verdict not in MERGE_READY_VERDICTS:
         blockers.append(f"review verdict is not merge-ready: {verdict}")
+    if artifact.get("gate_status") == "unavailable":
+        blockers.append(
+            "gate_status unavailable cannot satisfy merge-ready review evidence"
+        )
     if verdict == "clean" and normalized_findings:
         blockers.append("clean verdict requires zero findings")
     for finding in normalized_findings:

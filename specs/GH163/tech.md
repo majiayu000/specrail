@@ -31,12 +31,14 @@ GH-163
 2. Degraded artifact 使用两个可选顶层字段：`gate_status` 闭集为
    `gated | unavailable`，`gate_authorization` 保存人工授权原文。
 3. 共享 semantic validator 双向校验 status/auth/marker：unavailable 要求非空白授权、
-   marker 位于 `## Summary` 且不得声称 SpecRail-gated、verified 或 merge-ready；反向
-   出现 marker 或授权也必须配套 unavailable 状态。
+   exact-case marker 位于 `## Summary`；完整 body 与 published comment text 均不得声称
+   SpecRail-gated、verified 或 merge-ready；反向出现 marker 或授权也必须配套
+   unavailable 状态。
 4. `review_result.schema.json` 接受新字段，并用 conditional schema 与 `\\S` pattern
    执行可移植的结构约束；旧 artifact 不声明字段时不触发 conditional。
 5. JSON gate 与 schema-backed manifest 都调用共享 semantic validator，保证两个
-   trust boundary 对同一 artifact 给出一致的 fail-closed 结果。
+   trust boundary 对同一 artifact 给出一致的 fail-closed 结果。合规 unavailable
+   artifact 可发布用于审计，但 semantic layer 固定返回 merge-readiness blocker。
 
 ## Product-to-Test Mapping
 

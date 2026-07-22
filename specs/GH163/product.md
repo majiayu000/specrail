@@ -33,14 +33,16 @@ GH-163
 4. B-004 只有当前人工明确授权时才允许继续 degraded review；artifact 必须记录
    `gate_status: unavailable` 与非空 `gate_authorization`。
 5. B-005 degraded review 的 `## Summary` 必须包含稳定标记
-   `SpecRail gate status: unavailable`，且不得声称 SpecRail-gated、verified 或
-   merge-ready。
+   `SpecRail gate status: unavailable`（大小写精确匹配）；完整 review body 与 published
+   comment text 均不得声称 SpecRail-gated、verified 或 merge-ready。
 6. B-006 `gate_status`、`gate_authorization` 与 unavailable marker 必须双向一致：
    状态越界、缺少或空白授权、marker 不在 `## Summary`、marker 未配套
    `gate_status: unavailable`，或授权字段脱离 unavailable 状态单独出现时，JSON
    gate 与 schema-backed manifest 都必须 fail closed。
-7. B-007 schema-backed review manifest 必须接受满足 B-004/B-005 的 artifact；
-   未声明的新字段仍由 `additionalProperties: false` 拒绝。
+7. B-007 schema-backed review manifest 必须接受满足 B-004/B-005 的 artifact 供审计与
+   发布，但 `gate_status: unavailable` 必须产生 merge-readiness blocker，不能作为 PR
+   gate 的 terminal clean evidence；未声明的新字段仍由 `additionalProperties: false`
+   拒绝。
 8. B-008 未声明 `gate_status` 与 `gate_authorization` 的既有 artifact 保持原行为，
    不因本变更被强制迁移为 degraded review。
 9. B-009 gate 拒绝时必须保留 rejection evidence，后续修复不得通过忽略门禁推进。
