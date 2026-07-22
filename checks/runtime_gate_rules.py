@@ -8,7 +8,9 @@ failures, session budgets, tranche spec/impl mix, and goal candidates.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from runtime_budget_dimensions import (
@@ -18,10 +20,13 @@ from runtime_budget_dimensions import (
     judge_dimension,
     judge_hard_dimensions,
 )
+from review_result_semantics import validate_review_artifact
 from session_telemetry import parse_timestamp
+from specrail_lib import SpecRailError, validate_instance
 
 
 REVIEW_SOURCES = {"independent_lane", "self_review"}
+REVIEW_EXECUTIONS = {"hosted", "local"}
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
 LANE_FAILURE_BLOCKED_REASON = "reviewer_lane_failure"
 LANE_FAILURE_DOWNGRADE_STATES = {"blocked", "needs_human"}
@@ -33,6 +38,69 @@ BUDGET_BASES_V3 = BUDGET_BASES | {"runtime_dims"}
 BUDGET_STOP_REASONS = {"budget_exhausted", "queue_empty", "user_interrupt", "blocked"}
 TELEMETRY_SOURCES = {"runtime", "session_log", "unavailable"}
 TRUSTED_TELEMETRY_SOURCES = {"runtime", "session_log"}
+
+_REVIEW_RESULT_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[1] / "schemas" / "review_result.schema.json"
+)
+_review_result_schema_cache: dict[str, Any] | None = None
+
+
+def _review_result_schema() -> dict[str, Any]:
+    global _review_result_schema_cache
+    if _review_result_schema_cache is None:
+        _review_result_schema_cache = json.loads(
+            _REVIEW_RESULT_SCHEMA_PATH.read_text(encoding="utf-8")
+        )
+    return _review_result_schema_cache
+
+
+def _load_review_artifact_payload(
+    raw_item: dict[str, Any],
+    label: str,
+    errors: list[str],
+    *,
+    required: bool = False,
+) -> dict[str, Any] | None:
+    review = raw_item.get("review")
+    reference = review.get("evidence") if isinstance(review, dict) else None
+    if (
+        not isinstance(reference, str)
+        or not reference.strip()
+        or reference.startswith(("https://", "http://"))
+    ):
+        if required:
+            errors.append(
+                f"{label}: review.evidence must be a local machine-readable artifact path"
+            )
+        return None
+    path = Path(reference).expanduser()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        if required:
+            errors.append(f"{label}: cannot load review artifact {path}: {exc}")
+        return None
+    if not isinstance(payload, dict):
+        if required:
+            errors.append(f"{label}: review artifact JSON must be an object: {path}")
+        return None
+    try:
+        validate_instance(_review_result_schema(), payload, f"{label}: review artifact")
+    except SpecRailError as exc:
+        errors.append(str(exc))
+        return None
+    semantic = validate_review_artifact(
+        payload,
+        expected_pr=raw_item.get("pr"),
+        expected_head_sha=raw_item.get("head_sha"),
+        expected_lane=review.get("reviewer_lane"),
+    )
+    semantic_errors = [*semantic["errors"], *semantic["blocking_reasons"]]
+    if semantic_errors:
+        errors.extend(
+            f"{label}: review artifact: {message}" for message in semantic_errors
+        )
+    return payload
 
 
 def _require_positive_int(
@@ -210,6 +278,8 @@ def _validate_self_review_authorization(
 def _validate_terminal_review_summary(
     review: dict[str, Any],
     *,
+    artifact: dict[str, Any] | None,
+    expected_pr: Any,
     head_sha: Any,
     review_source: Any,
     label: str,
@@ -220,6 +290,49 @@ def _validate_terminal_review_summary(
             errors.append(f"{label}: terminal review requires review.{key}")
     if review.get("head_sha") != head_sha:
         errors.append(f"{label}: terminal review head_sha must match item head_sha")
+    execution = review.get("review_execution")
+    if execution not in REVIEW_EXECUTIONS:
+        allowed = ", ".join(sorted(REVIEW_EXECUTIONS))
+        errors.append(
+            f"{label}: terminal review requires review.review_execution (one of: {allowed})"
+        )
+    elif execution != "local":
+        errors.append(
+            f"{label}: hosted review is supplemental only; primary review must be local"
+        )
+    if artifact is None:
+        errors.append(f"{label}: terminal review requires a local machine-readable artifact")
+    else:
+        if artifact.get("pr") != expected_pr:
+            errors.append(f"{label}: review artifact.pr must match item pr")
+        artifact_execution = artifact.get("review_execution")
+        if artifact_execution not in REVIEW_EXECUTIONS:
+            allowed = ", ".join(sorted(REVIEW_EXECUTIONS))
+            errors.append(
+                f"{label}: review artifact requires review_execution (one of: {allowed})"
+            )
+        elif artifact_execution != "local":
+            errors.append(
+                f"{label}: hosted review artifact is supplemental only; primary review must be local"
+            )
+        bindings = {
+            "artifact_id": "artifact_id",
+            "reviewer_lane": "reviewer_lane",
+            "review_source": "review_source",
+            "review_execution": "review_execution",
+            "head_sha": "head_sha",
+            "review_completed_at": "review_completed_at",
+            "terminal_status": "status",
+            "verdict": "verdict",
+            "human_final_review_required": "human_final_review_required",
+            "findings": "findings",
+            "prior_findings": "prior_findings",
+        }
+        for summary_key, artifact_key in bindings.items():
+            if review.get(summary_key) != artifact.get(artifact_key):
+                errors.append(
+                    f"{label}: review.{summary_key} must match review artifact.{artifact_key}"
+                )
     if review.get("terminal_status") != "completed":
         errors.append(f"{label}: terminal review status must be completed")
     if review.get("verdict") not in {"clean", "non_blocking"}:

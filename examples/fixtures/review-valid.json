@@ -4,6 +4,7 @@
   "reviewer_lane": "reviewer-1",
   "producer_identity": "agent-reviewer-1",
   "review_source": "independent_lane",
+  "review_execution": "local",
   "head_sha": "aaaa000000000000000000000000000000000001",
   "review_started_at": "2026-07-16T00:00:00Z",
   "review_completed_at": "2026-07-16T00:01:00Z",

@@ -17,6 +17,13 @@ route to `skills/specrail-implement/SKILL.md` instead.
    - identify the `implement` route and human gates
 2. Fetch current remote state before mapping the queue.
 3. List open issues, open PRs, local branch, dirty files, and worktrees.
+   Apply queue skip labels before anything else enters the queue: any issue or
+   PR carrying a label in `QUEUE_SKIP_LABELS` (default: `parked`) is excluded
+   from the actionable queue, and so is any open PR whose linked issue carries
+   a skip label. Draft PRs are also excluded. Skipped items are reported once
+   in `human_decisions` and never re-entered within the run, including after
+   compaction re-fetches. A skip label always wins over `ready_to_implement`
+   or any other actionable state label on the same item.
 4. For each candidate issue, read:
    - the GitHub issue
    - `specs/GH<issue-number>/product.md`
@@ -61,6 +68,35 @@ Implementation candidates are only `complete`, `umbrella_covered`, or
 SpecRail spec-writing or task-planning skill first. Do not implement from only
 issue text, PR comments, or old chat context unless the user explicitly
 authorizes a non-spec exception and the checkpoint records the reason.
+
+### Done-When Gate
+
+Spec coverage is not enough: an implementation candidate must also have a
+decidable completion criterion before it enters an auto queue. Check the
+issue body (and its spec packet) for at least one of:
+
+- an enumerated checklist of concrete items (finite N, checkable off)
+- explicit acceptance criteria that a reviewer can evaluate as pass/fail
+- a verification command whose success closes the issue
+
+Issues without any of these classify as `needs_scope`. Open-ended phrasing
+is a strong signal: "backlog", "precision gaps", "edge cases as discovered",
+"continuous improvement", 补齐, 持续优化. These issues can regenerate work
+indefinitely — an agent that loses working memory to compaction will re-derive
+"there is still more to do" every round and never converge.
+
+Routing for `needs_scope`:
+
+- `auth_mode: auto`: never implement. Skip the issue, record it in
+  `human_decisions` with the reason `no decidable done-when`, and keep
+  draining. Do not auto-apply readiness labels to `needs_scope` issues.
+- `auth_mode: review`: ask the human to either scope the issue into an
+  enumerated checklist or park it before any implementation lane opens.
+
+Scoping the issue (rewriting it into a finite checklist) is itself valid
+queue work in `full_queue_drain`, like `needs_spec` — but the rewritten
+checklist is a human gate in both auth modes: auto may draft it, never
+self-approve it.
 
 Spec-drafting authorization depends on `auth_mode`:
 
@@ -311,12 +347,13 @@ When a reviewer lane fails:
   fresh explicit self-review authorization after reporting the failure
 
 If recovery uses a new independent reviewer lane, record
-`review_source: independent_lane` and keep the lane failure history in evidence.
+`review_source: independent_lane`, `review_execution: local`, and keep the lane
+failure history in evidence.
 If recovery uses self-review, record `review_source: self_review` and
-`self_review_authorization` with actor, source, and scope from the current
-conversation after the failure was reported. Prior queue-drain or generic merge
-authorization does not cover a later self-review substitution unless it
-explicitly scoped that failure path.
+`review_execution: local`, plus `self_review_authorization` with actor, source,
+and scope from the current conversation after the failure was reported. Prior
+queue-drain or generic merge authorization does not cover a later self-review
+substitution unless it explicitly scoped that failure path.
 
 ## Context Budget
 
@@ -416,6 +453,38 @@ session JSONL as queue state. The only permitted session-jsonl access is the
 read-only telemetry collector `checks/session_telemetry.py`, which returns
 event counters, never content. Use the checkpoint, repo-local run logs, and
 fresh remote truth.
+
+### Same-Issue Circuit Breaker
+
+Budget dimensions bound a tranche; the circuit breaker bounds a single issue
+across tranches and sessions. It exists because an open-ended issue plus
+compaction produces near-duplicate work rounds that each look reasonable in
+isolation — only the accumulated history reveals the loop.
+
+Before opening an implementation lane for an issue, check loop evidence
+against remote truth (not conversation memory):
+
+- `git log` on the default branch and the issue's PR branch: count commits
+  whose message references this issue (`GH<n>` or `#<n>`).
+- The issue's existing PRs: count prior implementation rounds (pushes or
+  review cycles) that did not end in closure.
+
+Trip conditions (any one trips the breaker):
+
+- 5 or more commits referencing the issue already exist without the issue
+  closing
+- 3 or more consecutive commits with near-identical message prefixes
+  targeting the issue (for example repeated `fix(rules): ... <same area>`)
+- the checkpoint records 3 or more prior tranches that worked this issue
+  without closure
+
+When tripped: do not open the lane. In `auth_mode: auto`, apply the `parked`
+label to the issue and its open PRs, convert open PRs for the issue to
+draft, record the trip evidence in `human_decisions`, and keep draining the
+rest of the queue. In `auth_mode: review`, stop and present the evidence.
+A tripped issue re-enters the queue only after a human removes `parked` —
+typically after the Done-When Gate rescope. The breaker has no auto-mode
+override; continuing on a tripped issue always requires a human decision.
 
 ## Output Firewall
 
@@ -580,6 +649,8 @@ For GitHub PRs, current evidence must include:
 - independent reviewer or merge-reviewer lane evidence
 - native reviewer thread evidence when native subagents are available
 - `review_source` (`independent_lane` or `self_review`)
+- `review_execution: local` for the terminal primary artifact; hosted GitHub
+  review is supplemental only
 - `lane_failures[]`, empty when no reviewer lane failed
 - `self_review_authorization` when `review_source: self_review`
 - GraphQL review-thread state
@@ -611,7 +682,8 @@ license to continue:
    (for example `reviewer_lane_failure`) and report it in the handoff, or
 3. Recover by spawning a new independent reviewer lane; the retry lane must be
    a different lane than the failed one and its review recorded with
-   `review.review_source: independent_lane`.
+   `review.review_source: independent_lane` and
+   `review.review_execution: local`.
 
 Silent self-review substitution is forbidden. `review.review_source:
 self_review` never satisfies the independent-review requirement on its own;

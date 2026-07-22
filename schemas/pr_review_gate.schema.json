@@ -18,6 +18,7 @@
     "reviews",
     "review_threads",
     "review_source",
+    "review_execution",
     "review_evidence",
     "lane_failures"
   ],
@@ -358,6 +359,7 @@
         "pr",
         "head_sha",
         "review_source",
+        "review_execution",
         "review_completed_at",
         "human_final_review_required",
         "lane_roster",
@@ -373,6 +375,7 @@
         "pr": {"type": "integer", "minimum": 1},
         "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
         "review_source": {"enum": ["independent_lane", "self_review"]},
+        "review_execution": {"enum": ["local", "hosted"]},
         "review_completed_at": {"type": "string", "minLength": 1},
         "human_final_review_required": {"type": "boolean"},
         "lane_roster": {
@@ -427,6 +430,10 @@
     "review_source": {
       "enum": ["independent_lane", "self_review"],
       "description": "Source of the merge review. Only independent_lane satisfies the independent-review requirement."
+    },
+    "review_execution": {
+      "enum": ["local", "hosted"],
+      "description": "Execution provenance derived from the trusted review manifest. hosted is supplemental only."
     },
     "human_authorization": {
       "type": "object",

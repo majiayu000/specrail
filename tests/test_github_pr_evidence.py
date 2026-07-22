@@ -63,6 +63,7 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
 
     assert evidence["pr"] == 10
     assert evidence["review_source"] == "independent_lane"
+    assert evidence["review_execution"] == "local"
     assert evidence["lane_failures"] == []
     assert evidence["gate_query_head_sha"] == "e36d97517d8d0b27faca1abe5e5c63f9f88684d9"
     assert evidence["gate_query_completed_at"].endswith("Z")
@@ -107,6 +108,21 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
         }
     ]
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
+
+
+def test_build_evidence_rejects_hosted_review_as_primary() -> None:
+    review_evidence = clean_review_evidence()
+    review_evidence["review_execution"] = "hosted"
+    review_evidence["artifacts"][0]["review_execution"] = "hosted"
+
+    with pytest.raises(EvidenceError, match="supplemental only"):
+        build_evidence(
+            pr_payload(),
+            threads_payload(),
+            review_source="independent_lane",
+            review_evidence=review_evidence,
+            resolver_roles=reviewer_resolver_roles(),
+        )
 
 
 def test_build_evidence_derives_sensitive_classification_and_approved_spec(

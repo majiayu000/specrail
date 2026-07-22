@@ -866,6 +866,7 @@ def _review_artifact_payload(**overrides: object) -> dict[str, object]:
         "reviewer_lane": "merge-reviewer-1",
         "producer_identity": "reviewer-1",
         "review_source": "independent_lane",
+        "review_execution": "local",
         "head_sha": HEAD_SHA,
         "review_started_at": "2026-06-30T11:55:00Z",
         "review_completed_at": "2026-06-30T12:00:00Z",

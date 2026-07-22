@@ -181,6 +181,15 @@ available. Record `thread_dispatch_gate` before implementation, review, or
 merge work. A coordinator self-review is not a native thread and does not
 satisfy merge review.
 
+Primary reviewer evidence must be produced by a local reviewer execution and
+record `review_execution: local` on the exact-head terminal artifact. A local
+`codex review --base <base>` invocation or a native reviewer/merge-reviewer
+lane may produce that artifact. GitHub comments such as `@codex review` invoke
+a hosted service: they may be requested and reported as supplemental hosted
+review, but they must not populate the primary reviewer artifact, satisfy the
+reviewer-lane gate, or be described simply as "Codex review" without the
+hosted qualifier.
+
 If no native threads capability is available, continue with the single-agent
 SpecRail flow only after recording the fallback and reporting that no native
 threads were launched.
@@ -202,6 +211,8 @@ model-driven poll loop. See Waiting Discipline in
   require per-PR human authorization.
 - Do not treat green CI as merge readiness without review-thread and merge-state
   truth.
+- Do not treat hosted review as the primary local reviewer lane; hosted review
+  is supplemental even when it is independent of the implementer.
 - Do not close an issue from a partial implementation.
 - Do not replace an existing maintainer-writable PR unless it is stale, unsafe,
   unwritable, or a human approves replacement.

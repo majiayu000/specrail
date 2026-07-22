@@ -26,7 +26,11 @@ python3 checks/route_gate.py --repo . --route review_pr --issue <issue-number> -
    `side` values, and only add `start_line` / `start_side` together for an
    inclusive diff range. Suggested changes must be non-empty and appear only on
    RIGHT-side comments, either through a `suggestion` field, a fenced
-   `suggestion` block, or both.
+   `suggestion` block, or both. Record `review_execution: local` for the
+   terminal artifact produced by the local CLI/native reviewer lane. A GitHub
+   hosted `@codex review` may be supplemental, but if recorded separately it
+   uses `review_execution: hosted` and never replaces the local primary
+   artifact.
 7. Validate review artifacts against the diff when the gate exists:
 
 ```sh

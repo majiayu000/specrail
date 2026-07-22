@@ -73,6 +73,9 @@ Required evidence:
 - `review_source`: `independent_lane` for a real reviewer/merge-reviewer lane,
   or `self_review` when a lane failure was reported and self-review was
   explicitly authorized.
+- `review_execution`: `local` for the primary exact-head reviewer artifact.
+  `hosted` reviews, including GitHub `@codex review`, are supplemental only and
+  cannot satisfy the primary review gate.
 - `lane_failures`: an array, empty when no reviewer lane failed.
 - `merge_dispatched_at` and `merge_head_sha` when auditing a merge record after
   dispatch.
@@ -95,6 +98,7 @@ and rerun `pr_gate.py` before merging.
 - Do not merge from this skill.
 - Do not dispatch gate queries and merge in parallel.
 - Do not treat green CI alone as merge readiness.
+- Do not substitute a hosted bot review for a local CLI/native reviewer lane.
 - Do not ignore unresolved review threads.
 - Do not replace maintainer final review or human merge authorization.
 
