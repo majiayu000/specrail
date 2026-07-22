@@ -27,7 +27,11 @@ python3 checks/route_gate.py --repo . --route review_pr --issue <issue-number> -
    `side` values, and only add `start_line` / `start_side` together for an
    inclusive diff range. Suggested changes must be non-empty and appear only on
    RIGHT-side comments, either through a `suggestion` field, a fenced
-   `suggestion` block, or both.
+   `suggestion` block, or both. Record `review_execution: local` for the
+   terminal artifact produced by the local CLI/native reviewer lane. A GitHub
+   hosted `@codex review` may be supplemental, but if recorded separately it
+   uses `review_execution: hosted` and never replaces the local primary
+   artifact.
 7. Validate the review artifact against the diff. This is mandatory whenever a
    review artifact was produced in step 6 and `checks/review_json_gate.py`
    exists; an unvalidated artifact must not be published.
@@ -53,9 +57,10 @@ step 3, and never let a missing or failing gate pass as a completed check.
 If a human explicitly asks to continue without a gate, the review may proceed
 only as an explicitly degraded pass:
 
-- Record `gate_status: "unavailable"` and the quoted human authorization in the
-  review result JSON.
-- State in `## Summary` that no SpecRail gate validated this review.
+- Record `gate_status: "unavailable"` and put the quoted human authorization in
+  `gate_authorization` in the review result JSON.
+- State in `## Summary` that no SpecRail gate validated this review and include
+  the stable marker `SpecRail gate status: unavailable`.
 - Do not describe the result as SpecRail-gated, verified, or merge-ready.
 
 ## Review Rounds And Modes

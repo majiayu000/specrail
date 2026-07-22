@@ -33,6 +33,7 @@
         "reviewer_lane": "merge-reviewer-2",
         "status": "passed",
         "review_source": "independent_lane",
+        "review_execution": "local",
         "evidence": "artifacts/reviews/t01/merge-reviewer-2.json",
         "blocking_findings": []
       },

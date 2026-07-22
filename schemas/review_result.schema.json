@@ -32,6 +32,18 @@
     },
     {
       "if": {
+        "properties": {"gate_status": {"const": "unavailable"}},
+        "required": ["gate_status"]
+      },
+      "then": {
+        "required": ["gate_authorization"],
+        "properties": {
+          "body": {"pattern": "SpecRail gate status: unavailable"}
+        }
+      }
+    },
+    {
+      "if": {
         "properties": {"review_completed_at": {"type": "null"}},
         "required": ["review_completed_at"]
       },
@@ -45,6 +57,10 @@
     "producer_identity": {"type": "string", "minLength": 1},
     "review_source": {
       "enum": ["independent_lane", "self_review"]
+    },
+    "review_execution": {
+      "enum": ["local", "hosted"],
+      "description": "Execution location. local artifacts may serve as primary review; hosted artifacts are supplemental only and fail the primary review semantic gate."
     },
     "head_sha": {
       "type": "string",
@@ -123,6 +139,8 @@
         {"type": "null"}
       ]
     },
+    "gate_status": {"enum": ["gated", "unavailable"]},
+    "gate_authorization": {"type": "string", "minLength": 1},
     "body": {
       "type": "string",
       "minLength": 1,
