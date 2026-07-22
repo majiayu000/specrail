@@ -6,7 +6,7 @@ GH-163
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":163,"complete":true,"paths":["checks/review_json_gate.py","schemas/review_result.schema.json","skills/specrail-review-pr/SKILL.md","skills-lock.json","tests/test_review_json_gate.py","specs/GH163/product.md","specs/GH163/tech.md","specs/GH163/tasks.md"],"spec_refs":["specs/GH163/product.md","specs/GH163/tech.md"]}
+{"version":1,"issue":163,"complete":true,"paths":[".gitignore","checks/review_json_gate.py","schemas/review_result.schema.json","skills/specrail-review-pr/SKILL.md","skills-lock.json","tests/test_review_json_gate.py","specs/GH163/product.md","specs/GH163/tech.md","specs/GH163/tasks.md"],"spec_refs":["specs/GH163/product.md","specs/GH163/tech.md"]}
 -->
 
 ## Product Spec
@@ -21,6 +21,7 @@ GH-163
 | Artifact JSON gate | `checks/review_json_gate.py:170` | `_validate_top_level()` 校验允许字段、body heading 与 review 状态 | degraded evidence 必须在同一门禁内 fail closed |
 | Artifact schema | `schemas/review_result.schema.json:1` | `additionalProperties: false`；manifest loader 使用此 schema | 新字段若未进入 schema，会在下游被拒绝 |
 | Manifest loader | `checks/review_result_semantics.py:257` | `load_review_manifest()` 在聚合前执行 schema validation | 用于验证合规 degraded artifact 的端到端兼容性 |
+| Rejection artifacts | `.gitignore:7` | 本地 rejection evidence 不进入版本控制 | 允许按 B-009 持久化失败证据而不污染 PR |
 | Regression tests | `tests/test_review_json_gate.py:510` | 同时覆盖 JSON gate 与 schema-backed manifest | 可证明 checker 与 schema 不再漂移 |
 
 ## 设计方案
