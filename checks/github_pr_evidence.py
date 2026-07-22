@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -12,7 +13,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from github_evidence_common import EvidenceError, json_object
+from evidence_content_binding import (
+    build_content_binding_evidence,
+    build_component_binding,
+    checkout_is_exact_head as _checkout_is_exact_head,
+    collect_reuse_audits,
+    collect_content_binding as _collect_content_binding,
+    load_versioned_pr_evidence,
+    merge_reusable_ci_checks,
+    validate_content_binding,
+)
+from github_evidence_common import (
+    EvidenceError, json_object, trusted_ci_coverage,
+)
 from github_approved_spec_evidence import collect_approval_metadata
 from github_issue_reference import (
     normalize_issue_reference,
@@ -40,8 +53,9 @@ from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
 PR_VIEW_FIELDS = [
-    "number", "state", "isDraft", "headRefOid", "mergeStateStatus", "body",
-    "closingIssuesReferences", "statusCheckRollup", "reviews",
+    "number", "state", "isDraft", "headRefOid", "headRefName", "baseRefName", "baseRefOid",
+    "mergeStateStatus", "title", "body", "closingIssuesReferences",
+    "statusCheckRollup", "reviews",
 ]
 
 REVIEW_THREADS_QUERY = """
@@ -227,8 +241,15 @@ def _rollup_items(value: Any) -> list[Any]:
     raise EvidenceError("statusCheckRollup must be a list or nodes object")
 
 
-def normalize_checks(value: Any) -> list[dict[str, str]]:
-    checks: list[dict[str, str]] = []
+def normalize_checks(
+    value: Any,
+    content_binding: dict[str, Any] | None = None,
+    head_sha: str | None = None,
+) -> list[dict[str, Any]]:
+    hashes = None
+    if content_binding is not None:
+        hashes = validate_content_binding(content_binding)["content_hashes"]
+    checks: list[dict[str, Any]] = []
     for index, item in enumerate(_rollup_items(value), start=1):
         if not isinstance(item, dict):
             raise EvidenceError(f"statusCheckRollup item #{index} must be an object")
@@ -247,6 +268,18 @@ def normalize_checks(value: Any) -> list[dict[str, str]]:
         url = item.get("detailsUrl") or item.get("targetUrl")
         if isinstance(url, str) and url.strip():
             check["url"] = url.strip()
+        coverage = trusted_ci_coverage(name)
+        if hashes is not None and coverage is not None:
+            if not isinstance(head_sha, str) or not head_sha.strip():
+                raise EvidenceError("v1 CI check requires the current head SHA")
+            check.update(build_component_binding(coverage, hashes))
+            check["artifact_id"] = "github-check:" + hashlib.sha256(
+                json.dumps(
+                    item, allow_nan=False, ensure_ascii=False,
+                    separators=(",", ":"), sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            check["head_sha"] = head_sha.strip()
         checks.append(check)
     return checks
 
@@ -287,6 +320,8 @@ def build_evidence(
     pr_snapshot: dict[str, Any] | None = None,
     review_evidence: dict[str, Any] | None = None,
     gate_started_at: str | None = None,
+    content_binding: dict[str, Any] | None = None,
+    reusable_ci_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     linked_issue, issue_reference = normalize_issue_reference(
@@ -311,13 +346,21 @@ def build_evidence(
         "gate_query_head_sha": head_sha,
         "merge_state": _require_string(pr_payload, "mergeStateStatus").upper(),
         "linked_issue": linked_issue,
-        "checks": normalize_checks(pr_payload.get("statusCheckRollup")),
+        "checks": merge_reusable_ci_checks(
+            normalize_checks(
+                pr_payload.get("statusCheckRollup"), content_binding, head_sha
+            ),
+            reusable_ci_evidence,
+            content_binding,
+        ),
         "reviews": normalize_reviews(pr_payload.get("reviews")),
         "review_threads": normalize_review_threads(threads_payload, resolver_roles),
         "lane_failures": lane_failures or [],
     }
     if issue_reference is not None:
         evidence["issue_reference"] = issue_reference
+    if content_binding is not None:
+        evidence.update(validate_content_binding(content_binding))
     if repo is not None and config is not None:
         declaration = enforcement_declaration(pr_payload.get("body"))
         registry = sensitive_registry(config)
@@ -410,6 +453,10 @@ def build_evidence(
         evidence["review_execution"] = derived_execution
         evidence["review_evidence"] = review_evidence
         evidence["review_completed_at"] = review_evidence.get("review_completed_at")
+    if content_binding is not None:
+        evidence["reused_components"] = collect_reuse_audits(
+            evidence["checks"], review_evidence, content_binding, head_sha
+        )
     if authorization is not None:
         evidence["human_authorization"] = authorization
     if self_review_authorization is not None:
@@ -439,6 +486,8 @@ def collect_evidence(
     repo: Path | None = None,
     config: PackConfig | None = None,
     review_manifest: str | None = None,
+    content_binding_v1: bool = False,
+    reusable_ci_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if expected_issue is not None and (
         not isinstance(expected_issue, int)
@@ -453,15 +502,36 @@ def collect_evidence(
     pr_payload_before = collect_pr_view(github_repo, pr_number)
     head_sha_before = _require_string(pr_payload_before, "headRefOid")
     relation_snapshot_before = relation_snapshot(pr_payload_before)
+    binding_enabled = content_binding_v1
+    if binding_enabled and repo is None:
+        raise EvidenceError("--content-binding-v1 requires a repository checkout")
+    if binding_enabled and not _checkout_is_exact_head(repo, head_sha_before):
+        raise EvidenceError("content binding requires an exact-head repository checkout")
+    if reusable_ci_evidence is not None and not binding_enabled:
+        raise EvidenceError("reusing CI evidence requires --content-binding-v1")
+    if reusable_ci_evidence is not None:
+        if reusable_ci_evidence.get("pr") != pr_number:
+            raise EvidenceError("reused PR evidence must match the current PR number")
+        if reusable_ci_evidence.get("head_sha") == head_sha_before:
+            raise EvidenceError("reused PR evidence must come from a previous head")
     file_snapshot_before = None
-    if repo is not None and config is not None and (enforcement_declaration(pr_payload_before.get("body")) is not None or any(sensitive_registry(config).values())):
+    if binding_enabled or (
+        repo is not None and config is not None
+        and (enforcement_declaration(pr_payload_before.get("body")) is not None
+             or any(sensitive_registry(config).values()))
+    ):
         file_snapshot_before = collect_pr_file_snapshot(
             owner, name, pr_number, run_gh_json, run_gh_json)
         if file_snapshot_before["head_sha"] != head_sha_before:
             raise EvidenceError("PR view and file snapshot head SHA disagree")
+        if file_snapshot_before["base_sha"] != _require_string(
+            pr_payload_before, "baseRefOid"
+        ):
+            raise EvidenceError("PR view and file snapshot base SHA disagree")
     threads_payload = collect_review_threads(owner, name, pr_number)
 
     issue_payload = None
+    partial_issue_relation_before = None
     closing_issue_numbers = list(relation_snapshot_before[1])
     if expected_issue is not None and expected_issue not in closing_issue_numbers:
         body = relation_snapshot_before[0]
@@ -470,10 +540,13 @@ def collect_evidence(
                 f"PR body must contain a standalone Refs #{expected_issue} directive"
             )
         issue_payload = collect_issue_view(github_repo, expected_issue)
+        _linked_issue, partial_issue_relation_before = normalize_issue_reference(
+            pr_payload_before, expected_issue, issue_payload
+        )
 
     approval_metadata = None
-    if file_snapshot_before is not None:
-        assert file_snapshot_before is not None
+    enforcement_sensitive = False
+    if file_snapshot_before is not None and repo is not None and config is not None:
         declaration = enforcement_declaration(pr_payload_before.get("body"))
         registry = sensitive_registry(config)
         if declaration is not None or registry["paths"] or registry["specs"]:
@@ -493,6 +566,7 @@ def collect_evidence(
             except SpecRailError as exc:
                 raise EvidenceError(str(exc)) from exc
             if declaration is True or classification["enforcement_sensitive"]:
+                enforcement_sensitive = True
                 if linked_issue is None:
                     raise EvidenceError(
                         "enforcement-sensitive PR requires a linked issue"
@@ -524,6 +598,33 @@ def collect_evidence(
         raise EvidenceError(
             "PR issue relation changed while collecting gate evidence; rerun PR evidence collection"
         )
+    if file_snapshot_after is not None and file_snapshot_after["base_sha"] != _require_string(
+        pr_payload_after, "baseRefOid"
+    ):
+        raise EvidenceError("PR view and file snapshot base SHA disagree")
+
+    if partial_issue_relation_before is not None:
+        assert expected_issue is not None
+        issue_payload = collect_issue_view(github_repo, expected_issue)
+        _linked_issue, partial_issue_relation_after = normalize_issue_reference(
+            pr_payload_after, expected_issue, issue_payload
+        )
+        if partial_issue_relation_before != partial_issue_relation_after:
+            raise EvidenceError(
+                "partial issue relation changed while collecting gate evidence; "
+                "rerun PR evidence collection"
+            )
+
+    _linked_issue, issue_reference = normalize_issue_reference(
+        pr_payload_after, expected_issue, issue_payload
+    )
+    content_binding = None
+    if binding_enabled:
+        if file_snapshot_after is None:
+            raise EvidenceError("content binding requires a complete PR file snapshot")
+        content_binding = _collect_content_binding(
+            repo, pr_payload_after, file_snapshot_after, issue_reference
+        )
 
     review_evidence = None
     if review_manifest is not None:
@@ -535,6 +636,8 @@ def collect_evidence(
                 review_manifest,
                 expected_pr=pr_number,
                 expected_head_sha=head_sha_after,
+                current_binding=content_binding,
+                enforcement_sensitive=enforcement_sensitive,
             )
         except ReviewSemanticError as exc:
             raise EvidenceError(str(exc)) from exc
@@ -562,6 +665,8 @@ def collect_evidence(
         file_snapshot_after,
         review_evidence,
         gate_started_at,
+        content_binding,
+        reusable_ci_evidence,
     )
 
 
@@ -588,6 +693,18 @@ def main() -> int:
     parser.add_argument(
         "--review-manifest",
         help="Repo-relative trusted manifest containing all reviewer lane artifacts",
+    )
+    parser.add_argument(
+        "--content-binding-v1", action="store_true",
+        help="Explicitly opt in to stable current content bindings",
+    )
+    parser.add_argument(
+        "--content-binding-only", action="store_true",
+        help="Print only a standalone schema-backed collector binding sidecar",
+    )
+    parser.add_argument(
+        "--reuse-pr-evidence",
+        help="Repo-relative prior v1 PR evidence for coverage-matched CI reuse",
     )
     parser.add_argument(
         "--lane-failures-json",
@@ -621,6 +738,10 @@ def main() -> int:
         lane_failures = load_lane_failures(args.lane_failures_json)
         resolver_roles = load_resolver_role_map(args.resolver_role_map)
         repo = resolve_path(Path(args.repo), label="repository")
+        reusable_ci_evidence = (
+            load_versioned_pr_evidence(repo, args.reuse_pr_evidence)
+            if args.reuse_pr_evidence else None
+        )
         evidence = collect_evidence(
             args.github_repo,
             args.pr,
@@ -635,7 +756,11 @@ def main() -> int:
             repo,
             load_pack(repo),
             args.review_manifest,
+            args.content_binding_v1 or args.content_binding_only,
+            reusable_ci_evidence,
         )
+        if args.content_binding_only:
+            evidence = build_content_binding_evidence(args.pr, evidence)
     except (EvidenceError, SpecRailError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

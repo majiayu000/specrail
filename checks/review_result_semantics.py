@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from github_evidence_common import EvidenceError
+from review_content_binding import artifact_binding_errors, load_review_content_binding
 from schema_validation import validate_instance
 from specrail_lib import SpecRailError, resolve_path, resolve_repo_path
 
@@ -212,6 +214,9 @@ def validate_review_artifact(
     expected_head_sha: str | None = None,
     expected_lane: str | None = None,
     expected_producer: str | None = None,
+    current_binding: dict[str, Any] | None = None,
+    original_binding: dict[str, Any] | None = None,
+    enforcement_sensitive: bool = False,
 ) -> dict[str, Any]:
     """Validate one v2 artifact without deciding final merge authority."""
 
@@ -239,8 +244,15 @@ def validate_review_artifact(
         errors.append("pr must be a positive integer")
     if expected_pr is not None and artifact.get("pr") != expected_pr:
         errors.append(f"pr must match manifest PR {expected_pr}")
-    if expected_head_sha is not None and artifact.get("head_sha") != expected_head_sha:
-        errors.append("head_sha must match the expected final head")
+    errors.extend(
+        artifact_binding_errors(
+            artifact,
+            expected_head_sha=expected_head_sha,
+            current_binding=current_binding,
+            original_binding=original_binding,
+            enforcement_sensitive=enforcement_sensitive,
+        )
+    )
     if expected_lane is not None and artifact.get("reviewer_lane") != expected_lane:
         errors.append("reviewer_lane must match its manifest lane")
     if expected_producer is not None and artifact.get("producer_identity") != expected_producer:
@@ -366,6 +378,8 @@ def load_review_manifest(
     *,
     expected_pr: int,
     expected_head_sha: str,
+    current_binding: dict[str, Any] | None = None,
+    enforcement_sensitive: bool = False,
 ) -> dict[str, Any]:
     """Load every manifest artifact through repository-safe paths."""
 
@@ -391,6 +405,7 @@ def load_review_manifest(
         lanes = []
 
     artifacts: list[dict[str, Any]] = []
+    original_bindings: dict[str, dict[str, Any]] = {}
     artifact_paths_seen: set[str] = set()
     lane_ids: set[str] = set()
     lane_roster: list[dict[str, Any]] = []
@@ -447,11 +462,21 @@ def load_review_manifest(
                 )
             except SpecRailError as exc:
                 errors.append(str(exc))
+            original_binding = None
+            try:
+                original_binding = load_review_content_binding(resolved_repo, artifact)
+            except EvidenceError as exc:
+                errors.append(f"{normalized_path}: {exc}")
+            if original_binding is not None and _nonempty(artifact.get("artifact_id")):
+                original_bindings[str(artifact["artifact_id"])] = original_binding
             result = validate_review_artifact(
                 artifact,
                 expected_pr=expected_pr,
                 expected_lane=str(lane_id),
                 expected_producer=str(producer),
+                current_binding=None,
+                original_binding=original_binding,
+                enforcement_sensitive=False,
             )
             errors.extend(f"{normalized_path}: {item}" for item in result["errors"])
             artifact_copy = dict(artifact)
@@ -473,24 +498,38 @@ def load_review_manifest(
                 f"duplicate terminal artifacts for lane {lane_id} at head {head_sha}"
             )
 
-    current_head = [
-        item for item in artifacts if item.get("head_sha") == expected_head_sha
+    current_head = [item for item in artifacts if item.get("head_sha") == expected_head_sha]
+    exact_terminal = [
+        item for item in current_head if item.get("status") in TERMINAL_STATUSES
     ]
-    current = [
+    reusable = [
         item
-        for item in current_head
-        if item.get("status") in TERMINAL_STATUSES
+        for item in artifacts
+        if item.get("head_sha") != expected_head_sha
+        and item.get("status") in TERMINAL_STATUSES
+        and not artifact_binding_errors(
+            item,
+            expected_head_sha=expected_head_sha,
+            current_binding=current_binding,
+            original_binding=original_bindings.get(str(item.get("artifact_id"))),
+            enforcement_sensitive=enforcement_sensitive,
+        )
     ]
+    current = exact_terminal or reusable
     if not current:
-        errors.append("review manifest has no terminal artifact for the current head")
+        errors.append("review manifest has no terminal artifact for the current head or bindings")
     elif len(current) > 1:
-        errors.append("review manifest has multiple terminal artifacts for the current head")
+        if len([item for item in current if item.get("head_sha") == expected_head_sha]) > 1:
+            errors.append("review manifest has multiple terminal artifacts for the current head")
+        else:
+            errors.append("review manifest has multiple current or reusable terminal artifacts")
 
     stale_findings: dict[tuple[str, str], dict[str, Any]] = {}
     required_carry: set[tuple[str, str]] = set()
+    selected_objects = {id(item) for item in current}
     for artifact in artifacts:
         source_head = artifact.get("head_sha")
-        if source_head == expected_head_sha:
+        if source_head == expected_head_sha or id(artifact) in selected_objects:
             continue
         for finding in artifact.get("findings", []):
             if isinstance(finding, dict) and _nonempty(finding.get("id")) and _nonempty(source_head):
@@ -529,8 +568,19 @@ def load_review_manifest(
     review_sources: set[str] = set()
     review_executions: set[str] = set()
     completed_times: list[str] = []
-    for artifact in current_head:
-        result = validate_review_artifact(artifact, expected_pr=expected_pr, expected_head_sha=expected_head_sha)
+    blocker_artifacts = [
+        *current_head,
+        *(item for item in current if item.get("head_sha") != expected_head_sha),
+    ]
+    for artifact in blocker_artifacts:
+        result = validate_review_artifact(
+            artifact,
+            expected_pr=expected_pr,
+            expected_head_sha=expected_head_sha,
+            current_binding=current_binding,
+            original_binding=original_bindings.get(str(artifact.get("artifact_id"))),
+            enforcement_sensitive=enforcement_sensitive,
+        )
         blockers.extend(result["blocking_reasons"])
     for artifact in current:
         if artifact.get("human_final_review_required") != manifest.get(
@@ -586,6 +636,9 @@ def evaluate_review_evidence(
     *,
     expected_pr: int | None,
     expected_head_sha: str | None,
+    current_binding: dict[str, Any] | None = None,
+    repo: Path | None = None,
+    enforcement_sensitive: bool = False,
 ) -> dict[str, list[str]]:
     """Revalidate embedded manifest evidence inside the offline PR gate."""
 
@@ -625,20 +678,64 @@ def evaluate_review_evidence(
     else:
         current = 0
         current_executions: set[str] = set()
+        raw_current_ids = evidence.get("current_artifact_ids")
+        valid_ids = (
+            isinstance(raw_current_ids, list)
+            and all(_nonempty(item) for item in raw_current_ids)
+            and len(raw_current_ids) == len(set(raw_current_ids))
+        )
+        current_ids = set(raw_current_ids) if valid_ids else set()
+        if not current_ids:
+            errors.append("review_evidence.current_artifact_ids must be a non-empty unique string list")
+        seen_ids: set[str] = set()
         for index, artifact in enumerate(artifacts):
-            result = validate_review_artifact(artifact, expected_pr=expected_pr)
+            original_binding = None
+            if isinstance(artifact, dict):
+                if repo is None and artifact.get("content_binding_version") == 1:
+                    errors.append(
+                        f"review_evidence.artifacts[{index}]: v1 review artifact requires repository sidecar revalidation"
+                    )
+                elif repo is not None:
+                    try:
+                        original_binding = load_review_content_binding(repo, artifact)
+                    except EvidenceError as exc:
+                        errors.append(f"review_evidence.artifacts[{index}]: {exc}")
+            result = validate_review_artifact(
+                artifact,
+                expected_pr=expected_pr,
+                original_binding=original_binding,
+            )
             errors.extend(f"review_evidence.artifacts[{index}]: {item}" for item in result["errors"])
             if not isinstance(artifact, dict):
                 continue
-            if artifact.get("head_sha") == expected_head_sha and artifact.get("status") in TERMINAL_STATUSES:
+            artifact_id = artifact.get("artifact_id")
+            if _nonempty(artifact_id):
+                seen_ids.add(str(artifact_id))
+            if artifact_id in current_ids and artifact.get("status") in TERMINAL_STATUSES:
+                binding_errors = artifact_binding_errors(
+                    artifact,
+                    expected_head_sha=expected_head_sha,
+                    current_binding=current_binding,
+                    original_binding=original_binding,
+                    enforcement_sensitive=enforcement_sensitive,
+                )
+                errors.extend(
+                    f"review_evidence.artifacts[{index}]: {item}"
+                    for item in binding_errors
+                )
+                if binding_errors:
+                    continue
                 current += 1
                 if _nonempty(artifact.get("review_execution")):
                     current_executions.add(str(artifact["review_execution"]))
                 blockers.extend(result["blocking_reasons"])
+        missing_ids = sorted(str(item) for item in current_ids - seen_ids)
+        if missing_ids:
+            errors.append("review_evidence.current_artifact_ids are missing artifacts: " + ", ".join(missing_ids))
         if current == 0:
-            errors.append("review_evidence has no current-head terminal artifact")
+            errors.append("review_evidence has no current or reusable terminal artifact")
         if len(current_executions) == 1 and execution not in current_executions:
-            errors.append("review_evidence.review_execution must be derived from current-head artifacts")
+            errors.append("review_evidence.review_execution must be derived from current or reusable artifacts")
     if not errors:
         satisfied.append("review manifest and artifacts are semantically valid")
     if not blockers:

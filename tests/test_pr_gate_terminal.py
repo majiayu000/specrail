@@ -1,6 +1,120 @@
 from __future__ import annotations
 
-from pr_gate_test_support import ROOT, clean_evidence, evaluate_pr_gate, fixture
+import hashlib
+import json
+from pathlib import Path
+from shutil import copyfile
+
+from pr_gate_test_support import (
+    ROOT,
+    clean_evidence,
+    evaluate_pr_gate,
+    fixture,
+    sensitive_evidence,
+)
+from evidence_content_binding import build_content_binding_evidence
+from review_result_semantics import load_review_manifest
+from specrail_lib import load_pack
+
+
+def _write_review_evidence(
+    repo: Path, evidence: dict[str, object], artifacts: list[dict[str, object]],
+) -> None:
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir(exist_ok=True)
+    for name in ["review_result.schema.json", "content_binding_evidence.schema.json"]:
+        copyfile(ROOT / "schemas" / name, schema_dir / name)
+    review_dir = repo / "artifacts/reviews"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for index, artifact in enumerate(artifacts, start=1):
+        path = review_dir / f"review-{index}.json"
+        stored = {key: value for key, value in artifact.items() if key != "artifact_path"}
+        path.write_text(json.dumps(stored), encoding="utf-8")
+        paths.append(path.relative_to(repo).as_posix())
+    manifest = {
+        "version": 1, "pr": evidence["pr"], "head_sha": evidence["head_sha"],
+        "human_final_review_required": False,
+        "lanes": [{
+            "lane_id": artifacts[0]["reviewer_lane"],
+            "producer_identity": artifacts[0]["producer_identity"],
+            "artifact_paths": paths,
+        }],
+    }
+    manifest_path = review_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    evidence["review_evidence"] = load_review_manifest(
+        repo, manifest_path.relative_to(repo).as_posix(),
+        expected_pr=evidence["pr"], expected_head_sha=evidence["head_sha"],
+        current_binding={key: evidence[key] for key in [
+            "content_binding_version", "snapshot", "content_hashes"
+        ]},
+    )
+
+
+def v1_reuse_evidence(
+    repo: Path, evidence: dict[str, object] | None = None,
+) -> dict[str, object]:
+    evidence = clean_evidence() if evidence is None else evidence
+    current_head = evidence["head_sha"]
+    prior_head = "b" * 40
+    hashes = {
+        "code_inputs": "1" * 64,
+        "spec_files": "2" * 64,
+        "pr_metadata": "3" * 64,
+    }
+    snapshot = {
+        "head_sha": current_head,
+        "base_tree_oid": "d" * 40,
+        "algorithm": "sha256",
+        "normalization": "specrail-v1",
+        "collector": "github_pr_evidence",
+    }
+    evidence.update({
+        "content_binding_version": 1,
+        "snapshot": snapshot,
+        "content_hashes": hashes,
+    })
+    check = evidence["checks"][0]
+    check.update({
+        "artifact_id": "ci-current",
+        "head_sha": current_head,
+        "content_binding_version": 1,
+        "covered_categories": ["code_inputs", "spec_files"],
+        "content_bindings": {key: hashes[key] for key in ["code_inputs", "spec_files"]},
+    })
+    artifact = evidence["review_evidence"]["artifacts"][0]
+    artifact.update({
+        "head_sha": prior_head,
+        "content_binding_version": 1,
+        "covered_categories": ["code_inputs", "spec_files"],
+        "content_bindings": {key: hashes[key] for key in ["code_inputs", "spec_files"]},
+    })
+    sidecar = build_content_binding_evidence(evidence["pr"], {
+        "content_binding_version": 1,
+        "snapshot": {**snapshot, "head_sha": prior_head},
+        "content_hashes": dict(hashes),
+    })
+    sidecar_path = repo / "artifacts/content-bindings/prior-review.json"
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(sidecar, sort_keys=True).encode("utf-8")
+    sidecar_path.write_bytes(raw)
+    artifact["content_binding_evidence"] = {
+        "artifact_id": sidecar["artifact_id"],
+        "path": sidecar_path.relative_to(repo).as_posix(),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    evidence["reused_components"] = [{
+        "artifact_id": artifact["artifact_id"],
+        "original_head_sha": prior_head,
+        "covered_categories": ["code_inputs", "spec_files"],
+        "original_content_bindings": dict(artifact["content_bindings"]),
+        "current_content_bindings": {key: hashes[key] for key in ["code_inputs", "spec_files"]},
+        "collector_provenance": snapshot,
+        "reason": "all covered categories match the current snapshot",
+    }]
+    _write_review_evidence(repo, evidence, [artifact])
+    return evidence
 
 
 def test_pr_gate_blocks_missing_review_source() -> None:
@@ -93,6 +207,98 @@ def test_pr_gate_blocks_review_source_without_terminal_manifest_evidence() -> No
 
     assert result["decision"] == "blocked"
     assert any("review_source alone" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_allows_current_wrapper_with_coverage_matched_prior_review(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "allowed", result["reasons"]
+    assert result["head_sha"] == evidence["head_sha"]
+    assert result["reused_components"] == evidence["reused_components"]
+
+
+def test_pr_gate_allows_sensitive_previous_head_review_sidecar(tmp_path: Path) -> None:
+    evidence, repo, config = sensitive_evidence(tmp_path)
+    evidence = v1_reuse_evidence(repo, evidence)
+
+    result = evaluate_pr_gate(evidence, repo=repo, config=config)
+
+    assert result["decision"] == "allowed", result["reasons"]
+    assert result["enforcement_sensitive"] is True
+    assert "terminal review evidence has no blocking findings" in result["satisfied"]
+
+
+def test_pr_gate_blocks_prior_review_when_spec_binding_changes(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    evidence["content_hashes"]["spec_files"] = "f" * 64
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any("covered content bindings do not match" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_blocks_missing_or_incomplete_reuse_audit(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    del evidence["reused_components"][0]["collector_provenance"]
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any("collector_provenance is invalid" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_rejects_old_gate_decision_as_reusable_component(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    evidence["reused_components"].append({
+        **evidence["reused_components"][0],
+        "artifact_id": "old-pr-gate-decision",
+    })
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any("unknown artifacts: old-pr-gate-decision" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_ignores_unselected_historical_review_component(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    historical = dict(evidence["review_evidence"]["artifacts"][0])
+    historical.update({
+        "artifact_id": "historical-review",
+        "head_sha": "c" * 40,
+        "content_bindings": {
+            "code_inputs": "f" * 64,
+            "spec_files": "f" * 64,
+        },
+    })
+    sidecar = build_content_binding_evidence(evidence["pr"], {
+        "content_binding_version": 1,
+        "snapshot": {**evidence["snapshot"], "head_sha": "c" * 40},
+        "content_hashes": {
+            **evidence["content_hashes"],
+            "code_inputs": "f" * 64,
+            "spec_files": "f" * 64,
+        },
+    }, artifact_id="historical-sidecar")
+    sidecar_path = tmp_path / "artifacts/content-bindings/historical.json"
+    raw = json.dumps(sidecar, sort_keys=True).encode("utf-8")
+    sidecar_path.write_bytes(raw)
+    historical["content_binding_evidence"] = {
+        "artifact_id": sidecar["artifact_id"],
+        "path": sidecar_path.relative_to(tmp_path).as_posix(),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    _write_review_evidence(
+        tmp_path, evidence,
+        [evidence["review_evidence"]["artifacts"][0], historical],
+    )
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "allowed", result["reasons"]
 
 
 def test_pr_gate_blocks_review_completed_after_gate_started() -> None:

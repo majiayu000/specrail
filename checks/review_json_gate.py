@@ -18,6 +18,8 @@ from rejection_items import (
     item_from_reason,
     items_from_legacy,
 )
+from github_evidence_common import EvidenceError
+from review_content_binding import load_review_content_binding
 from review_result_semantics import (
     REVIEW_VERDICTS,
     validate_review_artifact,
@@ -556,7 +558,9 @@ def _find_forbidden_language(review: dict[str, Any]) -> list[str]:
     return reasons
 
 
-def evaluate_review_gate(review: dict[str, Any], diff_text: str) -> dict[str, Any]:
+def evaluate_review_gate(
+    review: dict[str, Any], diff_text: str, repo: Path | None = None,
+) -> dict[str, Any]:
     """Validate a review artifact and return a stable gate result."""
 
     reasons: list[str] = []
@@ -567,7 +571,18 @@ def evaluate_review_gate(review: dict[str, Any], diff_text: str) -> dict[str, An
     satisfied.extend(top_satisfied)
     missing.extend(top_missing)
     reasons.extend(top_reasons)
-    semantic_result = validate_review_artifact(review)
+    original_binding = None
+    if review.get("content_binding_version") == 1:
+        if repo is None:
+            reasons.append("v1 review artifact sidecar validation requires repository root")
+        else:
+            try:
+                original_binding = load_review_content_binding(repo, review)
+            except EvidenceError as exc:
+                reasons.append(f"review artifact sidecar: {exc}")
+    semantic_result = validate_review_artifact(
+        review, original_binding=original_binding
+    )
     reasons.extend(semantic_result["errors"])
     reasons.extend(
         item
@@ -658,7 +673,7 @@ def main() -> int:
     try:
         review = _load_json(_resolve_path(repo, args.review))
         diff_text = _load_text(_resolve_path(repo, args.diff))
-        result = evaluate_review_gate(review, diff_text)
+        result = evaluate_review_gate(review, diff_text, repo)
     except ValueError as exc:
         result = {
             "decision": "blocked",

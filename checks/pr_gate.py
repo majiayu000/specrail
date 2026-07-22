@@ -13,7 +13,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from evidence_content_binding import (
+    content_bindings_match,
+    validate_component_binding,
+    validate_content_binding,
+)
+from github_evidence_common import EvidenceError
 from pr_review_contract import evaluate_review_contract_with_items
+from review_result_semantics import evaluate_review_evidence
 from rejection_items import (
     add_prior_rejection_argument,
     apply_prior_rejection,
@@ -57,6 +64,146 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("evidence JSON must be an object")
     return data
+
+
+def _binding_payload(evidence: dict[str, Any]) -> dict[str, Any] | None:
+    keys = ["content_binding_version", "snapshot", "content_hashes"]
+    if not any(key in evidence for key in keys):
+        return None
+    return {key: evidence.get(key) for key in keys}
+
+
+def _reusable_components(evidence: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    components: list[tuple[str, dict[str, Any]]] = []
+    checks = evidence.get("checks")
+    if isinstance(checks, list):
+        components.extend(
+            ("CI check", item) for item in checks if isinstance(item, dict)
+        )
+    review = evidence.get("review_evidence")
+    artifacts = review.get("artifacts") if isinstance(review, dict) else None
+    current_ids = review.get("current_artifact_ids") if isinstance(review, dict) else None
+    if isinstance(artifacts, list):
+        components.extend(
+            ("review artifact", item)
+            for item in artifacts
+            if isinstance(item, dict)
+            and isinstance(current_ids, list)
+            and item.get("artifact_id") in current_ids
+        )
+    return components
+
+
+def _content_binding_items(
+    evidence: dict[str, Any],
+) -> tuple[list[str], list[str], list[str]]:
+    """Validate v1 components and their complete previous-head reuse audit."""
+
+    payload = _binding_payload(evidence)
+    audits = evidence.get("reused_components")
+    components = _reusable_components(evidence)
+    versioned_components = [
+        (kind, item)
+        for kind, item in components
+        if any(
+            key in item
+            for key in [
+                "content_binding_version",
+                "covered_categories",
+                "content_bindings",
+            ]
+        )
+    ]
+    if payload is None and not versioned_components and audits is None:
+        return ["legacy component evidence uses current exact-head wrapper"], [], []
+    if payload is None:
+        return [], ["content_binding"], ["v1 component reuse requires current content binding"]
+    try:
+        current = validate_content_binding(payload)
+    except EvidenceError as exc:
+        return [], [], [f"current content binding is invalid: {exc}"]
+    reasons: list[str] = []
+    satisfied: list[str] = []
+    if current["snapshot"]["head_sha"] != evidence.get("head_sha"):
+        reasons.append("current content binding snapshot.head_sha must match head_sha")
+    if not isinstance(audits, list):
+        return satisfied, ["reused_components"], [
+            *reasons,
+            "v1 current wrapper requires reused_components audit list",
+        ]
+
+    audit_by_id: dict[str, dict[str, Any]] = {}
+    for index, audit in enumerate(audits):
+        if not isinstance(audit, dict):
+            reasons.append(f"reused_components[{index}] must be an object")
+            continue
+        artifact_id = audit.get("artifact_id")
+        if not _non_empty_string(artifact_id):
+            reasons.append(f"reused_components[{index}].artifact_id must be non-empty")
+        elif artifact_id in audit_by_id:
+            reasons.append(f"duplicate reused component audit: {artifact_id}")
+        else:
+            audit_by_id[str(artifact_id)] = audit
+
+    expected_reused: set[str] = set()
+    for kind, component in components:
+        component_id = component.get("artifact_id")
+        component_head = component.get("head_sha")
+        versioned = any(
+            key in component
+            for key in [
+                "content_binding_version",
+                "covered_categories",
+                "content_bindings",
+            ]
+        )
+        if not versioned:
+            if _non_empty_string(component_head) and component_head != evidence.get("head_sha"):
+                reasons.append(f"legacy {kind} head_sha must match current head")
+            continue
+        try:
+            covered, original = validate_component_binding(component)
+            matches = content_bindings_match(component, current["content_hashes"])
+        except EvidenceError as exc:
+            reasons.append(f"{kind} content binding is invalid: {exc}")
+            continue
+        if not matches:
+            reasons.append(f"{kind} covered content bindings do not match current snapshot")
+            continue
+        if component_head is None or component_head == evidence.get("head_sha"):
+            satisfied.append(f"current-head {kind} content bindings validated")
+            continue
+        if not _non_empty_string(component_head):
+            reasons.append(f"reused {kind} head_sha must be non-empty")
+            continue
+        if not _non_empty_string(component_id):
+            reasons.append(f"reused {kind} artifact_id must be non-empty")
+            continue
+        expected_reused.add(str(component_id))
+        audit = audit_by_id.get(str(component_id))
+        if audit is None:
+            reasons.append(f"reused {kind} lacks audit: {component_id}")
+            continue
+        expected_current = {
+            category: current["content_hashes"][category] for category in covered
+        }
+        expected = {
+            "original_head_sha": component_head,
+            "covered_categories": list(covered),
+            "original_content_bindings": original,
+            "current_content_bindings": expected_current,
+            "collector_provenance": current["snapshot"],
+        }
+        for key, value in expected.items():
+            if audit.get(key) != value:
+                reasons.append(f"reused component audit {component_id}.{key} is invalid")
+        if not _non_empty_string(audit.get("reason")):
+            reasons.append(f"reused component audit {component_id}.reason must be non-empty")
+        satisfied.append(f"reused {kind} coverage matched: {component_id}")
+    extra = sorted(set(audit_by_id) - expected_reused)
+    if extra:
+        reasons.append("reused_components contains non-reused or unknown artifacts: " + ", ".join(extra))
+    return satisfied, [], reasons
 
 
 def _check_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
@@ -353,6 +500,7 @@ def evaluate_pr_gate(
         _check_items,
         _issue_reference_items,
         _merge_record_items,
+        _content_binding_items,
     ]:
         checker_satisfied, checker_missing, checker_reasons = checker(evidence)
         satisfied.extend(checker_satisfied)
@@ -436,6 +584,25 @@ def evaluate_pr_gate(
             and sensitive_classification.get("enforcement_sensitive")
         )
     )
+    if enforcement_sensitive_flag:
+        sensitive_review = evaluate_review_evidence(
+            evidence.get("review_evidence"),
+            expected_pr=evidence.get("pr"),
+            expected_head_sha=evidence.get("head_sha"),
+            current_binding=_binding_payload(evidence),
+            enforcement_sensitive=True,
+            repo=repo,
+        )
+        satisfied.extend(sensitive_review["satisfied"])
+        review_reasons = [
+            *sensitive_review["errors"],
+            *sensitive_review["blocking_reasons"],
+        ]
+        reasons.extend(review_reasons)
+        items.extend(
+            item_from_reason(reason, "contract_violation")
+            for reason in review_reasons
+        )
     auth_satisfied, auth_missing, auth_reasons = _authorization_item(
         evidence, enforcement_sensitive=enforcement_sensitive_flag
     )
@@ -470,6 +637,10 @@ def evaluate_pr_gate(
         "review_source": evidence.get("review_source"),
         "gate_query_completed_at": evidence.get("gate_query_completed_at"),
         "gate_query_head_sha": evidence.get("gate_query_head_sha"),
+        "content_binding_version": evidence.get("content_binding_version"),
+        "snapshot": evidence.get("snapshot"),
+        "content_hashes": evidence.get("content_hashes"),
+        "reused_components": evidence.get("reused_components"),
         "enforcement_sensitive": enforcement_sensitive_flag,
         "sensitive_classification": sensitive_classification,
         "reasons": sorted(set(reasons)),

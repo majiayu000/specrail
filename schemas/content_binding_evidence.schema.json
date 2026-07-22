@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specrail.local/schemas/content_binding_evidence.schema.json",
+  "title": "Content Binding Evidence v1",
+  "type": "object",
+  "required": [
+    "version",
+    "artifact_id",
+    "pr",
+    "content_binding_version",
+    "snapshot",
+    "content_hashes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "artifact_id": {"type": "string", "minLength": 1},
+    "pr": {"type": "integer", "minimum": 1},
+    "content_binding_version": {"const": 1},
+    "snapshot": {
+      "type": "object",
+      "required": ["head_sha", "base_tree_oid", "algorithm", "normalization", "collector"],
+      "additionalProperties": false,
+      "properties": {
+        "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
+        "base_tree_oid": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
+        "algorithm": {"const": "sha256"},
+        "normalization": {"const": "specrail-v1"},
+        "collector": {"const": "github_pr_evidence"}
+      }
+    },
+    "content_hashes": {
+      "type": "object",
+      "required": ["code_inputs", "spec_files", "pr_metadata"],
+      "additionalProperties": false,
+      "properties": {
+        "code_inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "spec_files": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "pr_metadata": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}
