@@ -1,130 +1,106 @@
 # Product Spec
 
-## Linked Issue
+## 关联 Issue
 
 GH-160
 
-## User Problem
+## 用户问题
 
-SpecRail declares soft, hard, and critical context-watermark ratios, but the
-runtime checkpoint records only the configured ratios. It does not record the
-context actually observed for a turn, and `runtime_ledger_gate.py` therefore
-cannot distinguish a healthy session from one continuing at 219K+ tokens. In a
-24-hour production drain this allowed sessions to run for 2,600–3,400 turns at
-a 219K median context while every context-budget check still appeared valid.
+SpecRail 已声明 soft、hard、critical 三档 context watermark，但 runtime checkpoint
+只记录配置比例，没有记录每回合真实上下文。`runtime_ledger_gate.py` 因而无法区分
+健康会话与持续运行在 219K+ token 的会话。一次 24 小时生产 drain 中，头部会话
+运行 2,600–3,400 回合、每回合上下文 p50 达 219K，却仍表现为 context budget
+正常。
 
-## Goals
+## 目标
 
-- Collect per-turn context usage from Codex `token_count` telemetry without
-  exposing raw session content.
-- Record the latest and maximum observed context watermarks in the checkpoint
-  and make the gate recompute their ratios against the declared window.
-- Require the first checkpoint at or above the soft stop to converge the
-  current tranche by ending it or handing it to a fresh session.
-- Preserve the existing compaction and hard-dimension budget enforcement from
-  GH-137 and the turn-batching discipline from GH-159.
-- Expose a tranche p50 context metric so production drain runs can compare the
-  target of less than 130K tokens without turning that operational KPI into a
-  fabricated local pass.
+- 从 Codex `token_count` telemetry 收集每回合 context 使用量，不暴露原始会话内容。
+- 在 checkpoint 中记录 latest、maximum、p50、有效/无效观测数及 runtime context
+  window，并由 gate 使用可信分母重新计算比例。
+- 达到 soft stop 的第一个 checkpoint 必须结束当前会话并交接到 fresh session；
+  不允许只结束 tranche 后在同一高上下文会话继续。
+- 保持 GH-137 的 compaction/硬维度预算和 GH-159 的 turn batching 行为。
+- 输出 tranche p50，使真实生产 drain 可验证 `<130K` 目标；本地测试不得伪造该结论。
 
-## Non-Goals
+## 非目标
 
-- No additional parallel gate or second checkpoint format; this extends the
-  existing `context_budget` object.
-- No recursive discovery or direct gate reads of Codex session JSONL.
-- No change to model context-window configuration, compaction thresholds,
-  billing, or Codex token accounting.
-- No claim that unit tests alone prove the post-rollout production p50 target;
-  that comparison requires a real drain sample after deployment.
-- No changes to issues or PRs other than GH-160 and its two heavy-tier PRs.
+- 不新增平行 gate 或第二种 checkpoint 格式；只扩展既有 `context_budget`。
+- 不让 gate 自动发现或读取 Codex session JSONL；collector 只读取显式传入路径。
+- 不更改模型 context window、compaction threshold、计费或 Codex token 算法。
+- 不把单元测试当成 `<130K` 生产目标已达成的证据。
+- 不在本 issue 中完成 #174 所要求的 queue skill 全面压缩；只抽取 GH-160 所需的
+  Context Budget 协议，使主 `SKILL.md` 回到硬上限内。
 
 ## Behavior Invariants
 
-1. B-001 When a tranche-window `token_count` event contains
-   `info.last_token_usage.input_tokens` and `info.model_context_window`, the
-   read-only telemetry collector shall emit a valid context observation using
-   those values; it shall not add the cached-input subset a second time or
-   derive current context from cumulative `total_token_usage`.
-2. B-002 When several valid context observations exist in one tranche window,
-   telemetry shall emit the latest observed tokens, the maximum observed
-   tokens, the observation count, and the median observed tokens; event order
-   and the existing `tranche_start_offset` define the window.
-3. B-003 Missing, null, boolean, non-integer, negative, or inconsistent token
-   fields shall be skipped and counted as invalid context observations. If no
-   valid context observation exists, telemetry shall omit all observed-context
-   values rather than report a trusted zero.
-4. B-004 The checkpoint `context_budget` shall record observation provenance
-   and values supplied by telemetry. The ledger gate shall recompute ratios as
-   `observed_tokens / window_tokens`; a caller-supplied ratio that differs from
-   the recomputed value shall be rejected rather than trusted.
-5. B-005 When the latest or maximum observed context ratio is at or above
-   `soft_stop_ratio`, the next checkpoint shall record one convergence action
-   from the closed set `{end_tranche, handoff}` with a timestamp, triggering
-   observation, and next action. A checkpoint that remains `planning` or
-   `running`, or lacks this evidence, shall be blocked.
-6. B-006 A soft-stop convergence action shall be internally consistent:
-   `handoff` requires checkpoint `status: handoff`; `end_tranche` requires a
-   terminal checkpoint status (`handoff`, `blocked`, or `complete`). Its
-   triggering token count shall equal the gate-observed high watermark, so a
-   stale action cannot authorize continued growth.
-7. B-007 Below the soft stop, convergence evidence is optional and existing
-   version 1–3 checkpoints without context observations retain their prior
-   decision. Once trusted context observations are declared, malformed or
-   partial evidence fails closed.
-8. B-008 At or above the hard stop, the only valid convergence action is
-   `handoff`; at or above the critical stop, the action shall additionally
-   state that only checkpoint and resume instructions remain. Neither state may
-   be downgraded to an allowed warning or overridden by an unrelated budget
-   override.
-9. B-009 The collector and gate remain read-only, make no network calls, do not
-   return raw event content, and only inspect the explicitly supplied session
-   path and tranche window.
-10. B-010 The queue skill and checkpoint templates shall require context
-    telemetry collection before spawning a new lane or starting another broad
-    action when the runtime exposes `token_count`; reaching soft stop ends the
-    current tranche even when a goal remains active.
-11. B-011 Context telemetry shall be additive to GH-137: compaction,
-    wall-clock, tool-call, review-round, full-test, item-cap, and per-dimension
-    override behavior shall remain unchanged.
-12. B-012 A production comparison may report the collector's tranche p50 and
-    queue-runner token totals, but the GH-160 implementation is not considered
-    to have proven the `<130K` operational target until a real post-rollout
-    drain sample is attached to the issue or a follow-up artifact.
+1. B-001 当 tranche window 内的 `token_count` event 同时包含
+   `info.last_token_usage.input_tokens` 与 `info.model_context_window` 时，read-only
+   collector 必须从这两个字段生成 context observation；不得重复累加 cached input，
+   也不得使用累计 `total_token_usage` 代替当前 context。
+2. B-002 同一 tranche 有多个有效 observation 时，telemetry 必须输出 latest、maximum、
+   observation count、p50 与 observed model context window；event 顺序和既有
+   `tranche_start_offset` 定义观测窗口。偶数样本 p50 使用排序后的 lower median，
+   即索引 `(n - 1) // 2`，保证结果始终为整数且跨平台确定。
+3. B-003 缺失、null、boolean、非整数、负数或内部不一致的 token 字段必须跳过并计入
+   `invalid_context_observation_count`。没有有效 observation 时，latest/max/p50/ratio
+   字段必须省略，不能写入可信零；无效计数仍保留为审计证据。
+4. B-004 checkpoint `context_budget` 必须记录 telemetry provenance、
+   `observed_model_context_window` 与观测值。gate 必须先验证 runtime window 等于
+   `window_tokens`，再用该分母重新计算 ratio；不一致、跨 event window 冲突或调用方
+   自报 ratio 与重算值不符时均 fail closed。
+5. B-005 latest 或 maximum ratio 达到 `soft_stop_ratio` 时，下一个 checkpoint 只能记录
+   `handoff` convergence action，且顶层 `status` 必须为 `handoff`。`planning`、
+   `running`、`complete`、`blocked` 或 `end_tranche` 都不能授权当前会话继续。
+6. B-006 handoff evidence 必须包含时间、触发 observation、非空 `resume_prompt` 与 next
+   action；trigger token 必须等于 gate 观测到的 high watermark，防止复用旧 action。
+7. B-007 soft stop 以下 convergence evidence 可选；没有声明新 context observation 的
+   version 1–3 checkpoint 保持既有判定。只要声明任一新字段，缺失或部分证据就 fail
+   closed。
+8. B-008 hard stop 继续要求 handoff；critical stop 还必须声明剩余动作仅限 checkpoint
+   与 resume instructions。任何 unrelated budget override 都不能降低 context stop。
+9. B-009 collector 与 gate 必须 read-only、无网络调用、不返回 raw event，只检查显式
+   session path 与 tranche window。
+10. B-010 runtime 暴露 `token_count` 时，queue skill 必须在 spawn 新 lane 或开始 broad
+    action 前按 collect → checkpoint → gate → converge 顺序执行；达到 soft stop 即结束
+    当前会话，即使 Codex Goal 仍为 active。
+11. B-011 context telemetry 必须与 GH-137 叠加，不能改变 compaction、wall-clock、
+    tool-call、review round、full-test、item-cap 和逐维 override 行为。
+12. B-012 collector 可报告 tranche p50，queue runner 可报告 token/PR，但实现 PR 只能
+    `Refs #160`。在真实 post-rollout bounded drain 把 p50 与 token/PR 证据附到 issue 前，
+    不得声称 `<130K` 已达成，也不得关闭 GH-160。
 
-## Acceptance Criteria
+## 验收标准
 
-- [ ] Telemetry fixtures prove valid `token_count` extraction, latest/max/p50
-  aggregation, offset isolation, and omission on invalid or absent data.
-- [ ] Runtime-ledger fixtures prove soft, hard, and critical convergence rules,
-  stale-action rejection, ratio recomputation, and backward compatibility.
-- [ ] `context_budget` schema and both checkpoint templates expose the new
-  observation and convergence fields without introducing a separate gate.
-- [ ] The queue skill gives an executable collection/checkpoint/convergence
-  protocol and stays within its file-size ceiling.
-- [ ] Targeted tests, the full Python test suite, and
-  `python3 checks/check_workflow.py --repo .` pass.
-- [ ] A real post-rollout drain can compare tranche p50 context (target `<130K`)
-  and token/PR; absence of that later sample remains explicit rather than being
-  silently reported as success.
+- [ ] telemetry fixtures 覆盖合法 `token_count`、latest/max/lower-median p50、offset、
+      无效计数、window 冲突及无数据省略。
+- [ ] runtime-ledger fixtures 覆盖可信分母相等、ratio 重算、soft/hard/critical handoff、
+      stale action 与 legacy compatibility。
+- [ ] schema 与中英文 checkpoint template 暴露完整 observation/convergence 字段，
+      不增加平行 gate。
+- [ ] queue skill 使用可执行的 collect/check/handoff 协议；Context Budget 细节进入
+      reference 后，主 `skills/specrail-implement-queue/SKILL.md` 不超过 800 行。
+- [ ] targeted tests、完整 Python tests、`python3 checks/check_workflow.py --repo .`
+      与 `git diff --check` 全部通过。
+- [ ] post-merge owner 运行一次真实 bounded drain；没有样本时 issue 保持 open，状态
+      明确为 rollout evidence pending。
 
-## Boundary Checklist
+## 边界情况清单
 
-| Category | Verdict (covered: B-xxx / N/A + reason) |
+| 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
-| Empty / missing input | covered: B-003 B-007 |
-| Error / failure paths | covered: B-003 B-004 B-006 |
-| Authorization / permission | covered: B-008; unrelated overrides cannot authorize continued high-context execution |
-| Concurrency / race | covered: B-002 B-006; ordered tranche observations and matching trigger evidence prevent stale-action reuse |
-| Retry / idempotency | covered: B-002 B-009; collection and gate evaluation are read-only and deterministic for one file snapshot |
-| Illegal state transitions | covered: B-005 B-006 B-008 |
-| Compatibility / migration | covered: B-007 B-011 |
-| Degradation / fallback | covered: B-003 B-007; unavailable telemetry is explicit and never fabricated as zero |
-| Evidence / audit integrity | covered: B-004 B-006 B-012 |
-| Cancellation / interruption | covered: B-005 B-008 B-010 |
+| 空/缺失输入 | covered: B-003 B-007 |
+| 错误与失败路径 | covered: B-003 B-004 B-006 |
+| 授权/权限 | covered: B-005 B-008；override 不能授权高上下文继续 |
+| 并发/竞态 | covered: B-002 B-004 B-006；event 顺序、window 一致性与 trigger 绑定防止 stale evidence |
+| 重试/幂等 | covered: B-002 B-009；同一 snapshot 的收集与 gate 判定确定且只读 |
+| 非法状态转换 | covered: B-005 B-006 B-008 |
+| 兼容/迁移 | covered: B-007 B-011 |
+| 降级/回退 | covered: B-003 B-004 B-007；不可用/冲突 telemetry 不伪装为可信零 |
+| 证据与审计完整性 | covered: B-003 B-004 B-006 B-012 |
+| 取消/中断 | covered: B-005 B-008 B-010 |
 
-## Rollout Notes
+## 发布说明
 
-This is a heavy runtime-ledger contract change. Merge the spec PR first, then
-implement from the merged packet in a separate PR. The first production drain
-after merge supplies the operational p50/token-per-PR comparison; it is an
-observational rollout check, not a reason to weaken deterministic merge gates.
+这是 heavy runtime-ledger contract。先合并 spec PR，再用独立 implementation PR 实现；
+implementation PR 使用 `Refs #160`。合并后的首个 bounded drain 负责提供真实
+p50/token-per-PR，并在证据附加后再决定是否关闭 issue。
