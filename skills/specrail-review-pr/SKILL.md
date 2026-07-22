@@ -12,7 +12,8 @@ Use this skill for the `review_pr` route.
 1. Read the PR, linked issue, product spec, tech spec, task plan, and local diff.
 2. Confirm the PR has current evidence for linked work, verification, CI, review
    state, and review threads when available.
-3. Run the review route gate when available:
+3. Run the review route gate. It is mandatory when `checks/route_gate.py`
+   exists; see Gate Availability when it does not.
 
 ```sh
 python3 checks/route_gate.py --repo . --route review_pr --issue <issue-number> --pr <pr-number> --state impl_pr_open --json
@@ -26,8 +27,14 @@ python3 checks/route_gate.py --repo . --route review_pr --issue <issue-number> -
    `side` values, and only add `start_line` / `start_side` together for an
    inclusive diff range. Suggested changes must be non-empty and appear only on
    RIGHT-side comments, either through a `suggestion` field, a fenced
-   `suggestion` block, or both.
-7. Validate review artifacts against the diff when the gate exists:
+   `suggestion` block, or both. Record `review_execution: local` for the
+   terminal artifact produced by the local CLI/native reviewer lane. A GitHub
+   hosted `@codex review` may be supplemental, but if recorded separately it
+   uses `review_execution: hosted` and never replaces the local primary
+   artifact.
+7. Validate the review artifact against the diff. This is mandatory whenever a
+   review artifact was produced in step 6 and `checks/review_json_gate.py`
+   exists; an unvalidated artifact must not be published.
 
 ```sh
 python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-number>.json --diff <patch> --json
@@ -35,6 +42,26 @@ python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-num
 
 8. If merge readiness is requested, route to
    `skills/specrail-pr-gate/SKILL.md`.
+
+## Gate Availability
+
+The `review_pr` route depends on the repository's gate scripts. Decide before
+step 3, and never let a missing or failing gate pass as a completed check.
+
+| Condition | Required action |
+|---|---|
+| `checks/route_gate.py` exists | Run it. Treat a non-`allowed` decision per Rejection Persistence And Retry. |
+| `checks/route_gate.py` is absent | Stop the `review_pr` route. Report that the repository is not SpecRail-instrumented and that a generic code review should be used instead. Do not run the gate command speculatively. |
+| The gate command errors (missing file, missing interpreter, non-zero exit that is not a gate decision) | Treat as absent, not as `allowed`. Report the error verbatim. |
+
+If a human explicitly asks to continue without a gate, the review may proceed
+only as an explicitly degraded pass:
+
+- Record `gate_status: "unavailable"` and put the quoted human authorization in
+  `gate_authorization` in the review result JSON.
+- State in `## Summary` that no SpecRail gate validated this review and include
+  the stable marker `SpecRail gate status: unavailable`.
+- Do not describe the result as SpecRail-gated, verified, or merge-ready.
 
 ## Review Rounds And Modes
 
@@ -68,6 +95,7 @@ resolution action stays with the reviewer or human.
 
 - Treat the review as advisory.
 - Do not grant final approval.
+- Do not present a review as gated when the gate was absent, skipped, or errored.
 - Do not merge or mark human gates complete.
 - Do not resolve reviewer-lane threads from an implementation or coordinator
   role.

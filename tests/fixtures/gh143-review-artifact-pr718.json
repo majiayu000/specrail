@@ -4,6 +4,7 @@
   "reviewer_lane": "merge-reviewer-1",
   "producer_identity": "reviewer-1",
   "review_source": "independent_lane",
+  "review_execution": "local",
   "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
   "review_started_at": "2026-06-30T11:55:00Z",
   "review_completed_at": "2026-06-30T12:00:00Z",

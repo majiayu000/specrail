@@ -80,6 +80,7 @@
         "native_thread_id": "agent-reviewer-1",
         "status": "passed",
         "review_source": "independent_lane",
+        "review_execution": "local",
         "evidence": "tests/fixtures/gh143-review-artifact-pr718.json",
         "manifest": "artifacts/reviews/t01/manifest.json",
         "artifact_id": "pr718-head1-reviewer1",

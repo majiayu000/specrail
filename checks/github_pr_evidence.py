@@ -397,11 +397,17 @@ def build_evidence(
                     raise EvidenceError(str(exc)) from exc
     if review_evidence is not None:
         derived_source = review_evidence.get("review_source")
+        derived_execution = review_evidence.get("review_execution")
         if derived_source not in REVIEW_SOURCES:
             raise EvidenceError("review manifest must derive a supported review_source")
+        if derived_execution != "local":
+            raise EvidenceError(
+                "review manifest must derive local primary review execution; hosted review is supplemental only"
+            )
         if review_source is not None and review_source.strip() != derived_source:
             raise EvidenceError("--review-source conflicts with trusted review manifest")
         evidence["review_source"] = derived_source
+        evidence["review_execution"] = derived_execution
         evidence["review_evidence"] = review_evidence
         evidence["review_completed_at"] = review_evidence.get("review_completed_at")
     if authorization is not None:
