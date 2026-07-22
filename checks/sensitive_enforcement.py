@@ -629,24 +629,59 @@ def evaluate_sensitive_evidence(
         elif issue is None:
             reasons.append("linked issue is required for enforcement-sensitive evidence")
         else:
-            try:
-                validate_approved_spec_evidence(
-                    config,
-                    repo,
-                    evidence.get("approved_spec"),
-                    repository=repository.strip(),
-                    issue=issue,
-                    gated_head_sha=(
-                        evidence.get("head_sha")
-                        if expected_source == "github_changed_files"
-                        else None
-                    ),
-                )
-                satisfied.append("approved spec evidence revalidated")
-            except SpecRailError as exc:
-                reasons.append(str(exc))
-    elif evidence.get("approved_spec") is not None:
-        reasons.append("approved_spec was provided without enforcement_sensitive=true")
+            from spec_revision_evidence import (
+                spec_revision_route_eligible,
+                validate_spec_revision_evidence,
+            )
+
+            eligibility = spec_revision_route_eligible(config, issue, classification)
+            if eligibility.eligible:
+                try:
+                    validate_spec_revision_evidence(
+                        config,
+                        repo,
+                        evidence,
+                        repository=repository.strip(),
+                        issue=issue,
+                        gated_head_sha=evidence.get("head_sha"),
+                        classification=classification,
+                    )
+                    satisfied.append("spec revision approval evidence revalidated")
+                except SpecRailError as exc:
+                    reasons.append(str(exc))
+            else:
+                if evidence.get("sensitive_route") != "approved_spec":
+                    reasons.append(
+                        "non-spec-revision sensitive evidence requires "
+                        "sensitive_route=approved_spec"
+                    )
+                if evidence.get("spec_approval") is not None:
+                    reasons.append(
+                        "approved_spec route must not include spec_approval"
+                    )
+                try:
+                    validate_approved_spec_evidence(
+                        config,
+                        repo,
+                        evidence.get("approved_spec"),
+                        repository=repository.strip(),
+                        issue=issue,
+                        gated_head_sha=(
+                            evidence.get("head_sha")
+                            if expected_source == "github_changed_files"
+                            else None
+                        ),
+                    )
+                    satisfied.append("approved spec evidence revalidated")
+                except SpecRailError as exc:
+                    reasons.append(str(exc))
+    else:
+        if evidence.get("approved_spec") is not None:
+            reasons.append("approved_spec was provided without enforcement_sensitive=true")
+        if evidence.get("spec_approval") is not None:
+            reasons.append("spec_approval was provided without enforcement_sensitive=true")
+        if evidence.get("sensitive_route") is not None:
+            reasons.append("sensitive_route was provided without enforcement_sensitive=true")
 
     if classification:
         satisfied.append(

@@ -53,6 +53,20 @@ python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
    when the artifact's own `review_source` is `independent_lane` and the
    item is not `self_review`, and a `self_review` item can never qualify for
    standard_auto.
+
+   For enforcement-sensitive evidence, also confirm the route-specific approval
+   contract. `sensitive_route: approved_spec` requires `approved_spec` evidence.
+   `sensitive_route: spec_revision` is limited to the linked issue's registered
+   spec packet and requires a closed `spec_approval` object binding the trusted
+   `spec_approved` lifecycle state, an exact-head maintainer GitHub approval, the
+   normalized artifact paths, and their content digest. Mixed, partial, stale-head,
+   or route-mismatched approval evidence is blocked; `spec_review` is never an
+   approval state.
+
+   When handing a sensitive item to the runtime ledger, preserve the selected
+   `sensitive_route`. The `approved_spec` route references
+   `approved_spec_evidence`; the `spec_revision` route references the same local,
+   machine-readable `spec_approval_evidence` used for exact-head validation.
 4. Interpret decisions precisely:
    - `allowed`: evidence satisfies the local merge-readiness policy.
    - `needs_human`: deterministic evidence passed, but a human gate is missing.

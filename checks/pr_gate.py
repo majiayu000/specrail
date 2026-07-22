@@ -31,6 +31,10 @@ from sensitive_enforcement import (
     evaluate_sensitive_evidence_with_items,
     sensitive_registry,
 )
+from spec_revision_evidence import (
+    spec_revision_route_eligible,
+    validate_spec_revision_evidence,
+)
 from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
@@ -200,6 +204,65 @@ def _merge_record_items(evidence: dict[str, Any]) -> tuple[list[str], list[str],
     return satisfied, missing, reasons
 
 
+def _validated_sensitive_route_audit(
+    config: PackConfig,
+    repo: Path,
+    evidence: dict[str, Any],
+    classification: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive route-specific audit output only from revalidated evidence."""
+
+    issue = evidence.get("linked_issue")
+    repository = evidence.get("repository")
+    if not _positive_int(issue) or not _non_empty_string(repository):
+        raise SpecRailError(
+            "linked issue and repository are required for sensitive route audit"
+        )
+
+    eligibility = spec_revision_route_eligible(config, issue, classification)
+    if eligibility.eligible:
+        approval = validate_spec_revision_evidence(
+            config,
+            repo,
+            evidence,
+            repository=repository.strip(),
+            issue=issue,
+            gated_head_sha=evidence.get("head_sha"),
+            classification=classification,
+        )
+        return {
+            "sensitive_route": "spec_revision",
+            "linked_issue": issue,
+            "artifact_paths": list(approval["artifact_paths"]),
+            "maintainer_actor": approval["maintainer_actor"],
+            "approved_at": approval["approved_at"],
+            "approval_source": approval["approval_source"],
+            "approval_url": approval["approval_url"],
+            "commit_oid": approval["commit_oid"],
+            "spec_artifacts_sha256": approval["spec_artifacts_sha256"],
+        }
+
+    if evidence.get("sensitive_route") != "approved_spec":
+        raise SpecRailError(
+            "non-spec-revision sensitive evidence requires "
+            "sensitive_route=approved_spec"
+        )
+    approved = evidence.get("approved_spec")
+    if not isinstance(approved, dict):
+        raise SpecRailError("approved_spec audit requires validated approved_spec evidence")
+    return {
+        "sensitive_route": "approved_spec",
+        "linked_issue": issue,
+        "artifact_paths": list(approved["spec_paths"]),
+        "maintainer_actor": approved["maintainer_actor"],
+        "approved_at": approved["approved_at"],
+        "state_source": approved["state_source"],
+        "default_base_ref": approved["default_base_ref"],
+        "default_base_sha": approved["default_base_sha"],
+        "content_hashes": dict(approved["content_hashes"]),
+    }
+
+
 def _tier_substantiation_reference(evidence: dict[str, Any]) -> str | None:
     """GH-143 defense in depth: standard_auto needs an independent reference.
 
@@ -289,6 +352,7 @@ def evaluate_pr_gate(
     missing: list[str] = []
     items: list[dict[str, str]] = []
     sensitive_classification: dict[str, Any] | None = None
+    sensitive_route_audit: dict[str, Any] | None = None
     sensitive_reasons: list[str] = []
 
     if _positive_int(evidence.get("pr")):
@@ -384,6 +448,8 @@ def evaluate_pr_gate(
             "enforcement_sensitive",
             "sensitive_classification",
             "approved_spec",
+            "sensitive_route",
+            "spec_approval",
         ]
     )
     if config is None and repo is not None:
@@ -424,6 +490,24 @@ def evaluate_pr_gate(
             )
             satisfied.extend(sensitive_satisfied)
             items.extend(sensitive_items)
+            if (
+                not sensitive_reasons
+                and sensitive_classification is not None
+                and (
+                    evidence.get("enforcement_sensitive") is True
+                    or sensitive_classification.get("enforcement_sensitive") is True
+                )
+            ):
+                try:
+                    sensitive_route_audit = _validated_sensitive_route_audit(
+                        config,
+                        resolve_path(repo, label="repository"),
+                        evidence,
+                        sensitive_classification,
+                    )
+                except SpecRailError as exc:
+                    sensitive_reasons.append(str(exc))
+                    items.append(item_from_reason(str(exc), "contract_violation"))
         if sensitive_reasons:
             reasons.extend(sensitive_reasons)
             missing.append("sensitive_enforcement")
@@ -472,6 +556,7 @@ def evaluate_pr_gate(
         "gate_query_head_sha": evidence.get("gate_query_head_sha"),
         "enforcement_sensitive": enforcement_sensitive_flag,
         "sensitive_classification": sensitive_classification,
+        "sensitive_route_audit": sensitive_route_audit,
         "reasons": sorted(set(reasons)),
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),

@@ -3,17 +3,7 @@
   "$id": "https://specrail.local/schemas/runtime_checkpoint.schema.json",
   "title": "Runtime Checkpoint",
   "type": "object",
-  "required": [
-    "checkpoint_version",
-    "tranche_id",
-    "repo",
-    "scope",
-    "status",
-    "context_budget",
-    "output_firewall",
-    "items",
-    "resume_prompt"
-  ],
+  "required": ["checkpoint_version", "tranche_id", "repo", "scope", "status", "context_budget", "output_firewall", "items", "resume_prompt"],
   "additionalProperties": true,
   "if": {
     "properties": {
@@ -49,9 +39,7 @@
     }
   },
   "properties": {
-    "checkpoint_version": {
-      "enum": [1, 2, 3]
-    },
+    "checkpoint_version": {"enum": [1, 2, 3]},
     "tranche_id": {
       "type": "string",
       "minLength": 1
@@ -490,6 +478,18 @@
         "type": "object",
         "required": ["state", "next_action"],
         "additionalProperties": true,
+        "allOf": [
+          {
+            "if": {"properties": {"enforcement_sensitive": {"const": true}}, "required": ["enforcement_sensitive"]},
+            "then": {
+              "required": ["sensitive_route"],
+              "anyOf": [
+                {"properties": {"sensitive_route": {"const": "approved_spec"}, "approved_spec_evidence": {"type": "string", "minLength": 1}, "spec_approval_evidence": {"const": null}}, "required": ["approved_spec_evidence"]},
+                {"properties": {"sensitive_route": {"const": "spec_revision"}, "approved_spec_evidence": {"const": null}, "spec_approval_evidence": {"type": "string", "minLength": 1}}, "required": ["spec_approval_evidence"]}
+              ]
+            }
+          }
+        ],
         "properties": {
           "issue": {
             "type": ["integer", "null"],
@@ -535,9 +535,9 @@
           "enforcement_sensitive": {
             "type": ["boolean", "null"]
           },
-          "approved_spec_evidence": {
-            "type": ["string", "null"]
-          },
+          "sensitive_route": {"enum": ["approved_spec", "spec_revision", null]},
+          "approved_spec_evidence": {"type": ["string", "null"]},
+          "spec_approval_evidence": {"type": ["string", "null"]},
           "ci": {
             "type": ["object", "null"],
             "additionalProperties": true,
@@ -738,6 +738,18 @@
         "type": "object",
         "required": ["state", "next_action"],
         "additionalProperties": true,
+        "allOf": [
+          {
+            "if": {"properties": {"enforcement_sensitive": {"const": true}}, "required": ["enforcement_sensitive"]},
+            "then": {
+              "required": ["sensitive_route"],
+              "anyOf": [
+                {"properties": {"sensitive_route": {"const": "approved_spec"}, "approved_spec_evidence": {"type": "string", "minLength": 1}, "spec_approval_evidence": {"const": null}}, "required": ["approved_spec_evidence"]},
+                {"properties": {"sensitive_route": {"const": "spec_revision"}, "approved_spec_evidence": {"const": null}, "spec_approval_evidence": {"type": "string", "minLength": 1}}, "required": ["spec_approval_evidence"]}
+              ]
+            }
+          }
+        ],
         "properties": {
           "issue": {
             "type": ["integer", "null"],
@@ -765,6 +777,10 @@
           "spec_status_reason": {
             "type": ["string", "null"]
           },
+          "enforcement_sensitive": {"type": ["boolean", "null"]},
+          "sensitive_route": {"enum": ["approved_spec", "spec_revision", null]},
+          "approved_spec_evidence": {"type": ["string", "null"]},
+          "spec_approval_evidence": {"type": ["string", "null"]},
           "blocker": {
             "type": ["string", "null"]
           },

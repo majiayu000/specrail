@@ -40,7 +40,7 @@
     {
       "name": "specrail-pr-gate",
       "path": "skills/specrail-pr-gate/SKILL.md",
-      "computedHash": "sha256:27d7d3f440f9c6787191ff2f698b608833d3a66f505df8af769e1f794ac11d55"
+      "computedHash": "sha256:5f18d0b936e13265731db1c0f1a2eafe4e83331d88e311c773755abb3c914b2f"
     },
     {
       "name": "specrail-release-note",

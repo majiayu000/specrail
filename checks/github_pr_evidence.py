@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from github_evidence_common import EvidenceError, json_object
-from github_approved_spec_evidence import collect_approval_metadata
+from github_approved_spec_evidence import (
+    collect_approval_metadata, collect_spec_revision_approval,
+)
 from github_issue_reference import (
     normalize_issue_reference,
     normalize_linked_issue, references_partial_issue, relation_snapshot,
@@ -38,6 +40,7 @@ from sensitive_enforcement import (
     sensitive_registry,
 )
 from review_result_semantics import ReviewSemanticError, load_review_manifest
+from spec_revision_evidence import SPEC_APPROVAL_FIELDS, spec_revision_route_eligible
 from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
@@ -290,6 +293,7 @@ def build_evidence(
     review_evidence: dict[str, Any] | None = None,
     gate_started_at: str | None = None,
     round_cap_authorizations: list[dict[str, Any]] | None = None,
+    spec_approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     linked_issue, issue_reference = normalize_issue_reference(
@@ -358,46 +362,66 @@ def build_evidence(
                     raise EvidenceError(
                         "enforcement-sensitive PR requires a linked issue"
                     )
-                if not isinstance(approval_metadata, dict):
-                    raise EvidenceError(
-                        "enforcement-sensitive PR requires trusted approval metadata"
-                    )
-                if (
-                    approval_metadata.get("state_source") != "label"
-                    or approval_metadata.get("state_trusted") is not True
-                ):
-                    raise EvidenceError(
-                        "approved spec requires trusted maintainer label evidence"
-                    )
-                approval_default = (
-                    approval_metadata.get("default_base_ref"),
-                    approval_metadata.get("default_base_sha"),
+                route = spec_revision_route_eligible(
+                    config, linked_issue, classification
                 )
-                snapshot_default = (
-                    pr_snapshot.get("default_base_ref"),
-                    pr_snapshot.get("default_base_sha"),
-                )
-                if approval_default != snapshot_default:
-                    raise EvidenceError(
-                        "approved-spec and PR snapshots disagree on trusted default base"
+                if route.eligible:
+                    if not isinstance(spec_approval, dict):
+                        raise EvidenceError(
+                            "eligible spec revision requires trusted spec approval"
+                        )
+                    if set(spec_approval) != SPEC_APPROVAL_FIELDS:
+                        raise EvidenceError("spec_approval field contract is incomplete")
+                    if spec_approval.get("commit_oid") != head_sha:
+                        raise EvidenceError(
+                            "spec_approval commit must match the gated head"
+                        )
+                    if spec_approval.get("artifact_paths") != list(route.artifact_paths):
+                        raise EvidenceError(
+                            "spec_approval artifacts must match the eligible spec revision"
+                        )
+                    evidence["sensitive_route"] = "spec_revision"
+                    evidence["spec_approval"] = dict(spec_approval)
+                else:
+                    evidence["sensitive_route"] = "approved_spec"
+                    if not isinstance(approval_metadata, dict):
+                        raise EvidenceError(
+                            "enforcement-sensitive PR requires trusted approval metadata"
+                        )
+                    if (
+                        approval_metadata.get("state_source") != "label"
+                        or approval_metadata.get("state_trusted") is not True
+                    ):
+                        raise EvidenceError(
+                            "approved spec requires trusted maintainer label evidence"
+                        )
+                    approval_default = (
+                        approval_metadata.get("default_base_ref"),
+                        approval_metadata.get("default_base_sha"),
                     )
-                try:
-                    evidence["approved_spec"] = build_approved_spec_evidence(
-                        config,
-                        repo,
-                        repository=str(repository or ""),
-                        issue=linked_issue,
-                        spec_revisions=approval_metadata.get("spec_revisions"),
-                        approved_at=str(approval_metadata.get("approved_at") or ""),
-                        maintainer_actor=str(
-                            approval_metadata.get("maintainer_actor") or ""
-                        ),
-                        gated_head_sha=head_sha,
-                        default_base_ref=snapshot_default[0],
-                        default_base_sha=snapshot_default[1],
+                    snapshot_default = (
+                        pr_snapshot.get("default_base_ref"),
+                        pr_snapshot.get("default_base_sha"),
                     )
-                except SpecRailError as exc:
-                    raise EvidenceError(str(exc)) from exc
+                    if approval_default != snapshot_default:
+                        raise EvidenceError(
+                            "approved-spec and PR snapshots disagree on trusted default base"
+                        )
+                    try:
+                        evidence["approved_spec"] = build_approved_spec_evidence(
+                            config, repo, repository=str(repository or ""),
+                            issue=linked_issue,
+                            spec_revisions=approval_metadata.get("spec_revisions"),
+                            approved_at=str(approval_metadata.get("approved_at") or ""),
+                            maintainer_actor=str(
+                                approval_metadata.get("maintainer_actor") or ""
+                            ),
+                            gated_head_sha=head_sha,
+                            default_base_ref=snapshot_default[0],
+                            default_base_sha=snapshot_default[1],
+                        )
+                    except SpecRailError as exc:
+                        raise EvidenceError(str(exc)) from exc
     if review_evidence is not None:
         derived_source = review_evidence.get("review_source")
         derived_execution = review_evidence.get("review_execution")
@@ -478,6 +502,7 @@ def collect_evidence(
         issue_payload = collect_issue_view(github_repo, expected_issue)
 
     approval_metadata = None
+    spec_approval = None
     if file_snapshot_before is not None:
         assert file_snapshot_before is not None
         declaration = enforcement_declaration(pr_payload_before.get("body"))
@@ -503,14 +528,23 @@ def collect_evidence(
                     raise EvidenceError(
                         "enforcement-sensitive PR requires a linked issue"
                     )
-                approval_metadata = collect_approval_metadata(
-                    github_repo, linked_issue, run_gh_json,
-                    spec_source_commits=approved_spec_source_commits(
-                        config, repo, linked_issue,
-                        default_base_ref=file_snapshot_before.get("default_base_ref"),
-                        default_base_sha=file_snapshot_before.get("default_base_sha"),
-                    ),
+                route = spec_revision_route_eligible(
+                    config, linked_issue, classification
                 )
+                if route.eligible:
+                    spec_approval = collect_spec_revision_approval(
+                        github_repo, linked_issue, pr_number, head_sha_before,
+                        route.artifact_paths, run_gh_json,
+                    )
+                else:
+                    approval_metadata = collect_approval_metadata(
+                        github_repo, linked_issue, run_gh_json,
+                        spec_source_commits=approved_spec_source_commits(
+                            config, repo, linked_issue,
+                            default_base_ref=file_snapshot_before.get("default_base_ref"),
+                            default_base_sha=file_snapshot_before.get("default_base_sha"),
+                        ),
+                    )
 
     file_snapshot_after = None
     if file_snapshot_before is not None:
@@ -571,6 +605,7 @@ def collect_evidence(
         review_evidence,
         gate_started_at,
         round_cap_authorizations,
+        spec_approval,
     )
 
 
