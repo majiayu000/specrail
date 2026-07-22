@@ -35,8 +35,10 @@ GH-160
 - `info.last_token_usage.input_tokens` 为当前 context；
 - `info.model_context_window` 为 runtime 分母。
 
-parser 只接受非 boolean、非负整数 token 与正整数 window；忽略累计
-`info.total_token_usage`。在 `tranche_start_offset` 后聚合：
+parser 只接受非 boolean、非负整数 token 与正整数 window，且
+`input_tokens <= model_context_window`；超出 runtime window 的 observation 必须跳过并计入
+`invalid_context_observation_count`。parser 忽略累计 `info.total_token_usage`。在
+`tranche_start_offset` 后聚合：
 
 ```text
 observed_context_tokens              # latest
@@ -133,7 +135,7 @@ bounded drain，附加以下证据到 GH-160：
 | --- | --- | --- |
 | B-001 | token-count parser | `test_collect_uses_last_token_usage_for_context` |
 | B-002 | telemetry aggregation | latest/max/lower-median/offset tests |
-| B-003 | telemetry validation | invalid count、omission、boolean/negative tests |
+| B-003 | telemetry validation | invalid count、omission、boolean/negative、input-over-window tests |
 | B-004 | `runtime_context_budget.validate_context_budget` | denominator equality、window conflict、ratio mismatch tests |
 | B-005 B-006 | soft-stop handoff | status/action/high-watermark tests；显式拒绝 `end_tranche` |
 | B-007 | compatibility | legacy checkpoint unchanged + full suite |
