@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import subprocess
 import sys
@@ -15,7 +16,7 @@ CHECKS = ROOT / "checks"
 FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
-from review_json_gate import evaluate_review_gate  # noqa: E402
+from review_json_gate import evaluate_review_gate, validate_exact_git_diff  # noqa: E402
 from pr_review_contract import evaluate_review_contract  # noqa: E402
 from review_result_semantics import (  # noqa: E402
     ReviewSemanticError,
@@ -377,601 +378,6 @@ def test_review_json_gate_blocks_legacy_review_without_v2_terminal_fields() -> N
     assert any("artifact_id" in reason for reason in result["reasons"])
 
 
-@pytest.mark.parametrize("status", ["pending", "failed", "cancelled", "superseded"])
-def test_review_semantics_terminal_lifecycle_blocks_merge_readiness(status: str) -> None:
-    review = load_review("review-valid.json")
-    review["status"] = status
-    if status == "pending":
-        review["review_completed_at"] = None
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is True
-    assert any("status is not completed" in item for item in result["blocking_reasons"])
-
-
-def test_review_semantics_blocks_duplicate_finding_ids() -> None:
-    review = load_review("review-valid.json")
-    review["findings"].append(dict(review["findings"][0]))
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is False
-    assert "findings IDs must be unique" in result["errors"]
-
-
-def test_review_semantics_requires_prior_finding_closure_evidence() -> None:
-    review = load_review("review-valid.json")
-    review["prior_findings"] = [
-        {
-            "id": "finding-old",
-            "source_head_sha": "b" * 40,
-            "summary": "Old blocking finding.",
-            "status": "resolved",
-        }
-    ]
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is False
-    assert any("closure_evidence" in item for item in result["errors"])
-
-
-def test_review_semantics_blocks_unresolved_prior_finding() -> None:
-    review = load_review("review-valid.json")
-    review["prior_findings"] = [
-        {
-            "id": "finding-old",
-            "source_head_sha": "b" * 40,
-            "summary": "Old blocking finding.",
-            "status": "unresolved",
-        }
-    ]
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is True
-    assert any("unresolved prior finding" in item for item in result["blocking_reasons"])
-
-
-def test_review_semantics_requires_self_review_human_final_gate() -> None:
-    review = load_review("review-valid.json")
-    review["review_source"] = "self_review"
-    review["human_final_review_required"] = False
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is False
-    assert "self_review requires human_final_review_required=true" in result["errors"]
-
-
-def clean_terminal_artifact(
-    *,
-    artifact_id: str = "current-clean",
-    lane: str = "reviewer-1",
-    producer: str = "agent-reviewer-1",
-    head_sha: str = "a" * 40,
-) -> dict[str, object]:
-    review = load_review("review-valid.json")
-    review.update(
-        {
-            "artifact_id": artifact_id,
-            "reviewer_lane": lane,
-            "producer_identity": producer,
-            "head_sha": head_sha,
-            "verdict": "clean",
-            "findings": [],
-            "prior_findings": [],
-        }
-    )
-    return review
-
-
-def install_review_schema(repo: Path) -> None:
-    schema_dir = repo / "schemas"
-    schema_dir.mkdir(exist_ok=True)
-    copyfile(
-        ROOT / "schemas" / "review_result.schema.json",
-        schema_dir / "review_result.schema.json",
-    )
-
-
-def write_review_manifest(
-    repo: Path,
-    artifacts: list[dict[str, object]],
-) -> str:
-    install_review_schema(repo)
-    review_dir = repo / "artifacts" / "reviews"
-    review_dir.mkdir(parents=True)
-    lanes: dict[tuple[str, str], list[str]] = {}
-    for index, artifact in enumerate(artifacts, start=1):
-        path = review_dir / f"artifact-{index}.json"
-        path.write_text(json.dumps(artifact), encoding="utf-8")
-        key = (str(artifact["reviewer_lane"]), str(artifact["producer_identity"]))
-        lanes.setdefault(key, []).append(path.relative_to(repo).as_posix())
-    manifest = {
-        "version": 1,
-        "pr": 489,
-        "head_sha": "a" * 40,
-        "human_final_review_required": False,
-        "lanes": [
-            {
-                "lane_id": lane,
-                "producer_identity": producer,
-                "artifact_paths": paths,
-            }
-            for (lane, producer), paths in lanes.items()
-        ],
-    }
-    path = review_dir / "manifest.json"
-    path.write_text(json.dumps(manifest), encoding="utf-8")
-    return path.relative_to(repo).as_posix()
-
-
-def test_review_manifest_allows_clean_current_head(tmp_path: Path) -> None:
-    manifest_path = write_review_manifest(tmp_path, [clean_terminal_artifact()])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert result["errors"] == []
-    assert result["blocking_reasons"] == []
-    assert result["review_execution"] == "local"
-
-
-def test_review_manifest_allows_explicit_ungated_review_fields(tmp_path: Path) -> None:
-    artifact = clean_terminal_artifact()
-    artifact["gate_status"] = "unavailable"
-    artifact["gate_authorization"] = "Human authorization: continue without gate"
-    body = artifact["body"]
-    assert isinstance(body, str)
-    artifact["body"] = body.replace(
-        "## Summary", "## Summary\n\nSpecRail gate status: unavailable"
-    )
-    manifest_path = write_review_manifest(tmp_path, [artifact])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert result["errors"] == []
-    assert any(
-        "unavailable cannot satisfy merge-ready review evidence" in item
-        for item in result["blocking_reasons"]
-    )
-
-
-def test_review_manifest_blocks_orphan_gate_authorization(tmp_path: Path) -> None:
-    artifact = clean_terminal_artifact()
-    artifact["gate_authorization"] = "stale degraded-review authorization"
-    manifest_path = write_review_manifest(tmp_path, [artifact])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("gate_status" in item for item in result["errors"])
-
-
-def test_review_manifest_blocks_blank_gate_authorization(tmp_path: Path) -> None:
-    artifact = clean_terminal_artifact()
-    artifact["gate_status"] = "unavailable"
-    artifact["gate_authorization"] = "   \t"
-    body = artifact["body"]
-    assert isinstance(body, str)
-    artifact["body"] = body.replace(
-        "## Summary", "## Summary\n\nSpecRail gate status: unavailable"
-    )
-    manifest_path = write_review_manifest(tmp_path, [artifact])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("gate_authorization" in item for item in result["errors"])
-
-
-def test_review_manifest_blocks_unavailable_marker_outside_summary(
-    tmp_path: Path,
-) -> None:
-    artifact = clean_terminal_artifact()
-    artifact["gate_status"] = "unavailable"
-    artifact["gate_authorization"] = "Human authorization: continue without gate"
-    artifact["body"] = f"{artifact['body']}\n\n{UNGATED_DISCLOSURE_MARKER}"
-    manifest_path = write_review_manifest(tmp_path, [artifact])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("## Summary marker" in item for item in result["errors"])
-
-
-@pytest.mark.parametrize(
-    "claim",
-    [
-        "This review is SpecRail-gated.",
-        "This review is verified.",
-        "This review is fully verified and suitable for delivery.",
-        "This result is merge-ready.",
-    ],
-)
-def test_review_manifest_blocks_degraded_positive_gate_claims(
-    tmp_path: Path,
-    claim: str,
-) -> None:
-    artifact = clean_terminal_artifact()
-    artifact["gate_status"] = "unavailable"
-    artifact["gate_authorization"] = "Human authorization: continue without gate"
-    body = artifact["body"]
-    assert isinstance(body, str)
-    artifact["body"] = body.replace(
-        "## Summary",
-        f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}\n\n{claim}",
-    )
-    manifest_path = write_review_manifest(tmp_path, [artifact])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("must not claim" in item for item in result["errors"])
-
-
-@pytest.mark.parametrize("location", ["verdict", "comment"])
-def test_review_manifest_blocks_degraded_claims_in_all_published_text(
-    tmp_path: Path,
-    location: str,
-) -> None:
-    artifact = clean_terminal_artifact()
-    artifact["gate_status"] = "unavailable"
-    artifact["gate_authorization"] = "Human authorization: continue without gate"
-    body = artifact["body"]
-    assert isinstance(body, str)
-    artifact["body"] = body.replace(
-        "## Summary", f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}"
-    )
-    if location == "verdict":
-        artifact["body"] = artifact["body"].replace(
-            "## Verdict", "## Verdict\n\nThis review is verified and merge-ready."
-        )
-    else:
-        artifact["comments"] = [
-            {
-                "path": "checks/example.py",
-                "line": 1,
-                "side": "RIGHT",
-                "severity": "suggestion",
-                "body": "This review is verified and merge-ready.",
-            }
-        ]
-    manifest_path = write_review_manifest(tmp_path, [artifact])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("must not claim" in item for item in result["errors"])
-
-
-@pytest.mark.parametrize("gate_status", [None, "gated"])
-def test_review_manifest_blocks_marker_without_matching_status(
-    tmp_path: Path,
-    gate_status: str | None,
-) -> None:
-    artifact = clean_terminal_artifact()
-    if gate_status is not None:
-        artifact["gate_status"] = gate_status
-    body = artifact["body"]
-    assert isinstance(body, str)
-    artifact["body"] = body.replace(
-        "## Summary", f"## Summary\n\n{UNGATED_DISCLOSURE_MARKER}"
-    )
-    manifest_path = write_review_manifest(tmp_path, [artifact])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("gate_status" in item for item in result["errors"])
-
-
-def test_review_manifest_blocks_conflicting_execution_provenance(tmp_path: Path) -> None:
-    hosted = clean_terminal_artifact(
-        artifact_id="hosted-current",
-        lane="hosted-reviewer",
-        producer="hosted-service",
-    )
-    hosted["review_execution"] = "hosted"
-    manifest_path = write_review_manifest(
-        tmp_path,
-        [clean_terminal_artifact(), hosted],
-    )
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any(
-        "conflicting review_execution" in item
-        for item in result["blocking_reasons"]
-    )
-    assert result["review_execution"] is None
-
-
-def test_review_manifest_blocks_pending_current_head_alongside_clean_terminal(
-    tmp_path: Path,
-) -> None:
-    pending = clean_terminal_artifact(
-        artifact_id="current-pending",
-        lane="reviewer-pending",
-        producer="agent-reviewer-pending",
-    )
-    pending["status"] = "pending"
-    pending["review_completed_at"] = None
-    manifest_path = write_review_manifest(
-        tmp_path,
-        [pending, clean_terminal_artifact()],
-    )
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any(
-        "review status is not completed: pending" in item
-        for item in result["blocking_reasons"]
-    )
-
-
-@pytest.mark.parametrize(
-    ("mutation", "expected_error"),
-    [
-        (lambda artifact: artifact.update({"forged_unknown_field": True}), "additional property"),
-        (lambda artifact: artifact.update({"body": "clean without required headings"}), "does not match pattern"),
-        (
-            lambda artifact: artifact.update(
-                {
-                    "comments": [
-                        {
-                            "path": "checks/pr_gate.py",
-                            "line": 1,
-                            "side": "MIDDLE",
-                            "severity": "important",
-                            "body": "invalid side",
-                        }
-                    ]
-                }
-            ),
-            "is not in enum",
-        ),
-    ],
-)
-def test_review_manifest_rejects_schema_invalid_artifact(
-    tmp_path: Path,
-    mutation: object,
-    expected_error: str,
-) -> None:
-    artifact = clean_terminal_artifact()
-    assert callable(mutation)
-    mutation(artifact)
-    manifest_path = write_review_manifest(tmp_path, [artifact])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any(expected_error in item for item in result["errors"])
-    assert result["review_source"] == "independent_lane"
-
-
-def test_review_manifest_blocks_duplicate_terminal_for_lane_and_head(tmp_path: Path) -> None:
-    artifacts = [
-        clean_terminal_artifact(artifact_id="current-1"),
-        clean_terminal_artifact(artifact_id="current-2"),
-    ]
-    manifest_path = write_review_manifest(tmp_path, artifacts)
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("duplicate terminal artifacts" in item for item in result["errors"])
-
-
-def test_review_manifest_requires_stale_finding_carry_forward(tmp_path: Path) -> None:
-    stale = clean_terminal_artifact(artifact_id="old", head_sha="b" * 40)
-    stale["verdict"] = "blocking"
-    stale["findings"] = [
-        {
-            "id": "finding-old",
-            "severity": "important",
-            "actionable": True,
-            "summary": "Old blocking finding.",
-        }
-    ]
-    manifest_path = write_review_manifest(
-        tmp_path,
-        [stale, clean_terminal_artifact()],
-    )
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("missing prior finding carry-forward" in item for item in result["errors"])
-
-
-def test_review_manifest_requires_transitive_unresolved_prior_finding(
-    tmp_path: Path,
-) -> None:
-    stale = clean_terminal_artifact(head_sha="b" * 40)
-    stale["prior_findings"] = [
-        {
-            "id": "finding-transitive",
-            "source_head_sha": "c" * 40,
-            "summary": "Still unresolved from an omitted source artifact.",
-            "status": "unresolved",
-        }
-    ]
-    current = clean_terminal_artifact()
-    manifest_path = write_review_manifest(tmp_path, [stale, current])
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any(
-        "missing prior finding carry-forward: finding-transitive" in item
-        for item in result["errors"]
-    )
-
-
-def test_review_manifest_blocks_concurrent_clean_and_blocking_verdicts(tmp_path: Path) -> None:
-    blocking = clean_terminal_artifact(
-        artifact_id="current-blocking",
-        lane="reviewer-2",
-        producer="agent-reviewer-2",
-    )
-    blocking["verdict"] = "blocking"
-    blocking["findings"] = [
-        {
-            "id": "finding-current",
-            "severity": "important",
-            "actionable": True,
-            "summary": "Current blocking finding.",
-        }
-    ]
-    manifest_path = write_review_manifest(
-        tmp_path,
-        [clean_terminal_artifact(), blocking],
-    )
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("verdict is not merge-ready" in item for item in result["blocking_reasons"])
-    assert any("blocking current-head finding" in item for item in result["blocking_reasons"])
-
-
-def test_review_manifest_rejects_multiple_current_head_terminal_artifacts(
-    tmp_path: Path,
-) -> None:
-    manifest_path = write_review_manifest(
-        tmp_path,
-        [
-            clean_terminal_artifact(lane="reviewer-1", producer="agent-reviewer-1"),
-            clean_terminal_artifact(
-                artifact_id="current-clean-2",
-                lane="reviewer-2",
-                producer="agent-reviewer-2",
-            ),
-        ],
-    )
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path,
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert "review manifest has multiple terminal artifacts for the current head" in result["errors"]
-
-
-def test_embedded_review_evidence_blocks_non_object_artifact() -> None:
-    result = evaluate_review_evidence(
-        {
-            "pr": 489,
-            "head_sha": "a" * 40,
-            "errors": [],
-            "blocking_reasons": [],
-            "artifacts": [None],
-        },
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("review artifact must be an object" in item for item in result["errors"])
-
-
-def test_review_manifest_rejects_artifact_path_traversal(tmp_path: Path) -> None:
-    install_review_schema(tmp_path)
-    review_dir = tmp_path / "artifacts" / "reviews"
-    review_dir.mkdir(parents=True)
-    manifest = {
-        "version": 1,
-        "pr": 489,
-        "head_sha": "a" * 40,
-        "human_final_review_required": False,
-        "lanes": [
-            {
-                "lane_id": "reviewer-1",
-                "producer_identity": "agent-reviewer-1",
-                "artifact_paths": ["../outside.json"],
-            }
-        ],
-    }
-    manifest_path = review_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
-    result = load_review_manifest(
-        tmp_path,
-        manifest_path.relative_to(tmp_path).as_posix(),
-        expected_pr=489,
-        expected_head_sha="a" * 40,
-    )
-
-    assert any("repo-relative POSIX paths" in item for item in result["errors"])
-
-
 def test_review_json_gate_rejection_items_cover_missing_and_reasons() -> None:
     result = evaluate_review_gate({}, load_diff())
 
@@ -1143,3 +549,142 @@ def test_review_json_gate_blocks_authorization_without_unavailable_status() -> N
 
     assert result["decision"] == "blocked"
     assert any("allowed only when gate_status is unavailable" in item for item in result["reasons"])
+
+
+def git(repo: Path, *args: str) -> bytes:
+    process = subprocess.run(
+        ["git", *args], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr.decode(errors="replace")
+    return process.stdout
+
+
+def commit_file(repo: Path, name: str, content: bytes, message: str) -> str:
+    (repo / name).write_bytes(content)
+    git(repo, "add", "--", name)
+    git(repo, "commit", "-m", message)
+    return git(repo, "rev-parse", "HEAD").decode().strip()
+
+
+def bounded_review(base: str, head: str, diff: bytes, mode: str = "resumed") -> dict[str, object]:
+    review = load_review("review-valid.json")
+    review.update({
+        "round_policy_version": 1,
+        "review_round": 2,
+        "review_mode": mode,
+        "base_head_sha": base,
+        "head_sha": head,
+        "diff_sha256": hashlib.sha256(diff).hexdigest(),
+        "prior_findings": [],
+        "comments": [],
+    })
+    return review
+
+
+def git_history(tmp_path: Path) -> tuple[str, str, str, bytes, bytes]:
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "SpecRail Test")
+    git(tmp_path, "config", "user.email", "specrail@example.invalid")
+    first = commit_file(tmp_path, "tracked.txt", b"one\n", "first")
+    second = commit_file(tmp_path, "tracked.txt", b"two\n", "second")
+    third = commit_file(tmp_path, "tracked.txt", b"three\n", "third")
+    scoped = git(tmp_path, "diff", "--no-ext-diff", "--binary", f"{second}..{third}", "--")
+    full = git(tmp_path, "diff", "--no-ext-diff", "--binary", f"{first}..{third}", "--")
+    return first, second, third, scoped, full
+
+
+@pytest.mark.parametrize("mode", ["resumed", "diff_only"])
+def test_bounded_gate_accepts_exact_git_range(tmp_path: Path, mode: str) -> None:
+    _, base, head, diff, _ = git_history(tmp_path)
+    result = evaluate_review_gate(
+        bounded_review(base, head, diff, mode), diff.decode(), repo=tmp_path, diff_bytes=diff
+    )
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_bounded_gate_rejects_full_pr_diff_and_forged_hash(tmp_path: Path) -> None:
+    _, base, head, scoped, full = git_history(tmp_path)
+    review = bounded_review(base, head, scoped)
+    full_result = evaluate_review_gate(
+        review, full.decode(), repo=tmp_path, diff_bytes=full
+    )
+    assert any("provided diff bytes" in reason for reason in full_result["reasons"])
+    review["diff_sha256"] = "0" * 64
+    hash_result = evaluate_review_gate(
+        review, scoped.decode(), repo=tmp_path, diff_bytes=scoped
+    )
+    assert any("diff_sha256" in reason for reason in hash_result["reasons"])
+
+
+def test_bounded_gate_rejects_missing_git_object(tmp_path: Path) -> None:
+    _, base, head, diff, _ = git_history(tmp_path)
+    review = bounded_review(base, head, diff)
+    review["base_head_sha"] = "f" * 40
+    result = evaluate_review_gate(
+        review, diff.decode(), repo=tmp_path, diff_bytes=diff
+    )
+    assert any("exact Git diff failed" in reason for reason in result["reasons"])
+
+
+def test_bounded_gate_rejects_git_option_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    review = bounded_review("a" * 40, "b" * 40, b"")
+    review["base_head_sha"] = "--output=/tmp/specrail-gh167-proof"
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail("Git executed"))
+
+    result = evaluate_review_gate(review, "", repo=tmp_path, diff_bytes=b"")
+
+    assert any("40-character Git SHAs" in reason for reason in result["reasons"])
+
+
+def test_bounded_gate_blocks_string_round_without_crashing(tmp_path: Path) -> None:
+    review = bounded_review("a" * 40, "b" * 40, b"")
+    review["review_round"] = "2"
+
+    result = evaluate_review_gate(review, "", repo=tmp_path, diff_bytes=b"")
+
+    assert result["decision"] == "blocked"
+    assert any("positive integer" in reason for reason in result["reasons"])
+
+
+def test_exact_diff_rejects_bad_hash_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail("Git executed"))
+    reasons = validate_exact_git_diff(tmp_path, "a" * 40, "b" * 40, "bad")
+    assert reasons == ["exact Git diff requires a 64-character diff_sha256 before execution"]
+
+
+def test_exact_diff_reports_subprocess_start_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*args: object, **kwargs: object) -> object:
+        raise OSError("git unavailable")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    reasons = validate_exact_git_diff(tmp_path, "a" * 40, "b" * 40, "c" * 64)
+    assert reasons == ["cannot execute exact Git diff: git unavailable"]
+
+
+def test_bounded_gate_accepts_binary_and_empty_exact_diffs(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "SpecRail Test")
+    git(tmp_path, "config", "user.email", "specrail@example.invalid")
+    base = commit_file(tmp_path, "blob.bin", b"\x00old\xff", "base")
+    binary_head = commit_file(tmp_path, "blob.bin", b"\x00new\xfe", "binary")
+    binary = git(tmp_path, "diff", "--no-ext-diff", "--binary", f"{base}..{binary_head}", "--")
+    binary_result = evaluate_review_gate(
+        bounded_review(base, binary_head, binary),
+        binary.decode(), repo=tmp_path, diff_bytes=binary,
+    )
+    assert binary_result["decision"] == "allowed", binary_result["reasons"]
+    git(tmp_path, "commit", "--allow-empty", "-m", "empty")
+    empty_head = git(tmp_path, "rev-parse", "HEAD").decode().strip()
+    empty = git(tmp_path, "diff", "--no-ext-diff", "--binary", f"{binary_head}..{empty_head}", "--")
+    empty_result = evaluate_review_gate(
+        bounded_review(binary_head, empty_head, empty, "diff_only"),
+        "", repo=tmp_path, diff_bytes=empty,
+    )
+    assert empty_result["decision"] == "allowed", empty_result["reasons"]

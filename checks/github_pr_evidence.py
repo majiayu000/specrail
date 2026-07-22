@@ -26,6 +26,8 @@ from github_review_evidence import (
     build_human_authorization,
     build_self_review_authorization,
     load_lane_failures,
+    load_maintainer_role_map,
+    load_round_cap_authorizations,
     load_resolver_role_map,
     normalize_review_threads,
 )
@@ -287,6 +289,7 @@ def build_evidence(
     pr_snapshot: dict[str, Any] | None = None,
     review_evidence: dict[str, Any] | None = None,
     gate_started_at: str | None = None,
+    round_cap_authorizations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     linked_issue, issue_reference = normalize_issue_reference(
@@ -414,6 +417,8 @@ def build_evidence(
         evidence["human_authorization"] = authorization
     if self_review_authorization is not None:
         evidence["self_review_authorization"] = self_review_authorization
+    if round_cap_authorizations:
+        evidence["round_cap_authorizations"] = round_cap_authorizations
     provided_merge = [value for value in [merge_dispatched_at, merge_head_sha] if value is not None]
     if provided_merge:
         if not merge_dispatched_at or not merge_dispatched_at.strip() or not merge_head_sha or not merge_head_sha.strip():
@@ -439,6 +444,7 @@ def collect_evidence(
     repo: Path | None = None,
     config: PackConfig | None = None,
     review_manifest: str | None = None,
+    round_cap_authorizations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if expected_issue is not None and (
         not isinstance(expected_issue, int)
@@ -536,6 +542,8 @@ def collect_evidence(
                 expected_pr=pr_number,
                 expected_head_sha=head_sha_after,
             )
+            if review_evidence.get("round_audit") is None:
+                review_evidence.pop("round_audit", None)
         except ReviewSemanticError as exc:
             raise EvidenceError(str(exc)) from exc
     elif review_source is not None:
@@ -562,6 +570,7 @@ def collect_evidence(
         file_snapshot_after,
         review_evidence,
         gate_started_at,
+        round_cap_authorizations,
     )
 
 
@@ -597,6 +606,16 @@ def main() -> int:
         "--resolver-role-map",
         help="JSON map or lane roster used to map resolver login to resolver_role",
     )
+    parser.add_argument(
+        "--round-cap-authorization",
+        action="append",
+        default=[],
+        help="External exact-bound continue_once authorization JSON (repeat per round)",
+    )
+    parser.add_argument(
+        "--maintainer-role-map",
+        help="Explicit JSON role map proving round-cap authorization actors are maintainers",
+    )
     parser.add_argument("--self-review-authorization-actor", help="Human authorizing self-review")
     parser.add_argument("--self-review-authorization-source", help="Where self-review authorization was recorded")
     parser.add_argument("--self-review-authorization-scope", help="Scope of self-review authorization")
@@ -620,6 +639,11 @@ def main() -> int:
         )
         lane_failures = load_lane_failures(args.lane_failures_json)
         resolver_roles = load_resolver_role_map(args.resolver_role_map)
+        maintainer_roles = load_maintainer_role_map(args.maintainer_role_map)
+        round_cap_authorizations = load_round_cap_authorizations(
+            args.round_cap_authorization,
+            maintainer_roles,
+        )
         repo = resolve_path(Path(args.repo), label="repository")
         evidence = collect_evidence(
             args.github_repo,
@@ -635,6 +659,7 @@ def main() -> int:
             repo,
             load_pack(repo),
             args.review_manifest,
+            round_cap_authorizations,
         )
     except (EvidenceError, SpecRailError) as exc:
         print(f"error: {exc}", file=sys.stderr)
