@@ -262,6 +262,7 @@ def collect_sensitive_route_evidence(
         "sensitive_classification": classification,
     }
     if classification["enforcement_sensitive"]:
+        result["sensitive_route"] = "approved_spec"
         metadata = collect_approval_metadata(
             github_repo,
             issue_number,

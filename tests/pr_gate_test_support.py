@@ -89,6 +89,7 @@ def sensitive_evidence(tmp_path: Path) -> tuple[dict[str, object], Path, object]
             "changed_files_count": 0,
             "changed_files_sha256": __import__("hashlib").sha256(b"[]").hexdigest(),
             "enforcement_sensitive": True,
+            "sensitive_route": "approved_spec",
             "sensitive_classification": {
                 "source": "github_changed_files",
                 "changed_paths": [],

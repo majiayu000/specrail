@@ -316,6 +316,157 @@ def test_pr_gate_schema_accepts_structured_partial_issue_reference() -> None:
     validate_instance(pr_review_gate_schema(), evidence)
 
 
+def _approved_spec_evidence() -> dict[str, object]:
+    revision = {
+        "source_commit_sha": "a" * 40,
+        "pr_number": 168,
+        "merged_at": "2026-07-22T01:00:00Z",
+        "merge_commit_sha": "b" * 40,
+    }
+    return {
+        "repository": "majiayu000/specrail",
+        "issue": 168,
+        "spec_paths": ["specs/GH168/product.md", "specs/GH168/tech.md"],
+        "content_hashes": {
+            "specs/GH168/product.md": "c" * 64,
+            "specs/GH168/tech.md": "d" * 64,
+        },
+        "spec_revisions": {
+            "specs/GH168/product.md": revision,
+            "specs/GH168/tech.md": revision,
+        },
+        "approved_at": "2026-07-22T01:00:00Z",
+        "maintainer_actor": "maintainer",
+        "state_source": "label",
+        "state_trusted": True,
+        "default_base_ref": "main",
+        "default_base_sha": "e" * 40,
+    }
+
+
+def _spec_approval_evidence() -> dict[str, object]:
+    return {
+        "lifecycle_state": "spec_approved",
+        "state_source": "label",
+        "state_trusted": True,
+        "maintainer_actor": "maintainer",
+        "approved_at": "2026-07-22T02:00:00Z",
+        "approval_source": "github_pr_review",
+        "approval_url": "https://github.com/majiayu000/specrail/pull/177#pullrequestreview-1",
+        "commit_oid": "f" * 40,
+        "artifact_paths": [
+            "specs/GH168/product.md",
+            "specs/GH168/tech.md",
+            "specs/GH168/tasks.md",
+        ],
+        "spec_artifacts_sha256": "1" * 64,
+    }
+
+
+def _sensitive_pr_evidence(
+    route: str, approval_key: str, approval: dict[str, object]
+) -> dict[str, object]:
+    evidence = json.loads(
+        (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    evidence["enforcement_sensitive"] = True
+    evidence["sensitive_route"] = route
+    evidence[approval_key] = approval
+    return evidence
+
+
+def _sensitive_classification() -> dict[str, object]:
+    paths = ["specs/GH168/product.md"]
+    return {
+        "source": "github_changed_files",
+        "changed_paths": paths,
+        "spec_refs": paths,
+        "matched_paths": [],
+        "matched_specs": paths,
+        "registry_configured": True,
+        "enforcement_sensitive": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("route", "approval_key", "approval"),
+    [
+        ("approved_spec", "approved_spec", _approved_spec_evidence()),
+        ("spec_revision", "spec_approval", _spec_approval_evidence()),
+    ],
+)
+def test_pr_gate_schema_accepts_matching_sensitive_route_evidence(
+    route: str, approval_key: str, approval: dict[str, object]
+) -> None:
+    validate_instance(
+        pr_review_gate_schema(),
+        _sensitive_pr_evidence(route, approval_key, approval),
+    )
+
+
+@pytest.mark.parametrize(
+    ("route", "approval_key", "approval"),
+    [
+        ("approved_spec", "spec_approval", _spec_approval_evidence()),
+        ("spec_revision", "approved_spec", _approved_spec_evidence()),
+    ],
+)
+def test_pr_gate_schema_rejects_sensitive_route_evidence_mismatch(
+    route: str, approval_key: str, approval: dict[str, object]
+) -> None:
+    evidence = _sensitive_pr_evidence(route, approval_key, approval)
+    with pytest.raises(InstanceMismatch, match="anyOf"):
+        validate_instance(pr_review_gate_schema(), evidence)
+
+
+def test_pr_gate_schema_rejects_mixed_sensitive_evidence() -> None:
+    evidence = _sensitive_pr_evidence(
+        "spec_revision", "spec_approval", _spec_approval_evidence()
+    )
+    evidence["approved_spec"] = _approved_spec_evidence()
+    with pytest.raises(InstanceMismatch, match="anyOf"):
+        validate_instance(pr_review_gate_schema(), evidence)
+
+
+def test_pr_gate_schema_requires_sensitive_route() -> None:
+    evidence = _sensitive_pr_evidence(
+        "spec_revision", "spec_approval", _spec_approval_evidence()
+    )
+    evidence.pop("sensitive_route")
+    with pytest.raises(InstanceMismatch, match="sensitive_route.*missing required field"):
+        validate_instance(pr_review_gate_schema(), evidence)
+
+
+def test_pr_gate_schema_requires_route_for_sensitive_classification() -> None:
+    evidence = json.loads(
+        (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    evidence["sensitive_classification"] = _sensitive_classification()
+    with pytest.raises(InstanceMismatch, match="sensitive_route.*missing required field"):
+        validate_instance(pr_review_gate_schema(), evidence)
+
+
+@pytest.mark.parametrize("missing", sorted(_spec_approval_evidence()))
+def test_pr_gate_schema_rejects_partial_spec_approval(missing: str) -> None:
+    approval = _spec_approval_evidence()
+    approval.pop(missing)
+    evidence = _sensitive_pr_evidence("spec_revision", "spec_approval", approval)
+    with pytest.raises(InstanceMismatch, match=rf"{missing}.*missing required field"):
+        validate_instance(pr_review_gate_schema(), evidence)
+
+
+def test_pr_gate_schema_rejects_unknown_spec_approval_field() -> None:
+    approval = _spec_approval_evidence()
+    approval["agent_approved"] = True
+    evidence = _sensitive_pr_evidence("spec_revision", "spec_approval", approval)
+    with pytest.raises(InstanceMismatch, match="additional property"):
+        validate_instance(pr_review_gate_schema(), evidence)
+
+
 def test_review_result_v2_fixture_validates_against_schema() -> None:
     review = json.loads(
         (ROOT / "examples" / "fixtures" / "review-valid.json").read_text(

@@ -99,6 +99,8 @@ def test_serialized_issue_evidence_is_schema_valid_in_all_three_modes(
     non_sensitive, _repo = non_sensitive_evidence(tmp_path, monkeypatch)
     sensitive = sensitive_evidence(tmp_path, monkeypatch)
 
+    assert sensitive["sensitive_route"] == "approved_spec"
+
     for evidence in [ordinary, non_sensitive, sensitive]:
         serialized = json.loads(json.dumps(evidence))
         validate_issue_evidence(serialized)
@@ -148,9 +150,16 @@ def test_issue_evidence_schema_rejects_forged_partial_sensitive_payloads(
     partial_base["base_ref"] = "main"
     missing_approval = deepcopy(sensitive)
     missing_approval.pop("approved_spec")
+    missing_route = deepcopy(sensitive)
+    missing_route.pop("sensitive_route")
     conflicting_declaration = deepcopy(sensitive)
     conflicting_declaration["enforcement_sensitive"] = False
 
-    for evidence in [partial_base, missing_approval, conflicting_declaration]:
+    for evidence in [
+        partial_base,
+        missing_approval,
+        missing_route,
+        conflicting_declaration,
+    ]:
         with pytest.raises(SpecRailError):
             validate_issue_evidence(evidence)

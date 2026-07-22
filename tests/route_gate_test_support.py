@@ -171,6 +171,7 @@ def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
         "default_base_ref": "main",
         "default_base_sha": head,
         "enforcement_sensitive": True,
+        "sensitive_route": "approved_spec",
         "sensitive_classification": {
             "source": "tech_spec",
             "changed_paths": ["checks/route_gate.py"],
