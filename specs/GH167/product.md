@@ -17,6 +17,7 @@ GH-167
 - 用带来源绑定的紧凑状态表替代历史 finding 正文回放，并保留“finding 不许口头消失”。
 - 超限时要求独立于 reviewer artifact 的 maintainer 授权；授权只允许一个精确目标轮次，不能复用为无限逃生阀。
 - 由 PR 终审合同复核 manifest v2 的轮次、模式、diff provenance、carry-forward 与升级移交记录。
+- 让 review skill、权威 queue skill 与 threads 集成文档使用同一轮数/升级合同，并用确定性测试阻止文档回漂。
 
 ## 非目标
 
@@ -42,6 +43,7 @@ GH-167
 12. B-012 manifest v1 仅在单 artifact、未声明 bounded-round 新字段时保持原行为；v1 多 artifact 或任一 artifact 声明新轮次策略字段时必须给出迁移错误并 block，不能静默按旧路径放行。
 13. B-013 PR evidence 必须通过闭集 schema 携带 loader 派生的 `round_audit` 与可选 `round_cap_authorizations[]`；`pr_review_contract.py` 必须从仓库安全路径重新加载 manifest 并逐字段复核，不能信任嵌入副本。
 14. B-014 新的跨 artifact/round/carry 语义应落在共享 `checks/review_result_semantics.py`；`checks/review_json_gate.py` 保持 CLI/diff 定位职责，修改后两文件均不得超过 800 行。
+15. B-015 `skills/specrail-review-pr/SKILL.md`、`skills/specrail-implement-queue/SKILL.md`、`skills/implx/SKILL.md` 与 `integrations/threads.md` 必须引用同一 bounded-round 合同；不得残留“full 最多 2 轮后由人工无限追加 full pass”等冲突路径，确定性测试必须在任一权威文档回漂时失败。
 
 ## Acceptance Criteria
 
@@ -51,6 +53,7 @@ GH-167
 - [ ] 紧凑 carry-forward 拒绝正文回放、自由散文 pointer、未知来源、重复键与漏掉历史 unresolved finding；超限移交还必须包含当前 actionable finding（B-006..B-010）。
 - [ ] manifest v1 单 artifact fixtures 零改动通过；v1 多 artifact 与 v2 字段不完整被明确拒绝（B-011/B-012）。
 - [ ] PR evidence schema/adapter/contract 完整复核 `round_audit` 和超限授权；`python3 checks/check_workflow.py --repo . --all-specs`、全量 `pytest` 通过，相关文件小于 800 行（B-013/B-014）。
+- [ ] review/queue/threads 四处权威合同统一为 cap=3、round>=2 scoped、超限 exact `continue_once`，并有文档一致性测试（B-015）。
 
 ## Boundary Checklist
 
