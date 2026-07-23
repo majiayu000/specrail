@@ -78,6 +78,9 @@ RUNTIME_V1_ITEM_FIELDS = frozenset(
         "worktree",
     }
 )
+RUNTIME_CONTENT_BINDING_MARKERS = frozenset(
+    {"content_binding_version", "snapshot", "content_hashes", "reused_components"}
+)
 
 def _require_positive_int(
     data: dict[str, Any],
@@ -124,8 +127,18 @@ def _validate_runtime_content_binding(
     item: dict[str, Any], label: str, errors: list[str]
 ) -> None:
     """Close v1 runtime items and validate reuse-audit category mappings."""
-    if item.get("content_binding_version") != CONTENT_BINDING_VERSION:
+    if not RUNTIME_CONTENT_BINDING_MARKERS.intersection(item):
         return
+    version = item.get("content_binding_version")
+    if (
+        "content_binding_version" in item
+        and (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != CONTENT_BINDING_VERSION
+        )
+    ):
+        errors.append(f"{label}: content_binding_version must be integer 1")
     for key in sorted(set(item) - RUNTIME_V1_ITEM_FIELDS):
         errors.append(f"{label}: unknown v1 runtime item field {key!r}")
     try:

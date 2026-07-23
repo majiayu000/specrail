@@ -154,6 +154,36 @@ def _minimal_v1_checkpoint() -> dict[str, object]:
     return checkpoint
 
 
+@pytest.mark.parametrize("version", [2, True])
+def test_runtime_binding_rejects_unsupported_or_boolean_version(
+    version: object,
+) -> None:
+    checkpoint = _minimal_v1_checkpoint()
+    checkpoint["items"][0]["content_binding_version"] = version  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "content_binding_version must be integer 1" in error
+        for error in result["errors"]
+    )
+
+
+@pytest.mark.parametrize("marker", ["snapshot", "content_hashes", "reused_components"])
+def test_runtime_binding_rejects_marker_without_version(marker: str) -> None:
+    checkpoint = _minimal_v1_checkpoint()
+    item = checkpoint["items"][0]  # type: ignore[index]
+    for field in ["content_binding_version", "snapshot", "content_hashes", "reused_components"]:
+        if field != marker:
+            item.pop(field)
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(marker in error for error in result["errors"])
+
+
 @pytest.mark.parametrize("field", ["snapshot", "content_hashes", "reused_components"])
 def test_runtime_v1_schema_blocks_missing_binding_fields(field: str) -> None:
     checkpoint = _minimal_v1_checkpoint()
