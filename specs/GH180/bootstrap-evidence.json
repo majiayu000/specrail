@@ -1,110 +1,114 @@
 {
-  "version": 1,
+  "version": 2,
   "issue": 180,
   "repository": "majiayu000/specrail",
-  "purpose": "GH180 one-time old-validator auto bootstrap exception audit only; not proof of the normal lifecycle and not reusable route authorization",
-  "authorization": {
-    "auth_mode": "auto",
-    "actor": "user",
-    "source": "current conversation",
-    "quote": "可以 按照你的来做 你又全部授权 你是auto模式",
-    "recorded_at": "2026-07-22T23:48:08Z",
-    "waived_human_gate": "spec_approval",
-    "invocation_scoped": true,
-    "standing_authorization": false,
-    "waiver_effect": "waives spec_approval only for the historical GH180 bootstrap task-planning invocation",
-    "does_not_waive": [
-      "readiness_label",
-      "duplicate_work_freshness",
-      "packet_validation",
-      "saved_result_binding"
-    ],
-    "scope": "GH180 bootstrap exception only",
-    "does_not_prove": "spec_pr_open -> spec_review -> spec_approved lifecycle"
-  },
-  "write_spec_stage": {
-    "issue_labels": ["enhancement", "ready_to_spec", "agent_generated"],
-    "state": "ready_to_spec",
-    "state_source": "label",
-    "state_trusted": true,
-    "route": "write_spec",
-    "route_decision": "allowed",
-    "route_decision_status": "reported_not_independently_recoverable",
+  "purpose": "Historical GH180 old-validator bootstrap audit only; not proof of a waiver, normal lifecycle, current invocation, or reusable route authorization",
+  "observed": {
     "issue_url": "https://github.com/majiayu000/specrail/issues/180",
-    "route_satisfied": [
-      "linked_issue: GH-180",
-      "state provided by evidence: ready_to_spec (label)",
-      "state ready_to_spec allows write_spec"
+    "label_states": [
+      "ready_to_spec",
+      "ready_to_implement"
     ],
-    "duplicate_evidence_collected_at": "2026-07-22T23:47:20Z",
-    "issue_evidence_collected_at": null,
-    "issue_evidence_sha256": null,
-    "issue_evidence_status": "unproven",
-    "issue_evidence_status_reason": "the named runtime issue-evidence artifact is not tracked and its collected_at/hash could not be recovered from this checkout"
+    "transition": {
+      "from_state": "ready_to_spec",
+      "to_state": "ready_to_implement",
+      "kind": "direct readiness-label transition",
+      "normal_lifecycle_completed": false
+    },
+    "authorization_effect": "none"
   },
-  "implement_stage": {
-    "issue_labels": ["enhancement", "ready_to_implement", "agent_generated"],
-    "state": "ready_to_implement",
-    "state_source": "label",
-    "state_trusted": true,
-    "route": "implement",
-    "route_decision": "allowed",
-    "route_decision_status": "reported_not_independently_recoverable",
-    "duplicate_work_decision": "allowed",
-    "issue_url": "https://github.com/majiayu000/specrail/issues/180",
-    "route_satisfied": [
-      "linked_issue: GH-180",
-      "product_spec: specs/GH180/product.md",
-      "state provided by evidence: ready_to_implement (label)",
-      "state ready_to_implement allows implement",
-      "tech_spec: specs/GH180/tech.md"
-    ],
-    "duplicate_evidence_collected_at": "2026-07-23T00:04:15Z",
-    "issue_evidence_collected_at": null,
-    "issue_evidence_sha256": null,
-    "issue_evidence_status": "unproven",
-    "issue_evidence_status_reason": "the named runtime issue-evidence artifact is not tracked and its collected_at/hash could not be recovered from this checkout",
-    "open_prs_referencing_issue": [],
-    "remote_branches_matching_implementation_token": []
+  "reported": {
+    "authorization_claim": {
+      "actor": "user",
+      "source": "current conversation",
+      "quote": "可以 按照你的来做 你又全部授权 你是auto模式",
+      "recorded_at": "2026-07-22T23:48:08Z",
+      "claimed_auth_mode": "auto",
+      "claimed_waived_human_gate": "spec_approval",
+      "claim_status": "reported_unproven",
+      "missing_for_proof": [
+        "invocation_id",
+        "route",
+        "exact waived_human_gates array",
+        "exact implx auto trigger",
+        "runtime-owned current-invocation trust anchor"
+      ],
+      "authorization_effect": "none"
+    },
+    "write_spec_stage": {
+      "route": "write_spec",
+      "route_decision": "allowed",
+      "route_decision_status": "reported_not_independently_recoverable",
+      "duplicate_evidence_collected_at": "2026-07-22T23:47:20Z",
+      "duplicate_evidence_timestamp_status": "reported_not_independently_recoverable",
+      "authorization_effect": "none"
+    },
+    "implement_stage": {
+      "route": "implement",
+      "route_decision": "allowed",
+      "route_decision_status": "reported_not_independently_recoverable",
+      "duplicate_work_decision": "allowed",
+      "duplicate_evidence_collected_at": "2026-07-23T00:04:15Z",
+      "duplicate_evidence_timestamp_status": "reported_not_independently_recoverable",
+      "authorization_effect": "none"
+    }
   },
-  "transition": {
-    "from_state": "ready_to_spec",
-    "to_state": "ready_to_implement",
-    "observed_kind": "direct readiness-label transition",
-    "normal_lifecycle_completed": false,
-    "normal_spec_approval_gate_satisfied": false,
-    "spec_approval_waived_for_historical_invocation": true,
-    "ready_to_implement_label_alone_satisfies_spec_approval": false,
-    "exception": "GH180 one-time auth_mode=auto old-validator bootstrap",
-    "scope": "task planning only; no production implementation in T10",
-    "not_reusable": true
-  },
-  "evidence_verdict": {
-    "status": "partial_unproven",
-    "observed": [
-      "ready_to_spec and ready_to_implement label states",
-      "direct label transition",
-      "duplicate evidence collection timestamps"
+  "unproven": {
+    "authorization": [
+      "that the quoted conversation was an exact implx auto trigger",
+      "historical invocation identity and current-generation binding",
+      "historical route scope",
+      "exact waived_human_gates equals only spec_approval",
+      "a runtime-owned trust anchor independent of the authorization record",
+      "that an invocation-scoped spec_approval waiver was validly established"
     ],
-    "reported_not_independently_recoverable": [
-      "write_spec route decision",
-      "implement route decision"
-    ],
-    "unproven": [
-      "write_spec issue-evidence collected_at and sha256",
-      "implement issue-evidence collected_at and sha256",
-      "normal spec_pr_open -> spec_review -> spec_approved lifecycle",
+    "write_spec_issue_evidence": {
+      "collected_at": null,
+      "sha256": null,
+      "status": "unproven",
+      "reason": "the named runtime issue-evidence artifact is not tracked and its collected_at/hash cannot be recovered from this checkout"
+    },
+    "implement_issue_evidence": {
+      "collected_at": null,
+      "sha256": null,
+      "status": "unproven",
+      "reason": "the named runtime issue-evidence artifact is not tracked and its collected_at/hash cannot be recovered from this checkout"
+    },
+    "normal_lifecycle": [
+      "spec_pr_open",
+      "spec_review",
+      "spec_approved",
       "normal non-bootstrap spec_approval human gate"
     ],
     "authorization_effect": "none"
   },
-  "spec_content_sha256": {
+  "historical_spec_content_sha256": {
     "product.md": "c082343a367599d089b1473b72114e1b3b7ebcbbb6cd38510c3e68bd9d06ff39",
     "tech.md": "4327afad8989c284e2d51a1b24307520205b655d6964ecd2b2727c95b6e8b695"
   },
-  "spec_content_sha256_scope": {
+  "historical_spec_content_sha256_scope": {
     "head_sha": "08a42e16650deca970913a943b5a5a05d902581a",
-    "status": "historical_pre_correction_snapshot",
+    "status": "historical_pre_correction_snapshot_only",
+    "proof_status": "not_current_proof",
+    "authorization_effect": "none"
+  },
+  "evidence_verdict": {
+    "status": "partial_unproven",
+    "observed_categories": [
+      "direct readiness-label transition"
+    ],
+    "reported_categories": [
+      "authorization claim",
+      "write_spec route decision",
+      "implement route decision",
+      "duplicate evidence timestamps"
+    ],
+    "unproven_categories": [
+      "closed invocation-scoped waiver record",
+      "runtime-owned current-invocation trust anchor",
+      "issue-evidence collected_at and sha256",
+      "normal spec lifecycle"
+    ],
     "authorization_effect": "none"
   },
   "untracked_source_runtime_artifact_names": [
@@ -115,5 +119,6 @@
     "gh180-duplicate-evidence-ready-to-implement.json",
     "gh180-implement-route-gate.json"
   ],
-  "source_runtime_artifacts_recoverable_from_checkout": false
+  "source_runtime_artifacts_recoverable_from_checkout": false,
+  "authorization_effect": "none"
 }
