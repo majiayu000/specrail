@@ -738,3 +738,113 @@ def test_pr_gate_heavy_manual_tier_keeps_human_authorization_path() -> None:
 
     assert result["decision"] == "allowed"
     assert any("human authorization from" in item for item in result["satisfied"])
+
+
+def _stacked_declaration() -> dict[str, object]:
+    return {
+        "reason": "hosted_ci_not_triggered_for_base",
+        "base_ref": "spec/GH60-transactional-patching",
+        "default_base_ref": "main",
+        "workflow_trigger_evidence": (
+            ".github/workflows/ci.yml: on.pull_request.branches == ['main']"
+        ),
+        "local_verification": ["cargo test --workspace --locked"],
+        "verified": True,
+    }
+
+
+def _checks_unavailable_evidence() -> dict[str, object]:
+    evidence = clean_evidence()
+    evidence["checks"] = []
+    evidence["base_ref"] = "spec/GH60-transactional-patching"
+    evidence["default_base_ref"] = "main"
+    evidence["checks_unavailable"] = _stacked_declaration()
+    return evidence
+
+
+def test_checks_unavailable_declaration_records_degraded_pass() -> None:
+    result = evaluate_pr_gate(_checks_unavailable_evidence())
+
+    assert "checks" not in result["missing"]
+    assert "missing_evidence_field:checks" not in _rejection_ids(result)
+    degraded = [item for item in result["satisfied"] if item.startswith("degraded:")]
+    assert len(degraded) == 1
+    assert "hosted checks unavailable" in degraded[0]
+    assert "hosted_ci_not_triggered_for_base" in degraded[0]
+
+
+def test_empty_checks_without_declaration_stays_blocked() -> None:
+    evidence = clean_evidence()
+    evidence["checks"] = []
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "missing_evidence_field:checks" in _rejection_ids(result)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"reason": "ci_is_slow"},
+        {"verified": False},
+        {"local_verification": []},
+        {"local_verification": ["  "]},
+        {"workflow_trigger_evidence": ""},
+        {"base_ref": "main"},
+        {"default_base_ref": "spec/GH60-transactional-patching"},
+        {"unexpected_field": "x"},
+    ],
+)
+def test_checks_unavailable_fails_closed_on_bad_declaration(
+    mutation: dict[str, object],
+) -> None:
+    evidence = _checks_unavailable_evidence()
+    evidence["checks_unavailable"].update(mutation)
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "missing_evidence_field:checks" in _rejection_ids(result)
+    assert not [item for item in result["satisfied"] if item.startswith("degraded:")]
+
+
+def test_checks_unavailable_must_match_evidence_base_refs() -> None:
+    evidence = _checks_unavailable_evidence()
+    evidence["base_ref"] = "spec/GH59-keyed-identity-order"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "checks_unavailable.base_ref must match base_ref" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_checks_unavailable_rejected_when_checks_present() -> None:
+    evidence = clean_evidence()
+    evidence["base_ref"] = "spec/GH60-transactional-patching"
+    evidence["default_base_ref"] = "main"
+    evidence["checks_unavailable"] = _stacked_declaration()
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "checks_unavailable must not be declared when checks are present" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_checks_unavailable_declaration_must_be_object() -> None:
+    evidence = clean_evidence()
+    evidence["checks"] = []
+    evidence["checks_unavailable"] = "yes"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "checks_unavailable must be an object" in reason for reason in result["reasons"]
+    )
