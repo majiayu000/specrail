@@ -10,6 +10,7 @@ import pytest
 from runtime_ledger_test_support import ROOT, clean_checkpoint
 from runtime_ledger_gate import evaluate_checkpoint
 from evidence_content_binding import build_content_binding_evidence
+from schema_validation import load_json_schema, validate_instance
 
 
 CURRENT_HEAD = "e36d97517d8d0b27faca1abe5e5c63f9f88684d9"
@@ -128,6 +129,48 @@ def test_runtime_allows_previous_head_component_with_matching_v1_bindings(
     result = evaluate_checkpoint(_v1_checkpoint(tmp_path), repo=tmp_path)
 
     assert result["decision"] in {"allowed", "warn"}, result["errors"]
+
+
+def test_runtime_v1_allows_all_existing_gh143_item_fields(tmp_path: Path) -> None:
+    checkpoint = _v1_checkpoint(tmp_path)
+    item = checkpoint["items"][0]  # type: ignore[index]
+    ci_tier_path = tmp_path / "ci-tier-check.json"
+    ci_tier_path.write_text(
+        json.dumps({"pr_tier": "heavy", "status": "passed"}),
+        encoding="utf-8",
+    )
+    item.update(  # type: ignore[union-attr]
+        {
+            "pr_tier": "heavy",
+            "pr_tier_evidence": {
+                "changed_lines": 42,
+                "touched_paths": ["checks/runtime_gate_rules.py"],
+            },
+            "authorization_tier": "heavy_manual",
+            "ci_tier_check": {"evidence": str(ci_tier_path)},
+            "post_authorization_findings": [
+                {
+                    "finding_ref": "GH143-F1",
+                    "severity": "critical",
+                    "mechanical": False,
+                    "disposition": "paused_re_authorized",
+                }
+            ],
+            "re_authorization": {
+                "actor": "maintainer",
+                "source": "chat",
+                "summary": "re-authorized after reviewer finding",
+            },
+        }
+    )
+
+    result = evaluate_checkpoint(checkpoint, repo=tmp_path)
+
+    assert result["decision"] in {"allowed", "warn"}, result["errors"]
+    validate_instance(
+        load_json_schema(ROOT / "schemas/runtime_checkpoint.schema.json"),
+        checkpoint,
+    )
 
 
 @pytest.mark.parametrize(
@@ -283,7 +326,12 @@ def test_runtime_sensitive_reuse_requires_code_and_spec_coverage(
 
 @pytest.mark.parametrize(
     "field",
-    ["content_binding_extra", "covered_categories", "original_content_bindings"],
+    [
+        "content_binding_extra",
+        "covered_categories",
+        "future_tier_override",
+        "original_content_bindings",
+    ],
 )
 def test_runtime_v1_binding_rejects_unknown_item_field(
     tmp_path: Path, field: str

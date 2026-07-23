@@ -38,10 +38,12 @@ TRUSTED_TELEMETRY_SOURCES = {"runtime", "session_log"}
 RUNTIME_V1_ITEM_FIELDS = frozenset(
     {
         "approved_spec_evidence",
+        "authorization_tier",
         "blocked_reason",
         "blocker",
         "branch",
         "ci",
+        "ci_tier_check",
         "content_binding_version",
         "content_hashes",
         "enforcement_sensitive",
@@ -55,6 +57,10 @@ RUNTIME_V1_ITEM_FIELDS = frozenset(
         "pr",
         "pr_gate",
         "pr_kind",
+        "pr_tier",
+        "pr_tier_evidence",
+        "post_authorization_findings",
+        "re_authorization",
         "reused_components",
         "review",
         "review_source",

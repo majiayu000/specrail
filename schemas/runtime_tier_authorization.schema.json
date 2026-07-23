@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specrail.local/schemas/runtime_tier_authorization.schema.json",
+  "title": "Runtime Tier Authorization Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pr_tier": {
+      "enum": ["fastlane", "standard", "heavy"]
+    },
+    "pr_tier_evidence": {
+      "type": "object",
+      "required": ["changed_lines", "touched_paths"],
+      "additionalProperties": false,
+      "properties": {
+        "changed_lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "touched_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "authorization_tier": {
+      "enum": ["standard_auto", "heavy_manual"]
+    },
+    "ci_tier_check": {
+      "type": "object",
+      "required": ["evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "post_authorization_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_ref", "severity", "mechanical", "disposition"],
+        "additionalProperties": false,
+        "properties": {
+          "finding_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "enum": ["critical", "important", "minor", "nit"]
+          },
+          "mechanical": {
+            "type": "boolean"
+          },
+          "disposition": {
+            "enum": ["fixed_re_reviewed", "paused_re_authorized"]
+          }
+        }
+      }
+    },
+    "re_authorization": {
+      "type": "object",
+      "required": ["actor", "source"],
+      "additionalProperties": true,
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

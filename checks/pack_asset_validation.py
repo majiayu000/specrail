@@ -25,6 +25,7 @@ SPEC_SCHEMA_FILES = frozenset(
         "pr_review_authorizations.schema.json",
         "review_result.schema.json",
         "runtime_checkpoint.schema.json",
+        "runtime_tier_authorization.schema.json",
         "runtime_thread_dispatch_gate.schema.json",
         "spec_packet.schema.json",
         "task_plan.schema.json",

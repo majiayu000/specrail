@@ -6,7 +6,7 @@ GH-166
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":166,"complete":true,"paths":["checks/evidence_content_binding.py","checks/github_evidence_common.py","checks/github_pr_evidence.py","checks/pack_asset_validation.py","checks/pr_review_contract.py","checks/review_result_semantics.py","checks/review_round_semantics.py","checks/pr_gate.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/schema_validation.py","schemas/pr_review_authorizations.schema.json","schemas/pr_review_gate.schema.json","schemas/review_result.schema.json","schemas/runtime_checkpoint.schema.json","schemas/runtime_thread_dispatch_gate.schema.json","tests/test_github_pr_content_binding.py","tests/test_github_pr_evidence.py","tests/test_pack_asset_validation.py","tests/test_review_json_gate.py","tests/test_review_result_semantics.py","tests/test_pr_gate.py","tests/test_runtime_gate_rules.py","tests/test_runtime_ledger_gate.py","tests/test_runtime_ledger_review.py","tests/test_runtime_sensitive_routes.py","tests/test_spec_revision_route_end_to_end.py","tests/test_specrail_schema.py"],"spec_refs":["specs/GH166/product.md","specs/GH166/tech.md","specs/GH166/tasks.md"]}
+{"version":1,"issue":166,"complete":true,"paths":["checks/check_workflow.py","checks/evidence_content_binding.py","checks/github_evidence_common.py","checks/github_pr_evidence.py","checks/pack_asset_validation.py","checks/pr_review_contract.py","checks/review_result_semantics.py","checks/review_round_semantics.py","checks/pr_gate.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/schema_validation.py","schemas/pr_review_authorizations.schema.json","schemas/pr_review_gate.schema.json","schemas/review_result.schema.json","schemas/runtime_checkpoint.schema.json","schemas/runtime_thread_dispatch_gate.schema.json","schemas/runtime_tier_authorization.schema.json","tests/test_check_workflow.py","tests/test_github_pr_content_binding.py","tests/test_github_pr_evidence.py","tests/test_pack_asset_validation.py","tests/test_review_json_gate.py","tests/test_review_result_semantics.py","tests/test_pr_gate.py","tests/test_runtime_gate_rules.py","tests/test_runtime_ledger_gate.py","tests/test_runtime_ledger_review.py","tests/test_runtime_sensitive_routes.py","tests/test_spec_revision_route_end_to_end.py","tests/test_specrail_schema.py"],"spec_refs":["specs/GH166/product.md","specs/GH166/tech.md","specs/GH166/tasks.md"]}
 -->
 
 ## Product Spec
@@ -66,8 +66,9 @@ coverage 非空、无重复、只允许三类，bindings keys 必须与 coverage
 ### 5. Schema and runtime
 
 - `pr_review_gate.schema.json` 声明 v1 snapshot、component bindings、reuse audit；closed schema 拒绝 unknown/partial/mixed version。
-- `runtime_checkpoint.schema.json` 声明 current snapshot 与 component reuse audit；v1 item 使用显式 closed field set，legacy item 保持可扩展。
+- `runtime_checkpoint.schema.json` 声明 current snapshot 与 component reuse audit；v1 item 使用覆盖全部 production runtime consumer（含 GH143 六个 tier/重授权字段）的显式 closed field set，legacy item 保持可扩展，真正未知字段仍拒绝。
 - 两个主 schema 把独立授权与 thread dispatch shape 抽到 pack-owned schema asset；`schema_validation.load_json_schema` 仅解析 schema 目录内的相对 `$ref`，pack gate 校验引用完整性并对全部 schema 执行 800 行硬上限。
+- `review_result_semantics.py` 的 bounded-round helper 属于生产运行时依赖，必须登记在 `check_workflow.REQUIRED_FILES`；consumer pack 缺失 helper 时在完整性检查阶段直接失败。
 - `runtime_gate_rules.py` 使用共享 binding helper校验 previous-head terminal review，而不是仅比较 `code_diff_hash`。
 - `runtime_ledger_gate.py` 保留 `item.pr_gate.head_sha == item.head_sha` 和 loaded gate result exact-head；它验证 current gate 内的 reused components audit，而非给旧 gate decision 增加 head exception。这消除 hosted finding 指出的 dead path，同时保持 merge-time freshness。
 

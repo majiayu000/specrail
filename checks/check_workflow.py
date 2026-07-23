@@ -56,6 +56,7 @@ REQUIRED_FILES = [
     "checks/review_json_gate.py",
     "checks/review_content_binding.py",
     "checks/review_result_semantics.py",
+    "checks/review_round_semantics.py",
     "checks/runtime_review_evidence.py",
     "schemas/duplicate_work_evidence.schema.json",
     "tools/install_codex_skills.py",

@@ -1021,7 +1021,10 @@ def test_component_binding_key_equality_is_reserved_for_semantic_validator() -> 
     validate_instance(review_result_schema(), review)
 
 
-@pytest.mark.parametrize("field", ["covered_categories", "original_content_bindings"])
+@pytest.mark.parametrize(
+    "field",
+    ["covered_categories", "future_tier_override", "original_content_bindings"],
+)
 def test_runtime_schema_closes_v1_item_field_set(field: str) -> None:
     checkpoint = valid_v1_checkpoint()
     checkpoint["items"][0][field] = {}
