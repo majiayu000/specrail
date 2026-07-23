@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import github_pr_evidence as github_pr_evidence_module
 
 from github_pr_evidence_test_support import (
     ROOT,
@@ -93,6 +94,7 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
         "summary": "merge approved",
     }
     assert evidence["gate_query_head_sha"] == evidence["head_sha"]
+    assert "round_audit" not in evidence["review_evidence"]
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
 
 
@@ -178,6 +180,74 @@ def test_cli_collects_verified_partial_issue_with_fake_gh(
     )
     assert failed.returncode == 1
     assert "gh command failed" in failed.stderr
+
+
+def test_cli_wires_external_round_cap_authorization_and_maintainer_map(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    authorization = tmp_path / "round-cap.json"
+    authorization.write_text(
+        json.dumps(
+            {
+                "authorization_id": "RCA-10-4",
+                "pr": 10,
+                "prior_head_sha": "a" * 40,
+                "target_head_sha": "b" * 40,
+                "review_round": 4,
+                "decision": "continue_once",
+                "actor": "maintainer",
+                "source": "maintainer decision in issue #10",
+                "authorized_at": "2026-07-23T12:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    role_map = tmp_path / "maintainer-roles.json"
+    role_map.write_text(
+        json.dumps(
+            {
+                "maintainer_roles": {
+                    "maintainer": {
+                        "role": "maintainer",
+                        "authorized_human_maintainer": True,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_collect(*args: object) -> dict[str, object]:
+        return {"round_cap_authorizations": args[-1]}
+
+    monkeypatch.setattr(github_pr_evidence_module, "collect_evidence", fake_collect)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "github_pr_evidence.py",
+            "--github-repo",
+            "majiayu000/specrail",
+            "--pr",
+            "10",
+            "--round-cap-authorization",
+            str(authorization),
+            "--maintainer-role-map",
+            str(role_map),
+            "--json",
+        ],
+    )
+
+    assert github_pr_evidence_module.main() == 0
+    evidence = json.loads(capsys.readouterr().out)
+    assert evidence["round_cap_authorizations"] == [
+        {
+            **json.loads(authorization.read_text(encoding="utf-8")),
+            "authorized_human_maintainer": True,
+        }
+    ]
 
 
 def test_collect_evidence_rejects_head_change_during_gate_query(

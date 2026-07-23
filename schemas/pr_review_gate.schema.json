@@ -58,6 +58,46 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "properties": {"enforcement_sensitive": {"const": true}},
+            "required": ["enforcement_sensitive"]
+          },
+          {
+            "properties": {
+              "sensitive_classification": {
+                "properties": {"enforcement_sensitive": {"const": true}},
+                "required": ["enforcement_sensitive"]
+              }
+            },
+            "required": ["sensitive_classification"]
+          },
+          {"required": ["approved_spec"]},
+          {"required": ["spec_approval"]}
+        ]
+      },
+      "then": {
+        "required": ["sensitive_route"],
+        "anyOf": [
+          {
+            "properties": {
+              "sensitive_route": {"const": "approved_spec"},
+              "spec_approval": {"const": null}
+            },
+            "required": ["approved_spec"]
+          },
+          {
+            "properties": {
+              "sensitive_route": {"const": "spec_revision"},
+              "approved_spec": {"const": null}
+            },
+            "required": ["spec_approval"]
+          }
+        ]
+      }
     }
   ],
   "properties": {
@@ -71,7 +111,7 @@
         "base_tree_oid": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
         "algorithm": {"const": "sha256"},
         "normalization": {"const": "specrail-v1"},
-        "collector": {"type": "string", "minLength": 1}
+        "collector": {"const": "github_pr_evidence"}
       }
     },
     "content_hashes": {
@@ -127,7 +167,7 @@
               "base_tree_oid": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
               "algorithm": {"const": "sha256"},
               "normalization": {"const": "specrail-v1"},
-              "collector": {"type": "string", "minLength": 1}
+              "collector": {"const": "github_pr_evidence"}
             }
           },
           "reason": {"type": "string", "minLength": 1}
@@ -179,6 +219,9 @@
     },
     "enforcement_sensitive": {
       "type": "boolean"
+    },
+    "sensitive_route": {
+      "enum": ["approved_spec", "spec_revision"]
     },
     "sensitive_classification": {
       "type": "object",
@@ -275,6 +318,44 @@
         "default_base_sha": {
           "type": "string",
           "pattern": "^[0-9a-fA-F]{40}$"
+        }
+      }
+    },
+    "spec_approval": {
+      "type": "object",
+      "required": [
+        "lifecycle_state",
+        "state_source",
+        "state_trusted",
+        "maintainer_actor",
+        "approved_at",
+        "approval_source",
+        "approval_url",
+        "commit_oid",
+        "artifact_paths",
+        "spec_artifacts_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "lifecycle_state": {"const": "spec_approved"},
+        "state_source": {"const": "label"},
+        "state_trusted": {"const": true},
+        "maintainer_actor": {"type": "string", "minLength": 1},
+        "approved_at": {"type": "string", "minLength": 1},
+        "approval_source": {"const": "github_pr_review"},
+        "approval_url": {"type": "string", "minLength": 1},
+        "commit_oid": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}$"
+        },
+        "artifact_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "spec_artifacts_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
         }
       }
     },
@@ -546,8 +627,106 @@
           "minItems": 1,
           "items": {"type": "string", "minLength": 1}
         },
+        "round_audit": {
+          "type": "object",
+          "required": ["policy", "cap", "total_rounds", "rounds"],
+          "additionalProperties": false,
+          "properties": {
+            "policy": {"const": "bounded_diff_v1"},
+            "cap": {"const": 3},
+            "total_rounds": {"type": "integer", "minimum": 1},
+            "rounds": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "artifact_id",
+                  "review_round",
+                  "review_mode",
+                  "base_head_sha",
+                  "head_sha",
+                  "diff_sha256",
+                  "escalation_authorization_id"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "artifact_id": {"type": "string", "minLength": 1},
+                  "review_round": {"type": "integer", "minimum": 1},
+                  "review_mode": {"enum": ["full", "resumed", "diff_only"]},
+                  "base_head_sha": {
+                    "anyOf": [
+                      {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+                      {"type": "null"}
+                    ]
+                  },
+                  "head_sha": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{40}$"
+                  },
+                  "diff_sha256": {
+                    "anyOf": [
+                      {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+                      {"type": "null"}
+                    ]
+                  },
+                  "escalation_authorization_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+                      },
+                      {"type": "null"}
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
         "errors": {"type": "array", "items": {"type": "string"}},
         "blocking_reasons": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "round_cap_authorizations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "authorization_id",
+          "pr",
+          "prior_head_sha",
+          "target_head_sha",
+          "review_round",
+          "decision",
+          "actor",
+          "source",
+          "authorized_at",
+          "authorized_human_maintainer"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "authorization_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "pr": {"type": "integer", "minimum": 1},
+          "prior_head_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{40}$"
+          },
+          "target_head_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{40}$"
+          },
+          "review_round": {"type": "integer", "minimum": 4},
+          "decision": {"const": "continue_once"},
+          "actor": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1},
+          "authorized_at": {"type": "string", "minLength": 1},
+          "authorized_human_maintainer": {"const": true}
+        }
       }
     },
     "merge_record": {

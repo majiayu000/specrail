@@ -50,6 +50,7 @@
           {"required": ["default_base_sha"]},
           {"required": ["enforcement_sensitive"]},
           {"required": ["sensitive_classification"]},
+          {"required": ["sensitive_route"]},
           {"required": ["approved_spec"]}
         ]
       },
@@ -70,8 +71,9 @@
         "required": ["enforcement_sensitive"]
       },
       "then": {
-        "required": ["approved_spec"],
+        "required": ["sensitive_route", "approved_spec"],
         "properties": {
+          "sensitive_route": {"const": "approved_spec"},
           "sensitive_classification": {
             "properties": {"enforcement_sensitive": {"const": true}}
           }
@@ -182,6 +184,9 @@
     },
     "enforcement_sensitive": {
       "type": "boolean"
+    },
+    "sensitive_route": {
+      "const": "approved_spec"
     },
     "sensitive_classification": {
       "type": "object",

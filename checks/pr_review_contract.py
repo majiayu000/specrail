@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from rejection_items import items_from_legacy
+from review_json_gate import validate_exact_git_diff
 from review_result_semantics import (
     ReviewSemanticError,
     evaluate_review_evidence,
@@ -19,6 +20,18 @@ ACTIVE_CHANGE_REQUESTS = {"CHANGES_REQUESTED"}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
 BLOCKED_RESOLVER_ROLES = {"implementer", "orchestrator", "coordinator", "unknown"}
+ROUND_CAP_AUTHORIZATION_FIELDS = {
+    "authorization_id",
+    "pr",
+    "prior_head_sha",
+    "target_head_sha",
+    "review_round",
+    "decision",
+    "actor",
+    "source",
+    "authorized_at",
+    "authorized_human_maintainer",
+}
 
 
 def _nonempty(value: Any) -> bool:
@@ -33,6 +46,187 @@ def _parse_timestamp(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else None
+
+
+def _positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _trusted_round_diff_reasons(repo: Path, round_audit: Any) -> list[str]:
+    if not isinstance(round_audit, dict) or round_audit.get("policy") != "bounded_diff_v1":
+        return []
+    rounds = round_audit.get("rounds")
+    if not isinstance(rounds, list):
+        return []
+    reasons: list[str] = []
+    for index, item in enumerate(rounds, start=1):
+        review_round = item.get("review_round") if isinstance(item, dict) else None
+        if not _positive_int(review_round) or review_round < 2:
+            continue
+        reasons.extend(
+            f"trusted review round {index}: {reason}"
+            for reason in validate_exact_git_diff(
+                repo,
+                item.get("base_head_sha"),
+                item.get("head_sha"),
+                item.get("diff_sha256"),
+            )
+        )
+    return reasons
+
+
+def _round_cap_authorization_items(
+    evidence: dict[str, Any],
+    round_audit: Any,
+    artifacts: Any,
+) -> tuple[list[str], list[str], list[str]]:
+    authorizations = evidence.get("round_cap_authorizations")
+    if round_audit is None:
+        if authorizations is None:
+            return [], [], []
+        return [], [], [
+            "round_cap_authorizations require a trusted bounded_diff_v1 round_audit"
+        ]
+    if not isinstance(round_audit, dict):
+        return [], [], ["trusted review_evidence.round_audit must be an object"]
+    if round_audit.get("policy") != "bounded_diff_v1" or round_audit.get("cap") != 3:
+        return [], [], ["trusted round_audit policy/cap must be bounded_diff_v1/3"]
+    rounds = round_audit.get("rounds")
+    if not isinstance(rounds, list) or not rounds:
+        return [], [], ["trusted round_audit.rounds must be a non-empty list"]
+    if round_audit.get("total_rounds") != len(rounds):
+        return [], [], ["trusted round_audit.total_rounds must match rounds"]
+
+    if authorizations is None:
+        authorizations = []
+    if not isinstance(authorizations, list):
+        return [], [], ["round_cap_authorizations must be a list"]
+
+    reasons: list[str] = []
+    artifacts_by_id = {
+        item.get("artifact_id"): item
+        for item in artifacts if isinstance(item, dict) and _nonempty(item.get("artifact_id"))
+    } if isinstance(artifacts, list) else {}
+    by_id: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(authorizations, start=1):
+        if not isinstance(item, dict):
+            reasons.append(f"round_cap_authorizations[{index}] must be an object")
+            continue
+        unknown = sorted(set(item) - ROUND_CAP_AUTHORIZATION_FIELDS)
+        missing_fields = sorted(ROUND_CAP_AUTHORIZATION_FIELDS - set(item))
+        if unknown:
+            reasons.append(
+                f"round_cap_authorizations[{index}] contains unsupported fields: "
+                + ", ".join(unknown)
+            )
+        if missing_fields:
+            reasons.append(
+                f"round_cap_authorizations[{index}] is missing fields: "
+                + ", ".join(missing_fields)
+            )
+        authorization_id = item.get("authorization_id")
+        if not _nonempty(authorization_id):
+            reasons.append(
+                f"round_cap_authorizations[{index}].authorization_id is required"
+            )
+            continue
+        if authorization_id in by_id:
+            reasons.append(
+                f"round cap authorization_id is reused: {authorization_id}"
+            )
+            continue
+        by_id[str(authorization_id)] = item
+
+    used_ids: set[str] = set()
+    satisfied: list[str] = []
+    missing: list[str] = []
+    for index, current_round in enumerate(rounds):
+        if not isinstance(current_round, dict):
+            reasons.append(f"trusted round_audit.rounds[{index + 1}] must be an object")
+            continue
+        review_round = current_round.get("review_round")
+        if not _positive_int(review_round) or review_round <= 3:
+            continue
+        authorization_id = current_round.get("escalation_authorization_id")
+        if not _nonempty(authorization_id):
+            missing.append(
+                f"review_evidence.round_audit.rounds[{index + 1}]."
+                "escalation_authorization_id"
+            )
+            reasons.append(
+                f"review round {review_round} exceeds cap 3 without exact authorization"
+            )
+            continue
+        authorization_key = str(authorization_id)
+        authorization = by_id.get(authorization_key)
+        if authorization is None:
+            missing.append(
+                f"round_cap_authorizations[{authorization_key}]"
+            )
+            reasons.append(
+                f"review round {review_round} references missing round cap authorization "
+                f"{authorization_key}"
+            )
+            continue
+        if authorization_key in used_ids:
+            reasons.append(
+                f"round cap authorization_id is reused across rounds: {authorization_key}"
+            )
+            continue
+        used_ids.add(authorization_key)
+        prior_round = rounds[index - 1] if index > 0 else None
+        prior_head = prior_round.get("head_sha") if isinstance(prior_round, dict) else None
+        expected = {
+            "pr": evidence.get("pr"),
+            "prior_head_sha": prior_head,
+            "target_head_sha": current_round.get("head_sha"),
+            "review_round": review_round,
+            "decision": "continue_once",
+            "authorized_human_maintainer": True,
+        }
+        for field, expected_value in expected.items():
+            if authorization.get(field) != expected_value:
+                reasons.append(
+                    f"round cap authorization {authorization_key}.{field} must equal "
+                    f"trusted round binding {expected_value!r}"
+                )
+        for field in ["actor", "source"]:
+            if not _nonempty(authorization.get(field)):
+                reasons.append(
+                    f"round cap authorization {authorization_key}.{field} is required"
+                )
+        authorized_at = _parse_timestamp(authorization.get("authorized_at"))
+        if authorized_at is None:
+            reasons.append(
+                f"round cap authorization {authorization_key}.authorized_at must be a "
+                "timezone-aware ISO-8601 timestamp"
+            )
+        target = artifacts_by_id.get(current_round.get("artifact_id"))
+        review_started_at = _parse_timestamp(
+            target.get("review_started_at") if isinstance(target, dict) else None
+        )
+        if authorized_at is not None and (
+            review_started_at is None or authorized_at > review_started_at
+        ):
+            reasons.append(
+                f"round cap authorization {authorization_key} must precede target review start"
+            )
+        if not any(
+            reason.startswith(f"round cap authorization {authorization_key}")
+            for reason in reasons
+        ):
+            satisfied.append(
+                f"review round {review_round} has exact one-time maintainer authorization: "
+                f"{authorization_key}"
+            )
+
+    unused_ids = sorted(set(by_id) - used_ids)
+    if unused_ids:
+        reasons.append(
+            "round cap authorizations are not bound to an over-cap manifest round: "
+            + ", ".join(unused_ids)
+        )
+    return satisfied, missing, reasons
 
 
 def _scope_binds_pr(scope: Any, pr: Any) -> bool:
@@ -91,7 +285,11 @@ def _verified_reviewer_resolver(
     ):
         return False
     roster = review_evidence.get("lane_roster", [])
-    current_ids = review_evidence.get("current_artifact_ids", [])
+    raw_current_ids = review_evidence.get("current_artifact_ids", [])
+    current_ids = {
+        item for item in raw_current_ids
+        if isinstance(item, str) and item
+    } if isinstance(raw_current_ids, list) else set()
     raw_artifacts = review_evidence.get("artifacts", [])
     artifacts = raw_artifacts if isinstance(raw_artifacts, list) else []
     for lane in roster if isinstance(roster, list) else []:
@@ -117,9 +315,9 @@ def _verified_reviewer_resolver(
         verified_re_review = any(
             isinstance(artifact, dict)
             and artifact.get("artifact_id") == re_review_artifact_id
+            and artifact.get("artifact_id") in current_ids
             and artifact.get("reviewer_lane") == lane_id
             and artifact.get("producer_identity") == resolved_by
-            and artifact.get("head_sha") == review_evidence.get("head_sha")
             and artifact.get("status") == "completed"
             and artifact.get("verdict") in {"clean", "non_blocking"}
             for artifact in artifacts
@@ -306,11 +504,15 @@ def _manifest_trust_items(
     evidence: dict[str, Any],
     repo: Path | None,
 ) -> tuple[list[str], list[str], list[str]]:
-    if repo is None:
-        return [], [], []
     embedded = evidence.get("review_evidence")
     if not isinstance(embedded, dict):
         return [], ["review_evidence"], []
+    if repo is None:
+        if embedded.get("round_audit") is not None:
+            return [], [], [
+                "bounded round audit requires repository-safe manifest reload"
+            ]
+        return [], [], []
     manifest_path = embedded.get("manifest_path")
     if not _nonempty(manifest_path):
         return [], ["review_evidence.manifest_path"], []
@@ -347,6 +549,7 @@ def _manifest_trust_items(
         "human_final_review_required",
         "lane_roster",
         "current_artifact_ids",
+        "round_audit",
         "errors",
         "blocking_reasons",
     ]:
@@ -356,9 +559,18 @@ def _manifest_trust_items(
         trusted.get("artifacts")
     ):
         mismatches.append("review_evidence.artifacts differ from trusted manifest")
+    cap_satisfied, cap_missing, cap_reasons = _round_cap_authorization_items(
+        evidence,
+        trusted.get("round_audit"),
+        trusted.get("artifacts"),
+    )
+    diff_reasons = _trusted_round_diff_reasons(repo, trusted.get("round_audit"))
     if mismatches:
-        return [], [], mismatches
-    return ["review manifest revalidated from repository-safe paths"], [], []
+        return [], cap_missing, [*mismatches, *diff_reasons, *cap_reasons]
+    return [
+        "review manifest revalidated from repository-safe paths",
+        *cap_satisfied,
+    ], cap_missing, [*diff_reasons, *cap_reasons]
 
 
 def _ordering_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:

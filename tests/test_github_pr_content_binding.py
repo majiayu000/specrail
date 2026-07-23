@@ -135,6 +135,12 @@ def test_content_binding_rejects_ambiguous_or_partial_inputs() -> None:
             "snapshot": {},
             "content_hashes": {},
         })
+    untrusted = build_content_binding(
+        "a" * 40, "b" * 40, b"patch", {}, {"title": "PR"}
+    )
+    untrusted["snapshot"]["collector"] = "caller_supplied"
+    with pytest.raises(EvidenceError, match="trusted github_pr_evidence"):
+        validate_content_binding(untrusted)
     with pytest.raises(EvidenceError, match="duplicates"):
         validate_component_binding({
             "content_binding_version": 1,
@@ -445,6 +451,31 @@ def test_build_evidence_does_not_replace_completed_current_failure() -> None:
     assert evidence["reused_components"] == []
 
 
+def test_build_evidence_rejects_same_head_component_from_stale_wrapper() -> None:
+    current = build_content_binding(
+        "d" * 40, "c" * 40, b"patch",
+        {"specs/GH9/product.md": b"same"}, {"title": "same"},
+    )
+    current_payload = pr_payload()
+    current_payload["headRefOid"] = "d" * 40
+    prior_evidence = build_evidence(
+        current_payload, threads_payload(), content_binding=current, config=PACK
+    )
+    prior_evidence["head_sha"] = "b" * 40
+    current_payload["statusCheckRollup"][0].update(  # type: ignore[index]
+        {"status": "IN_PROGRESS", "conclusion": ""}
+    )
+
+    with pytest.raises(EvidenceError, match="snapshot must come from a previous head"):
+        build_evidence(
+            current_payload,
+            threads_payload(),
+            content_binding=current,
+            reusable_ci_evidence=prior_evidence,
+            config=PACK,
+        )
+
+
 def test_build_evidence_rejects_previous_ci_when_spec_binding_changed() -> None:
     previous = build_content_binding(
         "b" * 40, "c" * 40, b"patch",
@@ -498,6 +529,11 @@ def test_versioned_pr_evidence_loader_requires_repo_local_schema_backed_input(
     loaded = load_versioned_pr_evidence(tmp_path, "prior.json")
 
     assert loaded["snapshot"] == binding["snapshot"]
+
+    evidence["head_sha"] = "b" * 40
+    (tmp_path / "prior.json").write_text(json.dumps(evidence), encoding="utf-8")
+    with pytest.raises(EvidenceError, match="head_sha must match"):
+        load_versioned_pr_evidence(tmp_path, "prior.json")
 
 
 def test_build_evidence_audits_previous_head_review_component() -> None:

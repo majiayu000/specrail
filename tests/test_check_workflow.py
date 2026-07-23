@@ -49,6 +49,15 @@ def test_required_files_include_pr_issue_reference_module() -> None:
     assert "checks/github_issue_reference.py" in REQUIRED_FILES
 
 
+def test_required_files_include_content_binding_runtime_dependencies() -> None:
+    for path in [
+        "checks/evidence_content_binding.py",
+        "checks/review_content_binding.py",
+        "checks/runtime_review_evidence.py",
+    ]:
+        assert path in REQUIRED_FILES
+
+
 def test_required_files_include_schema_validation_runtime_dependency() -> None:
     assert "checks/schema_validation.py" in REQUIRED_FILES
 

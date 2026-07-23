@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
+from copy import deepcopy
 from pathlib import Path
 from shutil import copyfile
 
@@ -11,111 +13,162 @@ from pr_gate_test_support import (
     evaluate_pr_gate,
     fixture,
     sensitive_evidence,
+    v1_reuse_evidence,
+    write_review_evidence as _write_review_evidence,
 )
 from evidence_content_binding import build_content_binding_evidence
+from pr_review_contract import (
+    _verified_reviewer_resolver,
+    evaluate_review_contract,
+)
 from review_result_semantics import load_review_manifest
 from specrail_lib import load_pack
 
 
-def _write_review_evidence(
-    repo: Path, evidence: dict[str, object], artifacts: list[dict[str, object]],
-) -> None:
-    schema_dir = repo / "schemas"
-    schema_dir.mkdir(exist_ok=True)
-    for name in ["review_result.schema.json", "content_binding_evidence.schema.json"]:
-        copyfile(ROOT / "schemas" / name, schema_dir / name)
-    review_dir = repo / "artifacts/reviews"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
-    for index, artifact in enumerate(artifacts, start=1):
-        path = review_dir / f"review-{index}.json"
-        stored = {key: value for key, value in artifact.items() if key != "artifact_path"}
-        path.write_text(json.dumps(stored), encoding="utf-8")
-        paths.append(path.relative_to(repo).as_posix())
-    manifest = {
-        "version": 1, "pr": evidence["pr"], "head_sha": evidence["head_sha"],
+def _git(repo: Path, *args: str) -> bytes:
+    process = subprocess.run(
+        ["git", *args], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr.decode(errors="replace")
+    return process.stdout
+
+
+def _round_artifact(review_round: int, head_sha: str, prior_head_sha: str | None) -> dict[str, object]:
+    artifact: dict[str, object] = {
+        "artifact_id": f"pr718-round-{review_round}",
+        "pr": 718,
+        "reviewer_lane": "merge-reviewer-2",
+        "producer_identity": "reviewer-1",
+        "review_source": "independent_lane",
+        "review_execution": "local",
+        "head_sha": head_sha,
+        "review_started_at": f"2026-07-23T00:0{review_round}:00Z",
+        "review_completed_at": f"2026-07-23T00:0{review_round}:30Z",
+        "status": "completed",
+        "verdict": "clean",
         "human_final_review_required": False,
-        "lanes": [{
-            "lane_id": artifacts[0]["reviewer_lane"],
-            "producer_identity": artifacts[0]["producer_identity"],
-            "artifact_paths": paths,
-        }],
+        "findings": [],
+        "prior_findings": [],
+        "body": "## Summary\nBounded review.\n\n## Verdict\nclean",
+        "comments": [],
+        "round_policy_version": 1,
+        "review_round": review_round,
+        "review_mode": "full" if review_round == 1 else "resumed",
+    }
+    if review_round >= 2:
+        artifact["base_head_sha"] = prior_head_sha
+        artifact["diff_sha256"] = f"{review_round}" * 64
+    if review_round > 3:
+        artifact["round_cap_escalation"] = {
+            "authorization_id": f"RCA-718-{review_round}",
+            "unresolved_findings": [],
+        }
+    return artifact
+
+
+def _bounded_round_evidence(tmp_path: Path) -> tuple[dict[str, object], Path]:
+    repo = tmp_path / "repo"
+    review_dir = repo / "artifacts" / "reviews"
+    schema_dir = repo / "schemas"
+    review_dir.mkdir(parents=True)
+    schema_dir.mkdir()
+    copyfile(
+        ROOT / "schemas" / "review_result.schema.json",
+        schema_dir / "review_result.schema.json",
+    )
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.name", "SpecRail Test")
+    _git(repo, "config", "user.email", "specrail@example.invalid")
+    heads = []
+    for review_round in range(1, 5):
+        (repo / "review-target.txt").write_text(str(review_round), encoding="utf-8")
+        _git(repo, "add", "--", "review-target.txt")
+        _git(repo, "commit", "-m", f"review target {review_round}")
+        heads.append(_git(repo, "rev-parse", "HEAD").decode().strip())
+    artifacts = [
+        _round_artifact(
+            review_round,
+            heads[review_round - 1],
+            heads[review_round - 2] if review_round >= 2 else None,
+        )
+        for review_round in range(1, 5)
+    ]
+    for index, artifact in enumerate(artifacts[1:], start=1):
+        exact = _git(
+            repo, "diff", "--no-ext-diff", "--binary",
+            f"{heads[index - 1]}..{heads[index]}", "--",
+        )
+        artifact["diff_sha256"] = hashlib.sha256(exact).hexdigest()
+    artifact_paths: list[str] = []
+    rounds: list[dict[str, object]] = []
+    for artifact in artifacts:
+        artifact_path = review_dir / f"{artifact['artifact_id']}.json"
+        artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+        relative_path = artifact_path.relative_to(repo).as_posix()
+        artifact_paths.append(relative_path)
+        escalation = artifact.get("round_cap_escalation")
+        rounds.append(
+            {
+                "artifact_id": artifact["artifact_id"],
+                "review_round": artifact["review_round"],
+                "review_mode": artifact["review_mode"],
+                "base_head_sha": artifact.get("base_head_sha"),
+                "head_sha": artifact["head_sha"],
+                "diff_sha256": artifact.get("diff_sha256"),
+                "escalation_authorization_id": (
+                    escalation["authorization_id"]
+                    if isinstance(escalation, dict)
+                    else None
+                ),
+            }
+        )
+    manifest = {
+        "version": 2,
+        "pr": 718,
+        "head_sha": heads[-1],
+        "human_final_review_required": False,
+        "round_policy": {"name": "bounded_diff_v1", "cap": 3},
+        "rounds": rounds,
+        "lanes": [
+            {
+                "lane_id": "merge-reviewer-2",
+                "producer_identity": "reviewer-1",
+                "artifact_paths": artifact_paths,
+            }
+        ],
     }
     manifest_path = review_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    evidence["review_evidence"] = load_review_manifest(
-        repo, manifest_path.relative_to(repo).as_posix(),
-        expected_pr=evidence["pr"], expected_head_sha=evidence["head_sha"],
-        current_binding={key: evidence[key] for key in [
-            "content_binding_version", "snapshot", "content_hashes"
-        ]},
+    trusted = load_review_manifest(
+        repo,
+        manifest_path.relative_to(repo).as_posix(),
+        expected_pr=718,
+        expected_head_sha=heads[-1],
     )
-
-
-def v1_reuse_evidence(
-    repo: Path, evidence: dict[str, object] | None = None,
-) -> dict[str, object]:
-    evidence = clean_evidence() if evidence is None else evidence
-    current_head = evidence["head_sha"]
-    prior_head = "b" * 40
-    hashes = {
-        "code_inputs": "1" * 64,
-        "spec_files": "2" * 64,
-        "pr_metadata": "3" * 64,
-    }
-    snapshot = {
-        "head_sha": current_head,
-        "base_tree_oid": "d" * 40,
-        "algorithm": "sha256",
-        "normalization": "specrail-v1",
-        "collector": "github_pr_evidence",
-    }
-    evidence.update({
-        "content_binding_version": 1,
-        "snapshot": snapshot,
-        "content_hashes": hashes,
-    })
-    check = evidence["checks"][0]
-    check.update({
-        "name": "workflow-check",
-        "artifact_id": "ci-current",
-        "head_sha": current_head,
-        "content_binding_version": 1,
-        "covered_categories": ["code_inputs", "spec_files"],
-        "content_bindings": {key: hashes[key] for key in ["code_inputs", "spec_files"]},
-    })
-    artifact = evidence["review_evidence"]["artifacts"][0]
-    artifact.update({
-        "head_sha": prior_head,
-        "content_binding_version": 1,
-        "covered_categories": ["code_inputs", "spec_files"],
-        "content_bindings": {key: hashes[key] for key in ["code_inputs", "spec_files"]},
-    })
-    sidecar = build_content_binding_evidence(evidence["pr"], {
-        "content_binding_version": 1,
-        "snapshot": {**snapshot, "head_sha": prior_head},
-        "content_hashes": dict(hashes),
-    })
-    sidecar_path = repo / "artifacts/content-bindings/prior-review.json"
-    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-    raw = json.dumps(sidecar, sort_keys=True).encode("utf-8")
-    sidecar_path.write_bytes(raw)
-    artifact["content_binding_evidence"] = {
-        "artifact_id": sidecar["artifact_id"],
-        "path": sidecar_path.relative_to(repo).as_posix(),
-        "sha256": hashlib.sha256(raw).hexdigest(),
-    }
-    evidence["reused_components"] = [{
-        "artifact_id": artifact["artifact_id"],
-        "original_head_sha": prior_head,
-        "covered_categories": ["code_inputs", "spec_files"],
-        "original_content_bindings": dict(artifact["content_bindings"]),
-        "current_content_bindings": {key: hashes[key] for key in ["code_inputs", "spec_files"]},
-        "collector_provenance": snapshot,
-        "reason": "all covered categories match the current snapshot",
-    }]
-    _write_review_evidence(repo, evidence, [artifact])
-    return evidence
+    assert trusted["errors"] == []
+    evidence = clean_evidence()
+    evidence["head_sha"] = heads[-1]
+    evidence["gate_query_head_sha"] = heads[-1]
+    evidence["review_evidence"] = trusted
+    evidence["review_completed_at"] = trusted["review_completed_at"]
+    evidence["gate_started_at"] = "2026-07-23T00:05:00Z"
+    evidence["gate_query_completed_at"] = "2026-07-23T00:06:00Z"
+    evidence["round_cap_authorizations"] = [
+        {
+            "authorization_id": "RCA-718-4",
+            "pr": 718,
+            "prior_head_sha": heads[-2],
+            "target_head_sha": heads[-1],
+            "review_round": 4,
+            "decision": "continue_once",
+            "actor": "maintainer",
+            "source": "maintainer decision in GH-167",
+            "authorized_at": "2026-07-23T00:03:45Z",
+            "authorized_human_maintainer": True,
+        }
+    ]
+    return evidence, repo
 
 
 def test_pr_gate_blocks_missing_review_source() -> None:
@@ -435,6 +488,37 @@ def test_pr_gate_allows_successor_resolver_with_current_head_rereview() -> None:
     assert result["decision"] == "allowed", result["reasons"]
 
 
+def test_successor_resolver_accepts_validated_reusable_previous_head_review(
+    tmp_path: Path,
+) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    review_evidence = evidence["review_evidence"]
+    successor = review_evidence["artifacts"][0]
+    successor.update({
+        "reviewer_lane": "reviewer-successor",
+        "producer_identity": "reviewer-2",
+    })
+    review_evidence["lane_roster"].append({
+        "lane_id": "reviewer-successor",
+        "producer_identity": "reviewer-2",
+        "successor_of": "merge-reviewer-2",
+    })
+    thread = evidence["review_threads"][0]
+    thread.update({
+        "resolved_by": "reviewer-2",
+        "resolver_role": "reviewer_lane",
+        "original_author": "reviewer-1",
+        "original_comment_id": "PRRC_fixture-root",
+        "lane_id": "reviewer-successor",
+        "successor_of": "merge-reviewer-2",
+        "re_review_artifact_id": successor["artifact_id"],
+    })
+
+    assert successor["head_sha"] != review_evidence["head_sha"]
+    assert successor["artifact_id"] in review_evidence["current_artifact_ids"]
+    assert _verified_reviewer_resolver(thread, review_evidence)
+
+
 def test_pr_gate_blocks_successor_with_mismatched_trusted_lineage() -> None:
     evidence = clean_evidence()
     original = evidence["review_evidence"]["artifacts"][0]
@@ -547,3 +631,167 @@ def test_pr_gate_blocks_naive_merge_dispatch_timestamp() -> None:
 
     assert result["decision"] == "blocked"
     assert any("timezone-aware" in reason for reason in result["reasons"])
+
+
+def test_terminal_contract_allows_exact_round_four_authorization(
+    tmp_path: Path,
+) -> None:
+    evidence, repo = _bounded_round_evidence(tmp_path)
+
+    satisfied, missing, reasons = evaluate_review_contract(evidence, repo)
+
+    assert missing == []
+    assert reasons == []
+    assert any("exact one-time maintainer authorization" in item for item in satisfied)
+
+
+def test_terminal_contract_requires_external_round_cap_authorization(
+    tmp_path: Path,
+) -> None:
+    evidence, repo = _bounded_round_evidence(tmp_path)
+    del evidence["round_cap_authorizations"]
+    evidence["human_authorization"] = {
+        "actor": "maintainer",
+        "source": "implx auto merge authorization",
+    }
+    current = evidence["review_evidence"]["artifacts"][-1]
+    current["human_full_review_request"] = "maintainer requested another review"
+
+    _, missing, reasons = evaluate_review_contract(evidence, repo)
+
+    assert "round_cap_authorizations[RCA-718-4]" in missing
+    assert any("missing round cap authorization" in reason for reason in reasons)
+
+
+def test_terminal_contract_rejects_tampered_embedded_round_audit(
+    tmp_path: Path,
+) -> None:
+    evidence, repo = _bounded_round_evidence(tmp_path)
+    evidence["review_evidence"]["round_audit"]["total_rounds"] = 3
+
+    _, _, reasons = evaluate_review_contract(evidence, repo)
+
+    assert "review_evidence.round_audit differs from trusted manifest" in reasons
+
+
+def test_terminal_contract_rejects_forged_manifest_diff_hash(tmp_path: Path) -> None:
+    evidence, repo = _bounded_round_evidence(tmp_path)
+    artifact_path = repo / evidence["review_evidence"]["artifacts"][1]["artifact_path"]
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    artifact["diff_sha256"] = "f" * 64
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    manifest_path = repo / evidence["review_evidence"]["manifest_path"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["rounds"][1]["diff_sha256"] = "f" * 64
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    evidence["review_evidence"] = load_review_manifest(
+        repo, evidence["review_evidence"]["manifest_path"],
+        expected_pr=718, expected_head_sha=evidence["head_sha"],
+    )
+
+    _, _, reasons = evaluate_review_contract(evidence, repo)
+
+    assert any("diff_sha256 does not match exact Git" in reason for reason in reasons)
+
+
+def test_terminal_contract_blocks_string_round_without_crashing(tmp_path: Path) -> None:
+    evidence, repo = _bounded_round_evidence(tmp_path)
+    artifact_path = repo / evidence["review_evidence"]["artifacts"][1]["artifact_path"]
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    artifact["review_round"] = "2"
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+    manifest_path = repo / evidence["review_evidence"]["manifest_path"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["rounds"][1]["review_round"] = "2"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    evidence["review_evidence"] = load_review_manifest(
+        repo, evidence["review_evidence"]["manifest_path"],
+        expected_pr=718, expected_head_sha=evidence["head_sha"],
+    )
+
+    _, _, reasons = evaluate_review_contract(evidence, repo)
+
+    assert any("review_round" in reason for reason in reasons)
+
+
+def test_terminal_contract_requires_repo_safe_reload_for_bounded_rounds(
+    tmp_path: Path,
+) -> None:
+    evidence, _ = _bounded_round_evidence(tmp_path)
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert "bounded round audit requires repository-safe manifest reload" in reasons
+
+
+def test_terminal_contract_rejects_duplicate_round_cap_authorization_id(
+    tmp_path: Path,
+) -> None:
+    evidence, repo = _bounded_round_evidence(tmp_path)
+    evidence["round_cap_authorizations"].append(
+        deepcopy(evidence["round_cap_authorizations"][0])
+    )
+
+    _, _, reasons = evaluate_review_contract(evidence, repo)
+
+    assert any("authorization_id is reused" in reason for reason in reasons)
+
+
+def test_terminal_contract_rejects_unbound_round_cap_authorization(
+    tmp_path: Path,
+) -> None:
+    evidence, repo = _bounded_round_evidence(tmp_path)
+    unused = deepcopy(evidence["round_cap_authorizations"][0])
+    unused["authorization_id"] = "RCA-718-5"
+    unused["review_round"] = 5
+    evidence["round_cap_authorizations"].append(unused)
+
+    _, _, reasons = evaluate_review_contract(evidence, repo)
+
+    assert any("not bound to an over-cap manifest round" in reason for reason in reasons)
+
+
+def test_terminal_contract_rejects_authorization_rebound_to_other_scope(
+    tmp_path: Path,
+) -> None:
+    mutations = [
+        ("pr", 719),
+        ("prior_head_sha", "e" * 40),
+        ("target_head_sha", "f" * 40),
+        ("review_round", 5),
+        ("decision", "merge"),
+        ("authorized_human_maintainer", False),
+    ]
+    for field, value in mutations:
+        evidence, repo = _bounded_round_evidence(tmp_path / field)
+        evidence["round_cap_authorizations"][0][field] = value
+
+        _, _, reasons = evaluate_review_contract(evidence, repo)
+
+        assert any(
+            f"RCA-718-4.{field} must equal trusted round binding" in reason
+            for reason in reasons
+        ), (field, reasons)
+
+
+def test_terminal_contract_rejects_authorization_unknown_fields_and_bad_time(
+    tmp_path: Path,
+) -> None:
+    evidence, repo = _bounded_round_evidence(tmp_path)
+    authorization = evidence["round_cap_authorizations"][0]
+    authorization["authorized_at"] = "2026-07-23T00:03:45"
+    authorization["scope_alias"] = "all future rounds"
+
+    _, _, reasons = evaluate_review_contract(evidence, repo)
+
+    assert any("contains unsupported fields: scope_alias" in reason for reason in reasons)
+    assert any("authorized_at must be a timezone-aware" in reason for reason in reasons)
+
+
+def test_terminal_contract_rejects_authorization_after_review_start(tmp_path: Path) -> None:
+    evidence, repo = _bounded_round_evidence(tmp_path)
+    evidence["round_cap_authorizations"][0]["authorized_at"] = "2026-07-23T00:04:01Z"
+
+    _, _, reasons = evaluate_review_contract(evidence, repo)
+
+    assert any("must precede target review start" in reason for reason in reasons)

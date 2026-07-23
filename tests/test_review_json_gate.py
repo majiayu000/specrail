@@ -16,8 +16,12 @@ CHECKS = ROOT / "checks"
 FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
-from review_json_gate import REVIEW_TOP_LEVEL_KEYS, evaluate_review_gate  # noqa: E402
 from evidence_content_binding import build_content_binding_evidence  # noqa: E402
+from review_json_gate import (  # noqa: E402
+    REVIEW_TOP_LEVEL_KEYS,
+    evaluate_review_gate,
+    validate_exact_git_diff,
+)
 from pr_review_contract import evaluate_review_contract  # noqa: E402
 from review_result_semantics import (  # noqa: E402
     UNGATED_DISCLOSURE_MARKER,
@@ -681,3 +685,142 @@ def test_review_json_gate_blocks_authorization_without_unavailable_status() -> N
 
     assert result["decision"] == "blocked"
     assert any("allowed only when gate_status is unavailable" in item for item in result["reasons"])
+
+
+def git(repo: Path, *args: str) -> bytes:
+    process = subprocess.run(
+        ["git", *args], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert process.returncode == 0, process.stderr.decode(errors="replace")
+    return process.stdout
+
+
+def commit_file(repo: Path, name: str, content: bytes, message: str) -> str:
+    (repo / name).write_bytes(content)
+    git(repo, "add", "--", name)
+    git(repo, "commit", "-m", message)
+    return git(repo, "rev-parse", "HEAD").decode().strip()
+
+
+def bounded_review(base: str, head: str, diff: bytes, mode: str = "resumed") -> dict[str, object]:
+    review = load_review("review-valid.json")
+    review.update({
+        "round_policy_version": 1,
+        "review_round": 2,
+        "review_mode": mode,
+        "base_head_sha": base,
+        "head_sha": head,
+        "diff_sha256": hashlib.sha256(diff).hexdigest(),
+        "prior_findings": [],
+        "comments": [],
+    })
+    return review
+
+
+def git_history(tmp_path: Path) -> tuple[str, str, str, bytes, bytes]:
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "SpecRail Test")
+    git(tmp_path, "config", "user.email", "specrail@example.invalid")
+    first = commit_file(tmp_path, "tracked.txt", b"one\n", "first")
+    second = commit_file(tmp_path, "tracked.txt", b"two\n", "second")
+    third = commit_file(tmp_path, "tracked.txt", b"three\n", "third")
+    scoped = git(tmp_path, "diff", "--no-ext-diff", "--binary", f"{second}..{third}", "--")
+    full = git(tmp_path, "diff", "--no-ext-diff", "--binary", f"{first}..{third}", "--")
+    return first, second, third, scoped, full
+
+
+@pytest.mark.parametrize("mode", ["resumed", "diff_only"])
+def test_bounded_gate_accepts_exact_git_range(tmp_path: Path, mode: str) -> None:
+    _, base, head, diff, _ = git_history(tmp_path)
+    result = evaluate_review_gate(
+        bounded_review(base, head, diff, mode), diff.decode(), repo=tmp_path, diff_bytes=diff
+    )
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_bounded_gate_rejects_full_pr_diff_and_forged_hash(tmp_path: Path) -> None:
+    _, base, head, scoped, full = git_history(tmp_path)
+    review = bounded_review(base, head, scoped)
+    full_result = evaluate_review_gate(
+        review, full.decode(), repo=tmp_path, diff_bytes=full
+    )
+    assert any("provided diff bytes" in reason for reason in full_result["reasons"])
+    review["diff_sha256"] = "0" * 64
+    hash_result = evaluate_review_gate(
+        review, scoped.decode(), repo=tmp_path, diff_bytes=scoped
+    )
+    assert any("diff_sha256" in reason for reason in hash_result["reasons"])
+
+
+def test_bounded_gate_rejects_missing_git_object(tmp_path: Path) -> None:
+    _, base, head, diff, _ = git_history(tmp_path)
+    review = bounded_review(base, head, diff)
+    review["base_head_sha"] = "f" * 40
+    result = evaluate_review_gate(
+        review, diff.decode(), repo=tmp_path, diff_bytes=diff
+    )
+    assert any("exact Git diff failed" in reason for reason in result["reasons"])
+
+
+def test_bounded_gate_rejects_git_option_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    review = bounded_review("a" * 40, "b" * 40, b"")
+    review["base_head_sha"] = "--output=/tmp/specrail-gh167-proof"
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail("Git executed"))
+
+    result = evaluate_review_gate(review, "", repo=tmp_path, diff_bytes=b"")
+
+    assert any("40-character Git SHAs" in reason for reason in result["reasons"])
+
+
+def test_bounded_gate_blocks_string_round_without_crashing(tmp_path: Path) -> None:
+    review = bounded_review("a" * 40, "b" * 40, b"")
+    review["review_round"] = "2"
+
+    result = evaluate_review_gate(review, "", repo=tmp_path, diff_bytes=b"")
+
+    assert result["decision"] == "blocked"
+    assert any("positive integer" in reason for reason in result["reasons"])
+
+
+def test_exact_diff_rejects_bad_hash_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: pytest.fail("Git executed"))
+    reasons = validate_exact_git_diff(tmp_path, "a" * 40, "b" * 40, "bad")
+    assert reasons == ["exact Git diff requires a 64-character diff_sha256 before execution"]
+
+
+def test_exact_diff_reports_subprocess_start_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*args: object, **kwargs: object) -> object:
+        raise OSError("git unavailable")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    reasons = validate_exact_git_diff(tmp_path, "a" * 40, "b" * 40, "c" * 64)
+    assert reasons == ["cannot execute exact Git diff: git unavailable"]
+
+
+def test_bounded_gate_accepts_binary_and_empty_exact_diffs(tmp_path: Path) -> None:
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "user.name", "SpecRail Test")
+    git(tmp_path, "config", "user.email", "specrail@example.invalid")
+    base = commit_file(tmp_path, "blob.bin", b"\x00old\xff", "base")
+    binary_head = commit_file(tmp_path, "blob.bin", b"\x00new\xfe", "binary")
+    binary = git(tmp_path, "diff", "--no-ext-diff", "--binary", f"{base}..{binary_head}", "--")
+    binary_result = evaluate_review_gate(
+        bounded_review(base, binary_head, binary),
+        binary.decode(), repo=tmp_path, diff_bytes=binary,
+    )
+    assert binary_result["decision"] == "allowed", binary_result["reasons"]
+    git(tmp_path, "commit", "--allow-empty", "-m", "empty")
+    empty_head = git(tmp_path, "rev-parse", "HEAD").decode().strip()
+    empty = git(tmp_path, "diff", "--no-ext-diff", "--binary", f"{binary_head}..{empty_head}", "--")
+    empty_result = evaluate_review_gate(
+        bounded_review(binary_head, empty_head, empty, "diff_only"),
+        "", repo=tmp_path, diff_bytes=empty,
+    )
+    assert empty_result["decision"] == "allowed", empty_result["reasons"]

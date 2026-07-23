@@ -159,7 +159,11 @@ def validate_content_binding(value: Any) -> dict[str, Any]:
         raise EvidenceError("snapshot.algorithm must equal sha256")
     if snapshot.get("normalization") != "specrail-v1":
         raise EvidenceError("snapshot.normalization must equal specrail-v1")
-    _nonempty_string(snapshot.get("collector"), "snapshot.collector")
+    collector = _nonempty_string(snapshot.get("collector"), "snapshot.collector")
+    if collector != "github_pr_evidence":
+        raise EvidenceError(
+            "snapshot.collector must equal the trusted github_pr_evidence collector"
+        )
     hashes = validate_content_hashes(payload.get("content_hashes"))
     return {
         "content_binding_version": CONTENT_BINDING_VERSION,
@@ -443,7 +447,11 @@ def load_versioned_pr_evidence(repo: Path, raw_path: str) -> dict[str, Any]:
         validate_instance(schema, evidence, "reused PR evidence")
     except SpecRailError as exc:
         raise EvidenceError(f"reused PR evidence schema validation failed: {exc}") from exc
-    validate_content_binding(evidence)
+    binding = validate_content_binding(evidence)
+    if evidence.get("head_sha") != binding["snapshot"]["head_sha"]:
+        raise EvidenceError(
+            "reused PR evidence head_sha must match its content binding snapshot"
+        )
     return evidence
 
 
@@ -458,6 +466,14 @@ def merge_reusable_ci_checks(
     if current_binding is None:
         raise EvidenceError("reusing CI evidence requires v1 content binding")
     prior_binding = validate_content_binding(prior_evidence)
+    current = validate_content_binding(current_binding)
+    if (
+        prior_binding["snapshot"]["head_sha"]
+        == current["snapshot"]["head_sha"]
+    ):
+        raise EvidenceError(
+            "reused PR evidence snapshot must come from a previous head"
+        )
     prior_checks = prior_evidence.get("checks")
     if not isinstance(prior_checks, list):
         raise EvidenceError("reused PR evidence checks must be a list")
@@ -485,7 +501,7 @@ def merge_reusable_ci_checks(
             raise EvidenceError(f"reused CI check {name} head does not match its snapshot")
         if not content_bindings_match(component, prior_binding["content_hashes"]):
             raise EvidenceError(f"reused CI check {name} bindings do not match prior snapshot")
-        if not content_bindings_match(component, current_binding["content_hashes"]):
+        if not content_bindings_match(component, current["content_hashes"]):
             raise EvidenceError(f"reused CI check {name} bindings do not match current snapshot")
         if current_index is None:
             indexes[name] = len(merged)

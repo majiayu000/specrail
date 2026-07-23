@@ -34,6 +34,7 @@ from runtime_tier_authorization import (
     _validate_post_authorization_findings,
     _validate_tier_authorization,
 )
+from runtime_sensitive_routes import validate_runtime_sensitive_route
 from specrail_lib import (
     PackConfig,
     SPEC_STATUSES,
@@ -405,6 +406,9 @@ def _validate_full_queue_checkpoint(
     data: dict[str, Any],
     errors: list[str],
     warnings: list[str],
+    *,
+    repo: Path | None,
+    config: PackConfig | None,
 ) -> None:
     queue_mode = data.get("queue_mode")
     if queue_mode != "full_queue_drain":
@@ -438,12 +442,14 @@ def _validate_full_queue_checkpoint(
         if not raw_item.get("next_action"):
             errors.append(f"{label}: next_action is required")
         _validate_enforcement_sensitive(raw_item, label, errors)
-        if raw_item.get("enforcement_sensitive") is True and not raw_item.get(
-            "approved_spec_evidence"
-        ):
-            errors.append(
-                f"{label}: enforcement-sensitive item requires approved_spec_evidence"
-            )
+        validate_runtime_sensitive_route(
+            raw_item,
+            label,
+            errors,
+            repo=repo,
+            config=config,
+            repository=data.get("repo"),
+        )
         spec_status = _validate_spec_status(
             raw_item.get("spec_status"),
             label,
@@ -508,7 +514,9 @@ def evaluate_checkpoint(
     _validate_goal_candidate(data, errors)
     _validate_budget(data, errors, warnings, satisfied, now=now)
     _validate_tranche_mix(data, errors, satisfied)
-    _validate_full_queue_checkpoint(data, errors, warnings)
+    _validate_full_queue_checkpoint(
+        data, errors, warnings, repo=repo, config=config
+    )
     queue_mode = data.get("queue_mode")
     thread_gate, spawned_agents, native_required = _validate_thread_dispatch_gate(data, errors)
 
@@ -561,6 +569,14 @@ def evaluate_checkpoint(
             errors.append(f"{label}: next_action is required")
         _validate_runtime_content_binding(raw_item, label, errors)
         _validate_enforcement_sensitive(raw_item, label, errors)
+        validate_runtime_sensitive_route(
+            raw_item,
+            label,
+            errors,
+            repo=repo,
+            config=config,
+            repository=data.get("repo"),
+        )
         if queue_mode == "full_queue_drain" and (raw_item.get("issue") or raw_item.get("pr")):
             spec_status = _validate_spec_status(
                 raw_item.get("spec_status"),

@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +58,9 @@ REVIEW_TOP_LEVEL_KEYS = {
     "review_completed_at",
     "review_execution",
     "review_mode",
+    "round_policy_version",
+    "diff_sha256",
+    "round_cap_escalation",
     "review_round",
     "review_source",
     "review_started_at",
@@ -120,6 +125,13 @@ def _load_json(path: Path) -> dict[str, Any]:
 def _load_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"cannot read diff file {path}: {exc}") from exc
+
+
+def _load_bytes(path: Path) -> bytes:
+    try:
+        return path.read_bytes()
     except OSError as exc:
         raise ValueError(f"cannot read diff file {path}: {exc}") from exc
 
@@ -279,7 +291,10 @@ def _validate_review_round(
         reasons.append(f"review_mode must be one of: {allowed}")
         return
 
-    if review_mode == "full" and review_round > FULL_REVIEW_ROUND_CAP:
+    bounded = review.get("round_policy_version") == 1
+    if bounded and review_round >= 2 and review_mode not in {"resumed", "diff_only"}:
+        reasons.append("bounded review_round >= 2 requires resumed or diff_only mode")
+    elif not bounded and review_mode == "full" and review_round > FULL_REVIEW_ROUND_CAP:
         request = review.get("human_full_review_request")
         if _non_empty_string(request):
             satisfied.append(
@@ -295,16 +310,23 @@ def _validate_review_round(
     if review_mode in {"resumed", "diff_only"}:
         if review_round < 2:
             reasons.append(f"review_mode {review_mode} requires review_round >= 2")
-        _validate_prior_findings(review, reasons)
+        _validate_prior_findings(review, reasons, bounded=bounded)
 
-    if review_mode == "diff_only" and not _non_empty_string(review.get("base_head_sha")):
+    if bounded and review_round >= 2:
+        if not _non_empty_string(review.get("base_head_sha")):
+            reasons.append("bounded scoped review requires base_head_sha of the prior round")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", str(review.get("diff_sha256", ""))):
+            reasons.append("bounded scoped review requires a 64-character diff_sha256")
+    elif review_mode == "diff_only" and not _non_empty_string(review.get("base_head_sha")):
         reasons.append("review_mode diff_only requires base_head_sha of the prior round")
 
     if review_mode in REVIEW_MODES and not reasons:
         satisfied.append(f"review round {review_round} mode {review_mode}")
 
 
-def _validate_prior_findings(review: dict[str, Any], reasons: list[str]) -> None:
+def _validate_prior_findings(
+    review: dict[str, Any], reasons: list[str], *, bounded: bool = False
+) -> None:
     prior_findings = review.get("prior_findings")
     if not isinstance(prior_findings, list):
         reasons.append(
@@ -315,7 +337,7 @@ def _validate_prior_findings(review: dict[str, Any], reasons: list[str]) -> None
         if not isinstance(finding, dict):
             reasons.append(f"prior_findings #{index} must be an object")
             continue
-        if not _non_empty_string(finding.get("summary")):
+        if not bounded and not _non_empty_string(finding.get("summary")):
             reasons.append(f"prior_findings #{index} requires summary")
         status = finding.get("status")
         if status not in PRIOR_FINDING_STATUSES:
@@ -564,8 +586,56 @@ def _find_forbidden_language(review: dict[str, Any]) -> list[str]:
     return reasons
 
 
+def validate_exact_git_diff(
+    repo: Path, base: object, head: object, diff_sha256: object, *,
+    supplied_bytes: bytes | None = None,
+) -> list[str]:
+    """Verify a fixed Git range after rejecting option-like revisions."""
+
+    if not all(
+        isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40}", value)
+        for value in (base, head)
+    ):
+        return ["exact Git diff requires 40-character Git SHAs before execution"]
+    if not isinstance(diff_sha256, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{64}", diff_sha256
+    ):
+        return ["exact Git diff requires a 64-character diff_sha256 before execution"]
+    try:
+        process = subprocess.run(
+            ["git", "diff", "--no-ext-diff", "--binary", f"{base}..{head}", "--"],
+            cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+    except OSError as exc:
+        return [f"cannot execute exact Git diff: {exc}"]
+    if process.returncode != 0:
+        detail = process.stderr.decode("utf-8", errors="replace").strip()
+        return [f"exact Git diff failed for {base}..{head}: {detail}"]
+    reasons = []
+    if supplied_bytes is not None and supplied_bytes != process.stdout:
+        reasons.append("provided diff bytes do not equal exact Git base_head_sha..head_sha output")
+    if hashlib.sha256(process.stdout).hexdigest() != diff_sha256:
+        reasons.append("diff_sha256 does not match exact Git base_head_sha..head_sha output")
+    return reasons
+
+
+def _validate_bounded_diff(
+    review: dict[str, Any], diff_bytes: bytes, repo: Path | None
+) -> list[str]:
+    review_round = review.get("review_round")
+    if review.get("round_policy_version") != 1 or not _positive_int(review_round) or review_round < 2:
+        return []
+    if repo is None:
+        return ["bounded scoped review requires a repository for exact Git diff provenance"]
+    base, head = review.get("base_head_sha"), review.get("head_sha")
+    return validate_exact_git_diff(
+        repo, base, head, review.get("diff_sha256"), supplied_bytes=diff_bytes
+    )
+
+
 def evaluate_review_gate(
-    review: dict[str, Any], diff_text: str, repo: Path | None = None,
+    review: dict[str, Any], diff_text: str, *, repo: Path | None = None,
+    diff_bytes: bytes | None = None,
 ) -> dict[str, Any]:
     """Validate a review artifact and return a stable gate result."""
 
@@ -598,6 +668,13 @@ def evaluate_review_gate(
     if semantic_result["valid"]:
         satisfied.append("review artifact v2 semantics valid")
     reasons.extend(_find_forbidden_language(review))
+    reasons.extend(
+        _validate_bounded_diff(
+            review,
+            diff_bytes if diff_bytes is not None else diff_text.encode("utf-8"),
+            repo,
+        )
+    )
 
     try:
         diff_index = parse_unified_diff(diff_text)
@@ -678,8 +755,9 @@ def main() -> int:
     repo = Path(args.repo).resolve()
     try:
         review = _load_json(_resolve_path(repo, args.review))
-        diff_text = _load_text(_resolve_path(repo, args.diff))
-        result = evaluate_review_gate(review, diff_text, repo)
+        diff_bytes = _load_bytes(_resolve_path(repo, args.diff))
+        diff_text = diff_bytes.decode("utf-8")
+        result = evaluate_review_gate(review, diff_text, repo=repo, diff_bytes=diff_bytes)
     except ValueError as exc:
         result = {
             "decision": "blocked",

@@ -44,6 +44,33 @@ diff. Suggested changes may use a non-empty `suggestion` field, a non-empty
 fenced `suggestion` block in `body`, or both; suggestions are only valid on
 RIGHT-side comments.
 
+## Bounded Review Contract
+
+<!-- specrail-bounded-review-contract-v1:start -->
+Bounded review contract (`manifest.version: 2`,
+`round_policy: {name: "bounded_diff_v1", cap: 3}`):
+
+- `rounds[]` is the source of truth. Each entry is the closed set
+  `{artifact_id, review_round, review_mode, base_head_sha, head_sha, diff_sha256, escalation_authorization_id}`;
+  the loader derives continuous rounds `1..N` from the artifact set.
+- Round 1 may use `full`. Every `review_round >= 2` must use `review_mode:
+  resumed | diff_only`, never `full`; `base_head_sha` must equal the previous
+  round's `head_sha`, and the supplied bytes and `diff_sha256` must match the
+  exact `git diff --no-ext-diff --binary <base_head_sha>..<head_sha> --` output.
+- `prior_findings[]` is compact typed carry only:
+  `{finding_id, source_artifact_id, status, evidence_pointer}` with
+  `evidence_pointer.kind: thread | comment | artifact | commit`; do not replay
+  historical finding prose. Carry every still-unresolved historical finding.
+- Before every `review_round >= 4`, stop. Continue exactly once only with an
+  external, role-mapped maintainer authorization whose `decision` is
+  `continue_once` and whose id, PR, prior/target heads, and round match exactly.
+- The over-cap `round_cap_escalation.unresolved_findings[]` must equal the full
+  union of historical unresolved findings and current critical, important, or
+  otherwise actionable findings; no finding may disappear or be invented.
+- `auth_mode: auto` merge authorization and `human_full_review_request` do not
+  authorize an over-cap review round and cannot replace that exact cap evidence.
+<!-- specrail-bounded-review-contract-v1:end -->
+
 ## Boundary
 
 Do not approve, merge, close issues, or mark security findings public.

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
@@ -15,7 +14,6 @@ from typing import Any
 
 from evidence_content_binding import (
     build_content_binding_evidence,
-    build_component_binding,
     checkout_is_exact_head as _checkout_is_exact_head,
     collect_reuse_audits,
     collect_content_binding as _collect_content_binding,
@@ -24,9 +22,11 @@ from evidence_content_binding import (
     validate_content_binding,
 )
 from github_evidence_common import (
-    EvidenceError, json_object, trusted_ci_coverage,
+    EvidenceError, json_object, normalize_checks, normalize_reviews,
 )
-from github_approved_spec_evidence import collect_approval_metadata
+from github_approved_spec_evidence import (
+    collect_approval_metadata, collect_spec_revision_approval,
+)
 from github_issue_reference import (
     normalize_issue_reference,
     normalize_linked_issue, references_partial_issue, relation_snapshot,
@@ -39,6 +39,8 @@ from github_review_evidence import (
     build_human_authorization,
     build_self_review_authorization,
     load_lane_failures,
+    load_maintainer_role_map,
+    load_round_cap_authorizations,
     load_resolver_role_map,
     normalize_review_threads,
 )
@@ -49,6 +51,7 @@ from sensitive_enforcement import (
     sensitive_registry,
 )
 from review_result_semantics import ReviewSemanticError, load_review_manifest
+from spec_revision_evidence import SPEC_APPROVAL_FIELDS, spec_revision_route_eligible
 from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
@@ -79,7 +82,6 @@ query SpecRailReviewThreads($owner: String!, $name: String!, $number: Int!) {
 """.strip()
 
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-STATUS_CONTEXT_STATES = {"SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED"}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
 def parse_github_repo(raw: str) -> tuple[str, str]:
     value = raw.strip()
@@ -179,18 +181,6 @@ def collect_review_threads(owner: str, name: str, pr_number: int) -> dict[str, A
     ), "review threads GraphQL response")
 
 
-def _require_mapping(value: Any, field: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise EvidenceError(f"{field} must be an object")
-    return value
-
-
-def _require_list(value: Any, field: str) -> list[Any]:
-    if not isinstance(value, list):
-        raise EvidenceError(f"{field} must be a list")
-    return value
-
-
 def _require_positive_int(payload: dict[str, Any], field: str) -> int:
     value = payload.get(field)
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
@@ -210,96 +200,6 @@ def _require_bool(payload: dict[str, Any], field: str) -> bool:
     if not isinstance(value, bool):
         raise EvidenceError(f"{field} must be a boolean")
     return value
-
-
-def _author_login(value: Any, fallback: str) -> str:
-    if isinstance(value, dict) and isinstance(value.get("login"), str) and value["login"].strip():
-        return value["login"].strip()
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return fallback
-
-
-def _normalize_status_context(item: dict[str, Any]) -> tuple[str, str]:
-    state = str(item.get("state") or "").upper()
-    if state not in STATUS_CONTEXT_STATES:
-        return "", ""
-    if state == "SUCCESS":
-        return "COMPLETED", "SUCCESS"
-    if state in {"PENDING", "EXPECTED"}:
-        return "IN_PROGRESS", ""
-    return "COMPLETED", state
-
-
-def _rollup_items(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    if isinstance(value, dict):
-        nodes = value.get("nodes")
-        if isinstance(nodes, list):
-            return nodes
-    raise EvidenceError("statusCheckRollup must be a list or nodes object")
-
-
-def normalize_checks(
-    value: Any,
-    content_binding: dict[str, Any] | None = None,
-    head_sha: str | None = None,
-    config: PackConfig | None = None,
-) -> list[dict[str, Any]]:
-    hashes = None
-    if content_binding is not None:
-        hashes = validate_content_binding(content_binding)["content_hashes"]
-    checks: list[dict[str, Any]] = []
-    for index, item in enumerate(_rollup_items(value), start=1):
-        if not isinstance(item, dict):
-            raise EvidenceError(f"statusCheckRollup item #{index} must be an object")
-        name = str(item.get("name") or item.get("context") or item.get("workflowName") or f"check #{index}")
-        status = str(item.get("status") or "").upper()
-        conclusion = str(item.get("conclusion") or "").upper()
-        if not status and not conclusion:
-            status, conclusion = _normalize_status_context(item)
-        if not status and conclusion == "SUCCESS":
-            status = "COMPLETED"
-        check = {
-            "name": name,
-            "status": status,
-            "conclusion": conclusion,
-        }
-        url = item.get("detailsUrl") or item.get("targetUrl")
-        if isinstance(url, str) and url.strip():
-            check["url"] = url.strip()
-        coverage = trusted_ci_coverage(config, name) if hashes is not None else None
-        if hashes is not None and coverage is not None:
-            if not isinstance(head_sha, str) or not head_sha.strip():
-                raise EvidenceError("v1 CI check requires the current head SHA")
-            check.update(build_component_binding(coverage, hashes))
-            check["artifact_id"] = "github-check:" + hashlib.sha256(
-                json.dumps(
-                    item, allow_nan=False, ensure_ascii=False,
-                    separators=(",", ":"), sort_keys=True,
-                ).encode("utf-8")
-            ).hexdigest()
-            check["head_sha"] = head_sha.strip()
-        checks.append(check)
-    return checks
-
-
-def normalize_reviews(value: Any) -> list[dict[str, str]]:
-    reviews = _require_list(value, "reviews")
-    latest_by_author: dict[str, dict[str, str]] = {}
-    author_order: list[str] = []
-    for index, item in enumerate(reviews, start=1):
-        if not isinstance(item, dict):
-            raise EvidenceError(f"review item #{index} must be an object")
-        state = str(item.get("state") or "").upper()
-        if not state:
-            continue
-        author = _author_login(item.get("author"), f"review #{index}")
-        if author not in latest_by_author:
-            author_order.append(author)
-        latest_by_author[author] = {"author": author, "state": state}
-    return [latest_by_author[author] for author in author_order]
 
 
 def build_evidence(
@@ -323,6 +223,8 @@ def build_evidence(
     gate_started_at: str | None = None,
     content_binding: dict[str, Any] | None = None,
     reusable_ci_evidence: dict[str, Any] | None = None,
+    round_cap_authorizations: list[dict[str, Any]] | None = None,
+    spec_approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     linked_issue, issue_reference = normalize_issue_reference(
@@ -400,46 +302,66 @@ def build_evidence(
                     raise EvidenceError(
                         "enforcement-sensitive PR requires a linked issue"
                     )
-                if not isinstance(approval_metadata, dict):
-                    raise EvidenceError(
-                        "enforcement-sensitive PR requires trusted approval metadata"
-                    )
-                if (
-                    approval_metadata.get("state_source") != "label"
-                    or approval_metadata.get("state_trusted") is not True
-                ):
-                    raise EvidenceError(
-                        "approved spec requires trusted maintainer label evidence"
-                    )
-                approval_default = (
-                    approval_metadata.get("default_base_ref"),
-                    approval_metadata.get("default_base_sha"),
+                route = spec_revision_route_eligible(
+                    config, linked_issue, classification
                 )
-                snapshot_default = (
-                    pr_snapshot.get("default_base_ref"),
-                    pr_snapshot.get("default_base_sha"),
-                )
-                if approval_default != snapshot_default:
-                    raise EvidenceError(
-                        "approved-spec and PR snapshots disagree on trusted default base"
+                if route.eligible:
+                    if not isinstance(spec_approval, dict):
+                        raise EvidenceError(
+                            "eligible spec revision requires trusted spec approval"
+                        )
+                    if set(spec_approval) != SPEC_APPROVAL_FIELDS:
+                        raise EvidenceError("spec_approval field contract is incomplete")
+                    if spec_approval.get("commit_oid") != head_sha:
+                        raise EvidenceError(
+                            "spec_approval commit must match the gated head"
+                        )
+                    if spec_approval.get("artifact_paths") != list(route.artifact_paths):
+                        raise EvidenceError(
+                            "spec_approval artifacts must match the eligible spec revision"
+                        )
+                    evidence["sensitive_route"] = "spec_revision"
+                    evidence["spec_approval"] = dict(spec_approval)
+                else:
+                    evidence["sensitive_route"] = "approved_spec"
+                    if not isinstance(approval_metadata, dict):
+                        raise EvidenceError(
+                            "enforcement-sensitive PR requires trusted approval metadata"
+                        )
+                    if (
+                        approval_metadata.get("state_source") != "label"
+                        or approval_metadata.get("state_trusted") is not True
+                    ):
+                        raise EvidenceError(
+                            "approved spec requires trusted maintainer label evidence"
+                        )
+                    approval_default = (
+                        approval_metadata.get("default_base_ref"),
+                        approval_metadata.get("default_base_sha"),
                     )
-                try:
-                    evidence["approved_spec"] = build_approved_spec_evidence(
-                        config,
-                        repo,
-                        repository=str(repository or ""),
-                        issue=linked_issue,
-                        spec_revisions=approval_metadata.get("spec_revisions"),
-                        approved_at=str(approval_metadata.get("approved_at") or ""),
-                        maintainer_actor=str(
-                            approval_metadata.get("maintainer_actor") or ""
-                        ),
-                        gated_head_sha=head_sha,
-                        default_base_ref=snapshot_default[0],
-                        default_base_sha=snapshot_default[1],
+                    snapshot_default = (
+                        pr_snapshot.get("default_base_ref"),
+                        pr_snapshot.get("default_base_sha"),
                     )
-                except SpecRailError as exc:
-                    raise EvidenceError(str(exc)) from exc
+                    if approval_default != snapshot_default:
+                        raise EvidenceError(
+                            "approved-spec and PR snapshots disagree on trusted default base"
+                        )
+                    try:
+                        evidence["approved_spec"] = build_approved_spec_evidence(
+                            config, repo, repository=str(repository or ""),
+                            issue=linked_issue,
+                            spec_revisions=approval_metadata.get("spec_revisions"),
+                            approved_at=str(approval_metadata.get("approved_at") or ""),
+                            maintainer_actor=str(
+                                approval_metadata.get("maintainer_actor") or ""
+                            ),
+                            gated_head_sha=head_sha,
+                            default_base_ref=snapshot_default[0],
+                            default_base_sha=snapshot_default[1],
+                        )
+                    except SpecRailError as exc:
+                        raise EvidenceError(str(exc)) from exc
     if review_evidence is not None:
         derived_source = review_evidence.get("review_source")
         derived_execution = review_evidence.get("review_execution")
@@ -463,6 +385,8 @@ def build_evidence(
         evidence["human_authorization"] = authorization
     if self_review_authorization is not None:
         evidence["self_review_authorization"] = self_review_authorization
+    if round_cap_authorizations:
+        evidence["round_cap_authorizations"] = round_cap_authorizations
     provided_merge = [value for value in [merge_dispatched_at, merge_head_sha] if value is not None]
     if provided_merge:
         if not merge_dispatched_at or not merge_dispatched_at.strip() or not merge_head_sha or not merge_head_sha.strip():
@@ -490,6 +414,7 @@ def collect_evidence(
     review_manifest: str | None = None,
     content_binding_v1: bool = False,
     reusable_ci_evidence: dict[str, Any] | None = None,
+    round_cap_authorizations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if expected_issue is not None and (
         not isinstance(expected_issue, int)
@@ -551,6 +476,7 @@ def collect_evidence(
         )
 
     approval_metadata = None
+    spec_approval = None
     enforcement_sensitive = False
     if file_snapshot_before is not None and repo is not None and config is not None:
         declaration = enforcement_declaration(pr_payload_before.get("body"))
@@ -577,14 +503,23 @@ def collect_evidence(
                     raise EvidenceError(
                         "enforcement-sensitive PR requires a linked issue"
                     )
-                approval_metadata = collect_approval_metadata(
-                    github_repo, linked_issue, run_gh_json,
-                    spec_source_commits=approved_spec_source_commits(
-                        config, repo, linked_issue,
-                        default_base_ref=file_snapshot_before.get("default_base_ref"),
-                        default_base_sha=file_snapshot_before.get("default_base_sha"),
-                    ),
+                route = spec_revision_route_eligible(
+                    config, linked_issue, classification
                 )
+                if route.eligible:
+                    spec_approval = collect_spec_revision_approval(
+                        github_repo, linked_issue, pr_number, head_sha_before,
+                        route.artifact_paths, run_gh_json,
+                    )
+                else:
+                    approval_metadata = collect_approval_metadata(
+                        github_repo, linked_issue, run_gh_json,
+                        spec_source_commits=approved_spec_source_commits(
+                            config, repo, linked_issue,
+                            default_base_ref=file_snapshot_before.get("default_base_ref"),
+                            default_base_sha=file_snapshot_before.get("default_base_sha"),
+                        ),
+                    )
 
     file_snapshot_after = None
     if file_snapshot_before is not None:
@@ -645,6 +580,8 @@ def collect_evidence(
                 current_binding=content_binding,
                 enforcement_sensitive=enforcement_sensitive,
             )
+            if review_evidence.get("round_audit") is None:
+                review_evidence.pop("round_audit", None)
         except ReviewSemanticError as exc:
             raise EvidenceError(str(exc)) from exc
     elif review_source is not None:
@@ -673,6 +610,8 @@ def collect_evidence(
         gate_started_at,
         content_binding,
         reusable_ci_evidence,
+        round_cap_authorizations,
+        spec_approval,
     )
 
 
@@ -720,6 +659,16 @@ def main() -> int:
         "--resolver-role-map",
         help="JSON map or lane roster used to map resolver login to resolver_role",
     )
+    parser.add_argument(
+        "--round-cap-authorization",
+        action="append",
+        default=[],
+        help="External exact-bound continue_once authorization JSON (repeat per round)",
+    )
+    parser.add_argument(
+        "--maintainer-role-map",
+        help="Explicit JSON role map proving round-cap authorization actors are maintainers",
+    )
     parser.add_argument("--self-review-authorization-actor", help="Human authorizing self-review")
     parser.add_argument("--self-review-authorization-source", help="Where self-review authorization was recorded")
     parser.add_argument("--self-review-authorization-scope", help="Scope of self-review authorization")
@@ -743,6 +692,11 @@ def main() -> int:
         )
         lane_failures = load_lane_failures(args.lane_failures_json)
         resolver_roles = load_resolver_role_map(args.resolver_role_map)
+        maintainer_roles = load_maintainer_role_map(args.maintainer_role_map)
+        round_cap_authorizations = load_round_cap_authorizations(
+            args.round_cap_authorization,
+            maintainer_roles,
+        )
         repo = resolve_path(Path(args.repo), label="repository")
         reusable_ci_evidence = (
             load_versioned_pr_evidence(repo, args.reuse_pr_evidence)
@@ -764,6 +718,7 @@ def main() -> int:
             args.review_manifest,
             args.content_binding_v1 or args.content_binding_only,
             reusable_ci_evidence,
+            round_cap_authorizations,
         )
         if args.content_binding_only:
             evidence = build_content_binding_evidence(args.pr, evidence)
