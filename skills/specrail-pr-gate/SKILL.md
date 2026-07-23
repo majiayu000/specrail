@@ -102,6 +102,20 @@ authorization does not satisfy this self-review exception.
 GitHub exposes `resolvedBy` for review threads, but not the SpecRail lane role.
 When resolved threads exist, pass lane-roster evidence through
 `--resolver-role-map` so resolver logins can be mapped to `resolver_role`.
+The adapter records `resolver_role_source: explicit_map` for this bridge.
+`resolvedBy` is the GitHub credential login and need not equal the local review
+artifact's `producer_identity`; the gate instead requires the mapped lane,
+current/reusable terminal re-review artifact, and manifest producer to agree.
+Every successor resolver requires this explicit mapping, even when its
+`resolvedBy` login happens to equal the local producer identity. Global
+resolver-login mappings must be unique case-insensitively; use
+`thread_resolver_roles` to disambiguate a shared login across lanes.
+For a hosted root reviewer followed by local successor lanes, the manifest
+lineage must end at the exact GraphQL `original_author`; missing or mismatched
+external roots fail closed. If that root is intentionally external to the
+manifest roster, the resolver mapping must include `external_root` with the
+exact author and `review_execution: hosted`. A mapped root lane using a shared
+credential still needs its current terminal artifact and exact lane producer.
 
 If the PR head changes, new review activity appears, CI changes, or merge is
 deferred long enough that the evidence may be stale, collect fresh PR evidence

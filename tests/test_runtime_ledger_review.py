@@ -68,6 +68,142 @@ def test_review_contract_rejects_unrelated_root_reviewer_resolver() -> None:
     assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
 
 
+def _hosted_successor_evidence() -> dict[str, object]:
+    evidence = _pr_evidence("pr-clean-authorized.json")
+    review_evidence = evidence["review_evidence"]  # type: ignore[index]
+    artifact = review_evidence["artifacts"][0]  # type: ignore[index]
+    artifact.update(  # type: ignore[union-attr]
+        {
+            "reviewer_lane": "reviewer-successor",
+            "producer_identity": "native-successor",
+        }
+    )
+    review_evidence["lane_roster"] = [  # type: ignore[index]
+        {
+            "lane_id": "reviewer-local-root",
+            "producer_identity": "native-root",
+            "successor_of": "chatgpt-codex-connector",
+        },
+        {
+            "lane_id": "reviewer-successor",
+            "producer_identity": "native-successor",
+            "successor_of": "reviewer-local-root",
+        },
+    ]
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    thread.update(  # type: ignore[union-attr]
+        {
+            "original_author": "chatgpt-codex-connector",
+            "resolved_by": "repository-owner-login",
+            "resolver_role": "reviewer_lane",
+            "resolver_role_source": "explicit_map",
+            "lane_id": "reviewer-successor",
+            "successor_of": "reviewer-local-root",
+            "external_root": {
+                "author": "chatgpt-codex-connector",
+                "review_execution": "hosted",
+            },
+            "re_review_artifact_id": artifact["artifact_id"],  # type: ignore[index]
+        }
+    )
+    return evidence
+
+
+def test_review_contract_allows_explicit_hosted_to_local_successor_bridge() -> None:
+    evidence = _hosted_successor_evidence()
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert reasons == []
+
+
+def test_review_contract_blocks_unmapped_shared_github_resolver_login() -> None:
+    evidence = _hosted_successor_evidence()
+    evidence["review_threads"][0].pop("resolver_role_source")  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
+def test_review_contract_blocks_unmapped_hosted_root_roster_impersonation() -> None:
+    evidence = _hosted_successor_evidence()
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    thread.pop("resolver_role_source")  # type: ignore[union-attr]
+    resolved_by = thread["resolved_by"]  # type: ignore[index]
+    review_evidence = evidence["review_evidence"]  # type: ignore[index]
+    review_evidence["artifacts"][0]["producer_identity"] = resolved_by  # type: ignore[index]
+    review_evidence["lane_roster"][1]["producer_identity"] = resolved_by  # type: ignore[index]
+    root_lane = review_evidence["lane_roster"][0]  # type: ignore[index]
+    root_lane["producer_identity"] = thread["original_author"]  # type: ignore[index]
+    root_lane.pop("successor_of")  # type: ignore[union-attr]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
+def test_review_contract_blocks_hosted_successor_with_wrong_external_root() -> None:
+    evidence = _hosted_successor_evidence()
+    evidence["review_evidence"]["lane_roster"][0]["successor_of"] = "other-bot"  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
+def test_review_contract_blocks_matching_non_root_predecessor() -> None:
+    evidence = _hosted_successor_evidence()
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    predecessor = evidence["review_evidence"]["lane_roster"][0]  # type: ignore[index]
+    predecessor["producer_identity"] = thread["original_author"]  # type: ignore[index]
+    predecessor["successor_of"] = "unrelated-external-root"  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
+def test_review_contract_blocks_hosted_successor_without_external_root_proof() -> None:
+    evidence = _hosted_successor_evidence()
+    evidence["review_threads"][0].pop("external_root")  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
+def test_review_contract_allows_mapped_root_lane_shared_credential() -> None:
+    evidence = _hosted_successor_evidence()
+    review_evidence = evidence["review_evidence"]  # type: ignore[index]
+    artifact = review_evidence["artifacts"][0]  # type: ignore[index]
+    review_evidence["lane_roster"] = [{  # type: ignore[index]
+        "lane_id": "reviewer-successor",
+        "producer_identity": "native-successor",
+    }]
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    thread.update({  # type: ignore[union-attr]
+        "original_author": "repository-owner-login",
+        "resolved_by": "repository-owner-login",
+    })
+    thread.pop("successor_of")  # type: ignore[union-attr]
+    thread.pop("external_root")  # type: ignore[union-attr]
+    thread["re_review_artifact_id"] = artifact["artifact_id"]  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert reasons == []
+
+
+def test_review_contract_blocks_hosted_successor_with_mismatched_artifact_producer() -> None:
+    evidence = _hosted_successor_evidence()
+    evidence["review_evidence"]["artifacts"][0]["producer_identity"] = "other-producer"  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
 def test_runtime_ledger_gate_blocks_merge_ready_without_review_source() -> None:
     checkpoint = clean_checkpoint()
     del checkpoint["items"][0]["review"]["review_source"]  # type: ignore[index]

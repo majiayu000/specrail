@@ -112,6 +112,26 @@ def _normalize_resolver_entry(value: Any, label: str) -> dict[str, Any]:
         item = value.get(key)
         if isinstance(item, str) and item.strip():
             normalized[key] = item.strip()
+    if "external_root" in value:
+        external_root = value["external_root"]
+        if not isinstance(external_root, dict) or set(external_root) != {
+            "author",
+            "review_execution",
+        }:
+            raise EvidenceError(
+                f"{label}.external_root must contain only author and review_execution"
+            )
+        author = external_root.get("author")
+        if not isinstance(author, str) or not author.strip():
+            raise EvidenceError(f"{label}.external_root.author must be a non-empty string")
+        if external_root.get("review_execution") != "hosted":
+            raise EvidenceError(
+                f"{label}.external_root.review_execution must equal hosted"
+            )
+        normalized["external_root"] = {
+            "author": author.strip(),
+            "review_execution": "hosted",
+        }
     if "authorized_human_maintainer" in value:
         if not isinstance(value["authorized_human_maintainer"], bool):
             raise EvidenceError(f"{label}.authorized_human_maintainer must be a boolean")
@@ -130,12 +150,22 @@ def _resolver_role_map(payload: Any) -> dict[str, dict[str, Any]]:
             source = payload["lanes"]
 
     roles: dict[str, dict[str, Any]] = {}
+    seen_global_logins: dict[str, str] = {}
     if isinstance(source, dict):
         for login, value in source.items():
             if not isinstance(login, str) or not login.strip():
                 raise EvidenceError("resolver role map login must be a non-empty string")
-            roles[login.strip()] = _normalize_resolver_entry(
-                value, f"resolver role map {login.strip()}"
+            normalized_login = login.strip()
+            folded_login = normalized_login.casefold()
+            if folded_login in seen_global_logins:
+                raise EvidenceError(
+                    "duplicate global resolver login: "
+                    f"{seen_global_logins[folded_login]} and {normalized_login}; "
+                    "use thread_resolver_roles to disambiguate"
+                )
+            seen_global_logins[folded_login] = normalized_login
+            roles[normalized_login] = _normalize_resolver_entry(
+                value, f"resolver role map {normalized_login}"
             )
         _add_thread_resolver_roles(payload, roles)
         return roles
@@ -147,7 +177,16 @@ def _resolver_role_map(payload: Any) -> dict[str, dict[str, Any]]:
             login = lane.get("login") or lane.get("github_login") or lane.get("actor") or lane.get("resolved_by")
             if not isinstance(login, str) or not login.strip():
                 raise EvidenceError(f"resolver role lane_roster item #{index} requires login")
-            roles[login.strip()] = _normalize_resolver_entry(
+            normalized_login = login.strip()
+            folded_login = normalized_login.casefold()
+            if folded_login in seen_global_logins:
+                raise EvidenceError(
+                    "duplicate global resolver login: "
+                    f"{seen_global_logins[folded_login]} and {normalized_login}; "
+                    "use thread_resolver_roles to disambiguate"
+                )
+            seen_global_logins[folded_login] = normalized_login
+            roles[normalized_login] = _normalize_resolver_entry(
                 lane, f"resolver role lane_roster item #{index}"
             )
         _add_thread_resolver_roles(payload, roles)
@@ -401,6 +440,7 @@ def normalize_review_threads(
         if resolver:
             thread["resolved_by"] = resolver
         role = _resolver_role(item)
+        role_source = "github_payload" if role else None
         metadata: dict[str, Any] = {}
         if resolver and resolver_roles:
             raw_metadata = None
@@ -425,11 +465,17 @@ def normalize_review_threads(
             )
             if not role:
                 role = metadata.get("resolver_role")
+                role_source = "explicit_map"
+            elif metadata.get("resolver_role") == role:
+                role_source = "explicit_map"
         if role:
             thread["resolver_role"] = role
+        if role_source:
+            thread["resolver_role_source"] = role_source
         for key in [
             "lane_id",
             "successor_of",
+            "external_root",
             "re_review_artifact_id",
             "authorized_human_maintainer",
         ]:

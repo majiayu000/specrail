@@ -292,42 +292,83 @@ def _verified_reviewer_resolver(
     } if isinstance(raw_current_ids, list) else set()
     raw_artifacts = review_evidence.get("artifacts", [])
     artifacts = raw_artifacts if isinstance(raw_artifacts, list) else []
-    for lane in roster if isinstance(roster, list) else []:
-        if not isinstance(lane, dict):
-            continue
-        if lane.get("producer_identity") != resolved_by:
-            continue
-        if lane.get("lane_id") != lane_id:
-            continue
-        if not lane.get("successor_of"):
-            return resolved_by == original_author
-        original_lanes = [
-            candidate
-            for candidate in roster
-            if isinstance(candidate, dict)
-            and not candidate.get("successor_of")
-            and candidate.get("producer_identity") == original_author
-        ]
-        if len(original_lanes) != 1:
+    lanes = [
+        lane for lane in roster
+        if isinstance(lane, dict) and lane.get("lane_id") == lane_id
+    ] if isinstance(roster, list) else []
+    if len(lanes) != 1:
+        return False
+    lane = lanes[0]
+    producer_identity = lane.get("producer_identity")
+    successor_of = lane.get("successor_of")
+    if successor_of and successor_of != thread.get("successor_of"):
+        return False
+
+    mapped_login = thread.get("resolver_role_source") == "explicit_map"
+    if successor_of and not mapped_login:
+        return False
+    if not successor_of:
+        direct_root = (
+            producer_identity == original_author
+            and resolved_by == original_author
+        )
+        mapped_shared_root = mapped_login and resolved_by == original_author
+        if direct_root:
+            return True
+        if not mapped_shared_root:
             return False
-        original_lane_id = original_lanes[0].get("lane_id")
-        re_review_artifact_id = thread.get("re_review_artifact_id")
-        verified_re_review = any(
-            isinstance(artifact, dict)
-            and artifact.get("artifact_id") == re_review_artifact_id
-            and artifact.get("artifact_id") in current_ids
-            and artifact.get("reviewer_lane") == lane_id
-            and artifact.get("producer_identity") == resolved_by
-            and artifact.get("status") == "completed"
-            and artifact.get("verdict") in {"clean", "non_blocking"}
-            for artifact in artifacts
-        )
-        return (
-            lane.get("successor_of") == original_lane_id
-            and original_lane_id == thread.get("successor_of")
-            and re_review_artifact_id in current_ids
-            and verified_re_review
-        )
+    if resolved_by != producer_identity and not mapped_login:
+        return False
+    re_review_artifact_id = thread.get("re_review_artifact_id")
+    verified_re_review = any(
+        isinstance(artifact, dict)
+        and artifact.get("artifact_id") == re_review_artifact_id
+        and artifact.get("artifact_id") in current_ids
+        and artifact.get("reviewer_lane") == lane_id
+        and artifact.get("producer_identity") == producer_identity
+        and artifact.get("status") == "completed"
+        and artifact.get("verdict") in {"clean", "non_blocking"}
+        for artifact in artifacts
+    )
+    if not verified_re_review:
+        return False
+    if not successor_of:
+        return True
+
+    cursor = successor_of
+    visited: set[str] = set()
+    while _nonempty(cursor) and cursor not in visited:
+        visited.add(str(cursor))
+        predecessors = [
+            candidate for candidate in roster
+            if isinstance(candidate, dict) and candidate.get("lane_id") == cursor
+        ]
+        if not predecessors:
+            external_root = thread.get("external_root")
+            return bool(
+                mapped_login
+                and cursor == original_author
+                and isinstance(external_root, dict)
+                and external_root.get("author") == original_author
+                and external_root.get("review_execution") == "hosted"
+            )
+        if len(predecessors) != 1:
+            return False
+        predecessor = predecessors[0]
+        predecessor_successor = predecessor.get("successor_of")
+        if (
+            predecessor.get("producer_identity") == original_author
+            and not predecessor_successor
+        ):
+            original_lanes = [
+                candidate for candidate in roster
+                if (
+                    isinstance(candidate, dict)
+                    and candidate.get("producer_identity") == original_author
+                )
+            ]
+            return len(original_lanes) == 1
+        cursor = predecessor_successor
     return False
 
 
