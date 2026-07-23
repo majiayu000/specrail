@@ -121,9 +121,23 @@ If the PR head changes, new review activity appears, CI changes, or merge is
 deferred long enough that the evidence may be stale, collect fresh PR evidence
 and rerun `pr_gate.py` before merging.
 
+An empty `checks` array blocks the gate. It stays blocked unless the evidence
+carries a `checks_unavailable` declaration proving hosted CI cannot run for this
+PR at all, which today means one case: the base ref is outside the repository's
+`pull_request` trigger filter. The declaration is closed and fail-closed —
+`reason: hosted_ci_not_triggered_for_base`, `base_ref` and `default_base_ref`
+that match the evidence and differ from each other, `workflow_trigger_evidence`
+quoting the trigger, a non-empty `local_verification` command list, and
+`verified: true`. Any missing, unknown, or inconsistent field keeps the original
+missing-`checks` outcome. On acceptance the gate emits a satisfied entry
+prefixed `degraded:`; report it as a downgrade, never as passing CI. Prefer
+fixing the repository's workflow trigger over declaring the downgrade.
+
 ## Boundaries
 
 - Do not merge from this skill.
+- Do not declare `checks_unavailable` for pending, failed, or not-yet-triggered
+  CI; it covers only structurally impossible hosted checks.
 - Do not dispatch gate queries and merge in parallel.
 - Do not treat green CI alone as merge readiness.
 - Do not substitute a hosted bot review for a local CLI/native reviewer lane.

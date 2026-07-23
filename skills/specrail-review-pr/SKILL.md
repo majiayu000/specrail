@@ -90,6 +90,34 @@ Bounded review contract (`manifest.version: 2`,
   authorize an over-cap review round and cannot replace that exact cap evidence.
 <!-- specrail-bounded-review-contract-v1:end -->
 
+## Structurally Unavailable Hosted CI
+
+Empty hosted checks have two distinct causes, and they need opposite actions.
+
+| Condition | Required action |
+|---|---|
+| CI is pending, failed, or was not yet triggered for the current head | Normal evidence gap. Wait, re-run, or continue the round policy. |
+| CI can never run for this PR, for example the base branch is outside the repository's `pull_request` trigger filter | Structural. Report it once as a repository configuration defect with the trigger evidence. Do not open another review round for it. |
+
+Before recording a blocked verdict whose only unmet item is hosted checks,
+determine which case applies. When the PR's base ref is not the default branch,
+read the repository's workflow triggers and quote the exact filter.
+
+A structural finding is closed by one of two paths, both explicit:
+
+- Fix the repository configuration so the workflow triggers for this base, then
+  collect fresh evidence; or
+- Record a `checks_unavailable` declaration in the PR evidence
+  (`reason: hosted_ci_not_triggered_for_base`, the differing `base_ref` and
+  `default_base_ref`, `workflow_trigger_evidence` quoting the trigger, the
+  `local_verification` commands actually run, and `verified: true`). The gate
+  then reports a degraded pass that names the downgrade; it never reads as a
+  passing CI run, and it does not relax any other gate or the human merge
+  authorization.
+
+Repeating a full review round whose only new information is the same empty
+check rollup is a contract violation, not diligence.
+
 ## Thread Resolution Ownership
 
 Reviewer lanes may resolve review threads only after re-checking that the
