@@ -63,6 +63,8 @@
     "to_state": "ready_to_implement",
     "observed_kind": "direct readiness-label transition",
     "normal_lifecycle_completed": false,
+    "normal_spec_approval_gate_satisfied": false,
+    "ready_to_implement_label_alone_satisfies_spec_approval": false,
     "exception": "GH180 one-time auth_mode=auto old-validator bootstrap",
     "scope": "task planning only; no production implementation in T10",
     "not_reusable": true
@@ -81,7 +83,8 @@
     "unproven": [
       "write_spec issue-evidence collected_at and sha256",
       "implement issue-evidence collected_at and sha256",
-      "normal spec_pr_open -> spec_review -> spec_approved lifecycle"
+      "normal spec_pr_open -> spec_review -> spec_approved lifecycle",
+      "normal non-bootstrap spec_approval human gate"
     ],
     "authorization_effect": "none"
   },
