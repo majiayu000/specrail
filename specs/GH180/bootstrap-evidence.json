@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "issue": 180,
+  "repository": "majiayu000/specrail",
+  "purpose": "GH180 one-time staged-packet lifecycle bootstrap audit only; not reusable route authorization",
+  "authorization": {
+    "auth_mode": "auto",
+    "actor": "user",
+    "source": "current conversation",
+    "quote": "可以 按照你的来做 你又全部授权 你是auto模式",
+    "recorded_at": "2026-07-22T23:48:08Z",
+    "waived_human_gate": "spec_approval"
+  },
+  "write_spec_stage": {
+    "issue_labels": ["enhancement", "ready_to_spec", "agent_generated"],
+    "state": "ready_to_spec",
+    "state_source": "label",
+    "state_trusted": true,
+    "route": "write_spec",
+    "route_decision": "allowed",
+    "issue_url": "https://github.com/majiayu000/specrail/issues/180",
+    "route_satisfied": [
+      "linked_issue: GH-180",
+      "state provided by evidence: ready_to_spec (label)",
+      "state ready_to_spec allows write_spec"
+    ],
+    "duplicate_evidence_collected_at": "2026-07-22T23:47:20Z"
+  },
+  "implement_stage": {
+    "issue_labels": ["enhancement", "ready_to_implement", "agent_generated"],
+    "state": "ready_to_implement",
+    "state_source": "label",
+    "state_trusted": true,
+    "route": "implement",
+    "route_decision": "allowed",
+    "duplicate_work_decision": "allowed",
+    "issue_url": "https://github.com/majiayu000/specrail/issues/180",
+    "route_satisfied": [
+      "linked_issue: GH-180",
+      "product_spec: specs/GH180/product.md",
+      "state provided by evidence: ready_to_implement (label)",
+      "state ready_to_implement allows implement",
+      "tech_spec: specs/GH180/tech.md"
+    ],
+    "duplicate_evidence_collected_at": "2026-07-23T00:04:15Z",
+    "open_prs_referencing_issue": [],
+    "remote_branches_matching_implementation_token": []
+  },
+  "transition": {
+    "from_state": "ready_to_spec",
+    "to_state": "ready_to_implement",
+    "scope": "task planning only; no production implementation in T10"
+  },
+  "spec_content_sha256": {
+    "product.md": "c082343a367599d089b1473b72114e1b3b7ebcbbb6cd38510c3e68bd9d06ff39",
+    "tech.md": "f4a812689a2a1bf9a4b38f19726a6009f77bdcc997319ab7cd84f203fa5e4cbd"
+  },
+  "source_runtime_artifacts": [
+    "gh180-issue-evidence.json",
+    "gh180-route-gate.json",
+    "gh180-bootstrap-auto-waiver.json",
+    "gh180-issue-evidence-ready-to-implement.json",
+    "gh180-duplicate-evidence-ready-to-implement.json",
+    "gh180-implement-route-gate.json"
+  ]
+}
