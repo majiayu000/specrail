@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import copy
+import json
 import re
+from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 
 ANNOTATION_KEYS = {"$id", "$schema", "description", "title"}
@@ -41,6 +45,111 @@ class SchemaDefinitionError(SpecRailError):
 
 class InstanceMismatch(SpecRailError):
     """Raised when a valid schema does not match an instance."""
+
+
+def _resolve_pointer(document: Any, fragment: str, label: str) -> Any:
+    if not fragment:
+        return document
+    decoded = unquote(fragment)
+    if not decoded.startswith("/"):
+        raise SchemaDefinitionError(
+            f"{label}: local $ref fragment must be a JSON Pointer"
+        )
+    current = document
+    for raw_token in decoded[1:].split("/"):
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict) and token in current:
+            current = current[token]
+            continue
+        if isinstance(current, list) and token.isdigit():
+            index = int(token)
+            if index < len(current):
+                current = current[index]
+                continue
+        raise SchemaDefinitionError(f"{label}: unresolved JSON Pointer token {token!r}")
+    return current
+
+
+def load_json_schema(path: Path) -> dict[str, Any]:
+    """Load a schema and expand same-directory JSON references fail-closed."""
+
+    entry = path.resolve()
+    schema_root = entry.parent
+    documents: dict[Path, dict[str, Any]] = {}
+
+    def load_document(document_path: Path) -> dict[str, Any]:
+        if document_path in documents:
+            return documents[document_path]
+        try:
+            loaded = json.loads(document_path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise SchemaDefinitionError(
+                f"{document_path}: cannot read referenced schema: {exc}"
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise SchemaDefinitionError(
+                f"{document_path}: referenced schema is invalid JSON: {exc.msg}"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise SchemaDefinitionError(
+                f"{document_path}: referenced schema must be an object"
+            )
+        documents[document_path] = loaded
+        return loaded
+
+    def expand(
+        value: Any,
+        document_path: Path,
+        active: frozenset[tuple[Path, str]],
+    ) -> Any:
+        if isinstance(value, list):
+            return [expand(item, document_path, active) for item in value]
+        if not isinstance(value, dict):
+            return value
+        if "$ref" not in value:
+            return {
+                key: expand(child, document_path, active)
+                for key, child in value.items()
+            }
+        if set(value) != {"$ref"} or not isinstance(value["$ref"], str):
+            raise SchemaDefinitionError(
+                f"{document_path}: $ref must be the only key and a string"
+            )
+        reference = value["$ref"]
+        file_part, _, fragment = reference.partition("#")
+        if (
+            "://" in file_part
+            or file_part.startswith(("/", "\\"))
+            or "\\" in file_part
+        ):
+            raise SchemaDefinitionError(
+                f"{document_path}: only repo-local relative $ref values are supported"
+            )
+        target_path = (
+            document_path if not file_part else (document_path.parent / file_part).resolve()
+        )
+        try:
+            target_path.relative_to(schema_root)
+        except ValueError as exc:
+            raise SchemaDefinitionError(
+                f"{document_path}: $ref escapes the schema directory"
+            ) from exc
+        reference_key = (target_path, fragment)
+        if reference_key in active:
+            raise SchemaDefinitionError(
+                f"{document_path}: circular $ref {reference!r}"
+            )
+        target = _resolve_pointer(
+            load_document(target_path),
+            fragment,
+            f"{document_path} $ref {reference!r}",
+        )
+        return expand(target, target_path, active | {reference_key})
+
+    expanded = expand(load_document(entry), entry, frozenset({(entry, "")}))
+    if not isinstance(expanded, dict):
+        raise SchemaDefinitionError(f"{entry}: expanded schema must be an object")
+    return copy.deepcopy(expanded)
 
 
 def _schema_path(path: str, key: str) -> str:

@@ -16,6 +16,7 @@ def pr_payload() -> dict[str, object]:
         "state": "OPEN",
         "isDraft": False,
         "headRefOid": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "baseRefOid": base_sha(),
         "mergeStateStatus": "CLEAN",
         "body": "Closes #9",
         "closingIssuesReferences": [{"number": 9}],

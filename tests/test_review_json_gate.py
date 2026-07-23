@@ -16,13 +16,15 @@ CHECKS = ROOT / "checks"
 FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
-from review_json_gate import evaluate_review_gate, validate_exact_git_diff  # noqa: E402
+from evidence_content_binding import build_content_binding_evidence  # noqa: E402
+from review_json_gate import (  # noqa: E402
+    REVIEW_TOP_LEVEL_KEYS,
+    evaluate_review_gate,
+    validate_exact_git_diff,
+)
 from pr_review_contract import evaluate_review_contract  # noqa: E402
 from review_result_semantics import (  # noqa: E402
-    ReviewSemanticError,
     UNGATED_DISCLOSURE_MARKER,
-    evaluate_review_evidence,
-    load_review_manifest,
     validate_review_artifact,
 )
 
@@ -77,6 +79,92 @@ def test_review_json_gate_allows_valid_review() -> None:
     assert result["missing"] == []
     assert "body includes ## Summary" in result["satisfied"]
     assert "body includes ## Verdict" in result["satisfied"]
+
+
+def test_review_json_gate_allows_v1_content_binding_fields(tmp_path: Path) -> None:
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    copyfile(
+        ROOT / "schemas" / "content_binding_evidence.schema.json",
+        schema_dir / "content_binding_evidence.schema.json",
+    )
+    review = load_review("review-valid.json")
+    binding = {
+        "content_binding_version": 1,
+        "snapshot": {
+            "head_sha": review["head_sha"],
+            "base_tree_oid": "b" * 40,
+            "algorithm": "sha256",
+            "normalization": "specrail-v1",
+            "collector": "github_pr_evidence",
+        },
+        "content_hashes": {
+            "code_inputs": "1" * 64,
+            "spec_files": "2" * 64,
+            "pr_metadata": "3" * 64,
+        },
+    }
+    sidecar = build_content_binding_evidence(review["pr"], binding)
+    sidecar_path = tmp_path / "artifacts" / "binding.json"
+    sidecar_path.parent.mkdir()
+    raw = json.dumps(sidecar, sort_keys=True).encode("utf-8")
+    sidecar_path.write_bytes(raw)
+    review.update({
+        "content_binding_version": 1,
+        "covered_categories": ["code_inputs", "spec_files"],
+        "content_bindings": {
+            key: binding["content_hashes"][key]
+            for key in ["code_inputs", "spec_files"]
+        },
+        "content_binding_evidence": {
+            "artifact_id": sidecar["artifact_id"],
+            "path": "artifacts/binding.json",
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        },
+    })
+
+    result = evaluate_review_gate(review, load_diff(), repo=tmp_path)
+
+    assert result["decision"] == "allowed", result["reasons"]
+    assert not any("unknown top-level field" in item for item in result["reasons"])
+
+
+def test_review_json_gate_top_level_keys_match_schema() -> None:
+    schema = json.loads(
+        (ROOT / "schemas" / "review_result.schema.json").read_text(encoding="utf-8")
+    )
+
+    assert REVIEW_TOP_LEVEL_KEYS == set(schema["properties"])
+
+
+def test_review_json_gate_blocks_unknown_top_level_field() -> None:
+    review = load_review("review-valid.json")
+    review["undeclared_field"] = True
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert "unknown top-level field: undeclared_field" in result["reasons"]
+
+
+@pytest.mark.parametrize(
+    ("field", "malformed"),
+    [
+        ("tier_attestation", {}),
+        ("tier_dispute", "false"),
+        ("finding_classifications", [{}]),
+    ],
+)
+def test_review_json_gate_blocks_schema_invalid_tier_evidence(
+    field: str, malformed: object
+) -> None:
+    review = load_review("review-valid.json")
+    review[field] = malformed
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any(field in reason for reason in result["reasons"])
 
 
 def test_review_semantics_blocks_missing_execution_provenance() -> None:
@@ -376,6 +464,74 @@ def test_review_json_gate_blocks_legacy_review_without_v2_terminal_fields() -> N
 
     assert result["decision"] == "blocked"
     assert any("artifact_id" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize("status", ["pending", "failed", "cancelled", "superseded"])
+def test_review_semantics_terminal_lifecycle_blocks_merge_readiness(status: str) -> None:
+    review = load_review("review-valid.json")
+    review["status"] = status
+    if status == "pending":
+        review["review_completed_at"] = None
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is True
+    assert any("status is not completed" in item for item in result["blocking_reasons"])
+
+
+def test_review_semantics_blocks_duplicate_finding_ids() -> None:
+    review = load_review("review-valid.json")
+    review["findings"].append(dict(review["findings"][0]))
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is False
+    assert "findings IDs must be unique" in result["errors"]
+
+
+def test_review_semantics_requires_prior_finding_closure_evidence() -> None:
+    review = load_review("review-valid.json")
+    review["prior_findings"] = [
+        {
+            "id": "finding-old",
+            "source_head_sha": "b" * 40,
+            "summary": "Old blocking finding.",
+            "status": "resolved",
+        }
+    ]
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is False
+    assert any("closure_evidence" in item for item in result["errors"])
+
+
+def test_review_semantics_blocks_unresolved_prior_finding() -> None:
+    review = load_review("review-valid.json")
+    review["prior_findings"] = [
+        {
+            "id": "finding-old",
+            "source_head_sha": "b" * 40,
+            "summary": "Old blocking finding.",
+            "status": "unresolved",
+        }
+    ]
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is True
+    assert any("unresolved prior finding" in item for item in result["blocking_reasons"])
+
+
+def test_review_semantics_requires_self_review_human_final_gate() -> None:
+    review = load_review("review-valid.json")
+    review["review_source"] = "self_review"
+    review["human_final_review_required"] = False
+
+    result = validate_review_artifact(review)
+
+    assert result["valid"] is False
+    assert "self_review requires human_final_review_required=true" in result["errors"]
 
 
 def test_review_json_gate_rejection_items_cover_missing_and_reasons() -> None:

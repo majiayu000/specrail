@@ -8,11 +8,11 @@ failures, session budgets, tranche spec/impl mix, and goal candidates.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from evidence_content_binding import CONTENT_BINDING_VERSION
 from runtime_budget_dimensions import (
     HARD_BUDGET_DIMENSIONS,
     _nonneg_int,
@@ -20,9 +20,8 @@ from runtime_budget_dimensions import (
     judge_dimension,
     judge_hard_dimensions,
 )
-from review_result_semantics import validate_review_artifact
+from schema_validation import SpecRailError, load_json_schema, validate_instance
 from session_telemetry import parse_timestamp
-from specrail_lib import SpecRailError, validate_instance
 
 
 REVIEW_SOURCES = {"independent_lane", "self_review"}
@@ -38,70 +37,50 @@ BUDGET_BASES_V3 = BUDGET_BASES | {"runtime_dims"}
 BUDGET_STOP_REASONS = {"budget_exhausted", "queue_empty", "user_interrupt", "blocked"}
 TELEMETRY_SOURCES = {"runtime", "session_log", "unavailable"}
 TRUSTED_TELEMETRY_SOURCES = {"runtime", "session_log"}
-
-_REVIEW_RESULT_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[1] / "schemas" / "review_result.schema.json"
+RUNTIME_V1_ITEM_FIELDS = frozenset(
+    {
+        "approved_spec_evidence",
+        "authorization_tier",
+        "blocked_reason",
+        "blocker",
+        "branch",
+        "ci",
+        "ci_tier_check",
+        "content_binding_version",
+        "content_hashes",
+        "enforcement_sensitive",
+        "head_sha",
+        "issue",
+        "lane_failures",
+        "local_verification",
+        "merge_authorization",
+        "merge_state",
+        "next_action",
+        "pr",
+        "pr_gate",
+        "pr_kind",
+        "pr_tier",
+        "pr_tier_evidence",
+        "post_authorization_findings",
+        "re_authorization",
+        "reused_components",
+        "review",
+        "review_source",
+        "review_threads",
+        "self_review_authorization",
+        "sensitive_route",
+        "snapshot",
+        "spec_approval_evidence",
+        "spec_status",
+        "spec_status_reason",
+        "state",
+        "truth_level",
+        "worktree",
+    }
 )
-_review_result_schema_cache: dict[str, Any] | None = None
-
-
-def _review_result_schema() -> dict[str, Any]:
-    global _review_result_schema_cache
-    if _review_result_schema_cache is None:
-        _review_result_schema_cache = json.loads(
-            _REVIEW_RESULT_SCHEMA_PATH.read_text(encoding="utf-8")
-        )
-    return _review_result_schema_cache
-
-
-def _load_review_artifact_payload(
-    raw_item: dict[str, Any],
-    label: str,
-    errors: list[str],
-    *,
-    required: bool = False,
-) -> dict[str, Any] | None:
-    review = raw_item.get("review")
-    reference = review.get("evidence") if isinstance(review, dict) else None
-    if (
-        not isinstance(reference, str)
-        or not reference.strip()
-        or reference.startswith(("https://", "http://"))
-    ):
-        if required:
-            errors.append(
-                f"{label}: review.evidence must be a local machine-readable artifact path"
-            )
-        return None
-    path = Path(reference).expanduser()
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        if required:
-            errors.append(f"{label}: cannot load review artifact {path}: {exc}")
-        return None
-    if not isinstance(payload, dict):
-        if required:
-            errors.append(f"{label}: review artifact JSON must be an object: {path}")
-        return None
-    try:
-        validate_instance(_review_result_schema(), payload, f"{label}: review artifact")
-    except SpecRailError as exc:
-        errors.append(str(exc))
-        return None
-    semantic = validate_review_artifact(
-        payload,
-        expected_pr=raw_item.get("pr"),
-        expected_head_sha=raw_item.get("head_sha"),
-        expected_lane=review.get("reviewer_lane"),
-    )
-    semantic_errors = [*semantic["errors"], *semantic["blocking_reasons"]]
-    if semantic_errors:
-        errors.extend(
-            f"{label}: review artifact: {message}" for message in semantic_errors
-        )
-    return payload
-
+RUNTIME_CONTENT_BINDING_MARKERS = frozenset(
+    {"content_binding_version", "snapshot", "content_hashes", "reused_components"}
+)
 
 def _require_positive_int(
     data: dict[str, Any],
@@ -142,6 +121,58 @@ def _item_review_source(raw_item: dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _validate_runtime_content_binding(
+    item: dict[str, Any], label: str, errors: list[str]
+) -> None:
+    """Close v1 runtime items and validate reuse-audit category mappings."""
+    if not RUNTIME_CONTENT_BINDING_MARKERS.intersection(item):
+        return
+    version = item.get("content_binding_version")
+    if (
+        "content_binding_version" in item
+        and (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != CONTENT_BINDING_VERSION
+        )
+    ):
+        errors.append(f"{label}: content_binding_version must be integer 1")
+    for key in sorted(set(item) - RUNTIME_V1_ITEM_FIELDS):
+        errors.append(f"{label}: unknown v1 runtime item field {key!r}")
+    try:
+        checkpoint_schema = load_json_schema(
+            Path(__file__).resolve().parents[1]
+            / "schemas"
+            / "runtime_checkpoint.schema.json"
+        )
+        item_schema = checkpoint_schema["properties"]["items"]["items"]
+        validate_instance(item_schema, item, label)
+    except (KeyError, TypeError, SpecRailError) as exc:
+        errors.append(f"{label}: runtime v1 schema validation failed: {exc}")
+    audits = item.get("reused_components")
+    if not isinstance(audits, list):
+        return
+    for index, audit in enumerate(audits, start=1):
+        if not isinstance(audit, dict):
+            continue
+        covered = audit.get("covered_categories")
+        if not isinstance(covered, list):
+            continue
+        if len(set(map(str, covered))) != len(covered):
+            errors.append(f"{label}: reused_components[{index}] coverage has duplicates")
+        try:
+            expected = set(covered)
+        except TypeError:
+            errors.append(f"{label}: reused_components[{index}] coverage must be strings")
+            continue
+        for field in ["original_content_bindings", "current_content_bindings"]:
+            bindings = audit.get(field)
+            if isinstance(bindings, dict) and set(bindings) != expected:
+                errors.append(
+                    f"{label}: reused_components[{index}].{field} keys must equal coverage"
+                )
 
 
 def _validate_lane_failures(
@@ -282,13 +313,14 @@ def _validate_terminal_review_summary(
     expected_pr: Any,
     head_sha: Any,
     review_source: Any,
+    allow_component_reuse: bool,
     label: str,
     errors: list[str],
 ) -> None:
     for key in ["manifest", "artifact_id", "head_sha", "review_completed_at"]:
         if not _nonempty_string(review.get(key)):
             errors.append(f"{label}: terminal review requires review.{key}")
-    if review.get("head_sha") != head_sha:
+    if review.get("head_sha") != head_sha and not allow_component_reuse:
         errors.append(f"{label}: terminal review head_sha must match item head_sha")
     execution = review.get("review_execution")
     if execution not in REVIEW_EXECUTIONS:

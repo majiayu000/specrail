@@ -18,7 +18,6 @@ from typing import Any
 from pr_gate import evaluate_pr_gate
 from runtime_gate_rules import (
     REVIEW_SOURCES,
-    _load_review_artifact_payload,
     _require_nonempty_string,
     _require_positive_int,
     _validate_budget,
@@ -27,7 +26,9 @@ from runtime_gate_rules import (
     _validate_self_review_authorization,
     _validate_terminal_review_summary,
     _validate_tranche_mix,
+    _validate_runtime_content_binding,
 )
+from runtime_review_evidence import load_review_artifact_payload
 from runtime_tier_authorization import (
     _tier_authorization_declared,
     _validate_post_authorization_findings,
@@ -214,6 +215,19 @@ def _validate_pr_gate_artifact(
     item_head = raw_item.get("head_sha")
     if item_head and result.get("head_sha") and result.get("head_sha") != item_head:
         errors.append(f"{label}: pr_gate evidence head_sha must match item head_sha")
+    binding_keys = [
+        "content_binding_version", "snapshot", "content_hashes", "reused_components"
+    ]
+    result_has_binding = (
+        result.get("content_binding_version") == 1
+        or any(result.get(key) is not None for key in binding_keys[1:])
+    )
+    if result_has_binding or any(key in raw_item for key in binding_keys):
+        for key in binding_keys:
+            if key not in raw_item or raw_item.get(key) != result.get(key):
+                errors.append(
+                    f"{label}: runtime item must copy current pr_gate {key} exactly"
+                )
     if raw_item.get("enforcement_sensitive") is True and result.get(
         "enforcement_sensitive"
     ) is not True:
@@ -228,13 +242,14 @@ def _validate_item_tier_authorization(
     raw_item: dict[str, Any],
     label: str,
     errors: list[str],
+    repo: Path | None = None,
 ) -> None:
     tier_declared = _tier_authorization_declared(raw_item)
     findings_declared = raw_item.get("post_authorization_findings") is not None
     if not tier_declared and not findings_declared:
         return
 
-    review_artifact = _load_review_artifact_payload(raw_item, label, errors)
+    review_artifact = load_review_artifact_payload(raw_item, label, errors, repo=repo)
 
     if tier_declared:
         ci_tier_check = raw_item.get("ci_tier_check")
@@ -552,6 +567,7 @@ def evaluate_checkpoint(
             errors.append(f"{label}: state is required")
         if not raw_item.get("next_action"):
             errors.append(f"{label}: next_action is required")
+        _validate_runtime_content_binding(raw_item, label, errors)
         _validate_enforcement_sensitive(raw_item, label, errors)
         validate_runtime_sensitive_route(
             raw_item,
@@ -644,8 +660,8 @@ def evaluate_checkpoint(
                     errors,
                     auth_mode=str(data.get("auth_mode") or ""),
                 )
-            review_artifact = _load_review_artifact_payload(
-                raw_item, label, errors, required=True
+            review_artifact = load_review_artifact_payload(
+                raw_item, label, errors, repo=repo, required=True
             )
             _validate_terminal_review_summary(
                 review,
@@ -653,6 +669,11 @@ def evaluate_checkpoint(
                 expected_pr=raw_item.get("pr"),
                 head_sha=head_sha,
                 review_source=review_source,
+                allow_component_reuse=(
+                    raw_item.get("content_binding_version") == 1
+                    and isinstance(review_artifact, dict)
+                    and review_artifact.get("content_binding_version") == 1
+                ),
                 label=label,
                 errors=errors,
             )
@@ -716,7 +737,7 @@ def evaluate_checkpoint(
                             f"{label}: merge_authorization.{key} must be a non-empty string"
                         )
 
-            _validate_item_tier_authorization(data, raw_item, label, errors)
+            _validate_item_tier_authorization(data, raw_item, label, errors, repo)
 
         blocker = raw_item.get("blocker")
         if blocker and state in {"complete", "merged"}:

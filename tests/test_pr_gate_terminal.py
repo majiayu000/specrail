@@ -7,9 +7,22 @@ from copy import deepcopy
 from pathlib import Path
 from shutil import copyfile
 
-from pr_gate_test_support import ROOT, clean_evidence, evaluate_pr_gate, fixture
-from pr_review_contract import evaluate_review_contract
+from pr_gate_test_support import (
+    ROOT,
+    clean_evidence,
+    evaluate_pr_gate,
+    fixture,
+    sensitive_evidence,
+    v1_reuse_evidence,
+    write_review_evidence as _write_review_evidence,
+)
+from evidence_content_binding import build_content_binding_evidence
+from pr_review_contract import (
+    _verified_reviewer_resolver,
+    evaluate_review_contract,
+)
 from review_result_semantics import load_review_manifest
+from specrail_lib import load_pack
 
 
 def _git(repo: Path, *args: str) -> bytes:
@@ -250,6 +263,142 @@ def test_pr_gate_blocks_review_source_without_terminal_manifest_evidence() -> No
     assert any("review_source alone" in reason for reason in result["reasons"])
 
 
+def test_pr_gate_allows_current_wrapper_with_coverage_matched_prior_review(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "allowed", result["reasons"]
+    assert result["head_sha"] == evidence["head_sha"]
+    assert result["reused_components"] == evidence["reused_components"]
+
+
+def test_pr_gate_allows_sensitive_previous_head_review_sidecar(tmp_path: Path) -> None:
+    evidence, repo, config = sensitive_evidence(tmp_path)
+    evidence = v1_reuse_evidence(repo, evidence)
+
+    result = evaluate_pr_gate(evidence, repo=repo, config=config)
+
+    assert result["decision"] == "allowed", result["reasons"]
+    assert result["enforcement_sensitive"] is True
+    assert "terminal review evidence has no blocking findings" in result["satisfied"]
+
+
+def test_pr_gate_blocks_forged_trusted_ci_coverage_reduction(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    check = evidence["checks"][0]
+    check["covered_categories"] = ["code_inputs"]
+    check["content_bindings"] = {
+        "code_inputs": evidence["content_hashes"]["code_inputs"],
+    }
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "trusted CI coverage" in reason and "workflow-check" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_pr_gate_blocks_v1_ci_check_without_repo_owned_mapping(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    evidence["checks"][0]["name"] = "untrusted-check"
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "no valid trusted CI coverage mapping" in reason
+        and "untrusted-check" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_pr_gate_blocks_v1_current_component_without_head_sha(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    del evidence["checks"][0]["head_sha"]
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "v1 CI check head_sha must be non-empty" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_pr_gate_blocks_prior_review_when_spec_binding_changes(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    evidence["content_hashes"]["spec_files"] = "f" * 64
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any("covered content bindings do not match" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_blocks_missing_or_incomplete_reuse_audit(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    del evidence["reused_components"][0]["collector_provenance"]
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any("collector_provenance is invalid" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_rejects_old_gate_decision_as_reusable_component(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    evidence["reused_components"].append({
+        **evidence["reused_components"][0],
+        "artifact_id": "old-pr-gate-decision",
+    })
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any("unknown artifacts: old-pr-gate-decision" in reason for reason in result["reasons"])
+
+
+def test_pr_gate_ignores_unselected_historical_review_component(tmp_path: Path) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    historical = dict(evidence["review_evidence"]["artifacts"][0])
+    historical.update({
+        "artifact_id": "historical-review",
+        "head_sha": "c" * 40,
+        "content_bindings": {
+            "code_inputs": "f" * 64,
+            "spec_files": "f" * 64,
+        },
+    })
+    sidecar = build_content_binding_evidence(evidence["pr"], {
+        "content_binding_version": 1,
+        "snapshot": {**evidence["snapshot"], "head_sha": "c" * 40},
+        "content_hashes": {
+            **evidence["content_hashes"],
+            "code_inputs": "f" * 64,
+            "spec_files": "f" * 64,
+        },
+    }, artifact_id="historical-sidecar")
+    sidecar_path = tmp_path / "artifacts/content-bindings/historical.json"
+    raw = json.dumps(sidecar, sort_keys=True).encode("utf-8")
+    sidecar_path.write_bytes(raw)
+    historical["content_binding_evidence"] = {
+        "artifact_id": sidecar["artifact_id"],
+        "path": sidecar_path.relative_to(tmp_path).as_posix(),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    _write_review_evidence(
+        tmp_path, evidence,
+        [evidence["review_evidence"]["artifacts"][0], historical],
+    )
+
+    result = evaluate_pr_gate(evidence, repo=tmp_path, config=load_pack(ROOT))
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
 def test_pr_gate_blocks_review_completed_after_gate_started() -> None:
     evidence = clean_evidence()
     evidence["review_completed_at"] = "2026-07-04T00:00:01Z"
@@ -337,6 +486,37 @@ def test_pr_gate_allows_successor_resolver_with_current_head_rereview() -> None:
     result = evaluate_pr_gate(evidence)
 
     assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_successor_resolver_accepts_validated_reusable_previous_head_review(
+    tmp_path: Path,
+) -> None:
+    evidence = v1_reuse_evidence(tmp_path)
+    review_evidence = evidence["review_evidence"]
+    successor = review_evidence["artifacts"][0]
+    successor.update({
+        "reviewer_lane": "reviewer-successor",
+        "producer_identity": "reviewer-2",
+    })
+    review_evidence["lane_roster"].append({
+        "lane_id": "reviewer-successor",
+        "producer_identity": "reviewer-2",
+        "successor_of": "merge-reviewer-2",
+    })
+    thread = evidence["review_threads"][0]
+    thread.update({
+        "resolved_by": "reviewer-2",
+        "resolver_role": "reviewer_lane",
+        "original_author": "reviewer-1",
+        "original_comment_id": "PRRC_fixture-root",
+        "lane_id": "reviewer-successor",
+        "successor_of": "merge-reviewer-2",
+        "re_review_artifact_id": successor["artifact_id"],
+    })
+
+    assert successor["head_sha"] != review_evidence["head_sha"]
+    assert successor["artifact_id"] in review_evidence["current_artifact_ids"]
+    assert _verified_reviewer_resolver(thread, review_evidence)
 
 
 def test_pr_gate_blocks_successor_with_mismatched_trusted_lineage() -> None:

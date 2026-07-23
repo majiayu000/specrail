@@ -20,11 +20,14 @@ from rejection_items import (
     item_from_reason,
     items_from_legacy,
 )
+from github_evidence_common import EvidenceError
+from review_content_binding import load_review_content_binding
 from review_result_semantics import (
     REVIEW_VERDICTS,
     validate_review_artifact,
     validate_degraded_review_provenance,
 )
+from schema_validation import SpecRailError, load_json_schema, validate_instance
 
 
 VERDICTS = REVIEW_VERDICTS
@@ -34,6 +37,41 @@ SPEC_ALIGNMENT_STATUSES = {"matched", "drift", "not_applicable"}
 REVIEW_MODES = {"full", "resumed", "diff_only"}
 PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
 FULL_REVIEW_ROUND_CAP = 2
+REVIEW_TOP_LEVEL_KEYS = {
+    "artifact_id",
+    "base_head_sha",
+    "body",
+    "comments",
+    "content_binding_evidence",
+    "content_binding_version",
+    "content_bindings",
+    "covered_categories",
+    "finding_classifications",
+    "findings",
+    "gate_authorization",
+    "gate_status",
+    "head_sha",
+    "human_final_review_required",
+    "human_full_review_request",
+    "pr",
+    "prior_findings",
+    "producer_identity",
+    "review_completed_at",
+    "review_execution",
+    "review_mode",
+    "round_policy_version",
+    "diff_sha256",
+    "round_cap_escalation",
+    "review_round",
+    "review_source",
+    "review_started_at",
+    "reviewer_lane",
+    "spec_alignment",
+    "status",
+    "tier_attestation",
+    "tier_dispute",
+    "verdict",
+}
 FORBIDDEN_FINAL_AUTHORITY = {
     "approved for merge": re.compile(r"\bapproved\s+for\s+merge\b", re.IGNORECASE),
     "I approve this PR": re.compile(r"\bi\s+approve\s+this\s+pr\b", re.IGNORECASE),
@@ -83,13 +121,6 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("review JSON must be an object")
     return data
-
-
-def _load_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ValueError(f"cannot read diff file {path}: {exc}") from exc
 
 
 def _load_bytes(path: Path) -> bytes:
@@ -182,36 +213,7 @@ def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], l
     satisfied: list[str] = []
     missing: list[str] = []
     reasons: list[str] = []
-    allowed_keys = {
-        "verdict",
-        "artifact_id",
-        "reviewer_lane",
-        "producer_identity",
-        "review_source",
-        "review_execution",
-        "review_started_at",
-        "review_completed_at",
-        "status",
-        "human_final_review_required",
-        "findings",
-        "body",
-        "comments",
-        "spec_alignment",
-        "pr",
-        "head_sha",
-        "review_round",
-        "review_mode",
-        "base_head_sha",
-        "round_policy_version",
-        "diff_sha256",
-        "round_cap_escalation",
-        "human_full_review_request",
-        "prior_findings",
-        "gate_status",
-        "gate_authorization",
-    }
-
-    for key in sorted(set(review) - allowed_keys):
+    for key in sorted(set(review) - REVIEW_TOP_LEVEL_KEYS):
         reasons.append(f"unknown top-level field: {key}")
 
     degraded_satisfied, degraded_reasons = validate_degraded_review_provenance(review)
@@ -635,11 +637,27 @@ def evaluate_review_gate(
     satisfied: list[str] = []
     missing: list[str] = []
 
+    try:
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "review_result.schema.json"
+        validate_instance(load_json_schema(schema_path), review, "review_result")
+    except SpecRailError as exc:
+        reasons.append(f"review_result schema validation failed: {exc}")
     top_satisfied, top_missing, top_reasons = _validate_top_level(review)
     satisfied.extend(top_satisfied)
     missing.extend(top_missing)
     reasons.extend(top_reasons)
-    semantic_result = validate_review_artifact(review)
+    original_binding = None
+    if review.get("content_binding_version") == 1:
+        if repo is None:
+            reasons.append("v1 review artifact sidecar validation requires repository root")
+        else:
+            try:
+                original_binding = load_review_content_binding(repo, review)
+            except EvidenceError as exc:
+                reasons.append(f"review artifact sidecar: {exc}")
+    semantic_result = validate_review_artifact(
+        review, original_binding=original_binding
+    )
     reasons.extend(semantic_result["errors"])
     reasons.extend(
         item

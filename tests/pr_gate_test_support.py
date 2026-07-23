@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -13,12 +14,128 @@ FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
 from pr_gate import evaluate_pr_gate  # noqa: E402
+from evidence_content_binding import build_content_binding_evidence  # noqa: E402
+from review_result_semantics import load_review_manifest  # noqa: E402
 from sensitive_enforcement import build_approved_spec_evidence  # noqa: E402
 from specrail_lib import load_pack  # noqa: E402
 
 
 def clean_evidence() -> dict[str, object]:
     return fixture("pr-clean-authorized.json")
+
+
+def write_review_evidence(
+    repo: Path, evidence: dict[str, object], artifacts: list[dict[str, object]],
+) -> None:
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir(exist_ok=True)
+    for name in ["review_result.schema.json", "content_binding_evidence.schema.json"]:
+        copyfile(ROOT / "schemas" / name, schema_dir / name)
+    review_dir = repo / "artifacts/reviews"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for index, artifact in enumerate(artifacts, start=1):
+        path = review_dir / f"review-{index}.json"
+        stored = {
+            key: value for key, value in artifact.items() if key != "artifact_path"
+        }
+        path.write_text(json.dumps(stored), encoding="utf-8")
+        paths.append(path.relative_to(repo).as_posix())
+    manifest = {
+        "version": 1,
+        "pr": evidence["pr"],
+        "head_sha": evidence["head_sha"],
+        "human_final_review_required": False,
+        "lanes": [{
+            "lane_id": artifacts[0]["reviewer_lane"],
+            "producer_identity": artifacts[0]["producer_identity"],
+            "artifact_paths": paths,
+        }],
+    }
+    manifest_path = review_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    evidence["review_evidence"] = load_review_manifest(
+        repo,
+        manifest_path.relative_to(repo).as_posix(),
+        expected_pr=evidence["pr"],
+        expected_head_sha=evidence["head_sha"],
+        current_binding={
+            key: evidence[key]
+            for key in ["content_binding_version", "snapshot", "content_hashes"]
+        },
+    )
+
+
+def v1_reuse_evidence(
+    repo: Path, evidence: dict[str, object] | None = None,
+) -> dict[str, object]:
+    evidence = clean_evidence() if evidence is None else evidence
+    current_head = evidence["head_sha"]
+    prior_head = "b" * 40
+    hashes = {
+        "code_inputs": "1" * 64,
+        "spec_files": "2" * 64,
+        "pr_metadata": "3" * 64,
+    }
+    snapshot = {
+        "head_sha": current_head,
+        "base_tree_oid": "d" * 40,
+        "algorithm": "sha256",
+        "normalization": "specrail-v1",
+        "collector": "github_pr_evidence",
+    }
+    evidence.update({
+        "content_binding_version": 1,
+        "snapshot": snapshot,
+        "content_hashes": hashes,
+    })
+    check = evidence["checks"][0]
+    check.update({
+        "name": "workflow-check",
+        "artifact_id": "ci-current",
+        "head_sha": current_head,
+        "content_binding_version": 1,
+        "covered_categories": ["code_inputs", "spec_files"],
+        "content_bindings": {
+            key: hashes[key] for key in ["code_inputs", "spec_files"]
+        },
+    })
+    artifact = evidence["review_evidence"]["artifacts"][0]
+    artifact.update({
+        "head_sha": prior_head,
+        "content_binding_version": 1,
+        "covered_categories": ["code_inputs", "spec_files"],
+        "content_bindings": {
+            key: hashes[key] for key in ["code_inputs", "spec_files"]
+        },
+    })
+    sidecar = build_content_binding_evidence(evidence["pr"], {
+        "content_binding_version": 1,
+        "snapshot": {**snapshot, "head_sha": prior_head},
+        "content_hashes": dict(hashes),
+    })
+    sidecar_path = repo / "artifacts/content-bindings/prior-review.json"
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(sidecar, sort_keys=True).encode("utf-8")
+    sidecar_path.write_bytes(raw)
+    artifact["content_binding_evidence"] = {
+        "artifact_id": sidecar["artifact_id"],
+        "path": sidecar_path.relative_to(repo).as_posix(),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    evidence["reused_components"] = [{
+        "artifact_id": artifact["artifact_id"],
+        "original_head_sha": prior_head,
+        "covered_categories": ["code_inputs", "spec_files"],
+        "original_content_bindings": dict(artifact["content_bindings"]),
+        "current_content_bindings": {
+            key: hashes[key] for key in ["code_inputs", "spec_files"]
+        },
+        "collector_provenance": snapshot,
+        "reason": "all covered categories match the current snapshot",
+    }]
+    write_review_evidence(repo, evidence, [artifact])
+    return evidence
 
 
 def sensitive_evidence(tmp_path: Path) -> tuple[dict[str, object], Path, object]:

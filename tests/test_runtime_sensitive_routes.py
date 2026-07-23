@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "checks"))
 from route_gate_test_support import write_sensitive_pack  # noqa: E402
 from runtime_ledger_gate import evaluate_checkpoint  # noqa: E402
 from runtime_ledger_test_support import clean_checkpoint  # noqa: E402
+from schema_validation import load_json_schema  # noqa: E402
 from runtime_sensitive_routes import validate_runtime_sensitive_route  # noqa: E402
 from spec_revision_evidence import spec_artifacts_sha256  # noqa: E402
 from specrail_lib import InstanceMismatch, load_pack, validate_instance  # noqa: E402
@@ -85,11 +86,7 @@ def _revision_checkpoint(tmp_path: Path) -> tuple[dict[str, object], Path, Path]
 
 
 def _schema() -> dict[str, object]:
-    return json.loads(
-        (ROOT / "schemas" / "runtime_checkpoint.schema.json").read_text(
-            encoding="utf-8"
-        )
-    )
+    return load_json_schema(ROOT / "schemas" / "runtime_checkpoint.schema.json")
 
 
 def test_spec_revision_runtime_item_revalidates_exact_head_approval(

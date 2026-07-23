@@ -5,22 +5,28 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from schema_validation import SchemaDefinitionError, load_json_schema
 from sensitive_enforcement import parse_planned_changes_manifest
 from specrail_lib import SpecRailError
 
 
+MAX_SCHEMA_LINES = 800
 SPEC_SCHEMA_FILES = frozenset(
     {
         "adoption_matrix.schema.json",
         "closure_audit_result.schema.json",
+        "content_binding_evidence.schema.json",
         "duplicate_work_evidence.schema.json",
         "evaluation_result.schema.json",
         "flow_manifest.schema.json",
         "issue_evidence.schema.json",
         "issue_triage.schema.json",
         "pr_review_gate.schema.json",
+        "pr_review_authorizations.schema.json",
         "review_result.schema.json",
         "runtime_checkpoint.schema.json",
+        "runtime_tier_authorization.schema.json",
+        "runtime_thread_dispatch_gate.schema.json",
         "spec_packet.schema.json",
         "task_plan.schema.json",
         "workflow_run.schema.json",
@@ -106,6 +112,12 @@ def validate_json_schemas(repo: Path) -> list[str]:
         raw_schema = _read_asset_text(path, repo, errors)
         if raw_schema is None:
             continue
+        line_count = len(raw_schema.splitlines())
+        if line_count > MAX_SCHEMA_LINES:
+            errors.append(
+                f"schemas/{name}: {line_count} lines exceeds "
+                f"{MAX_SCHEMA_LINES}-line hard limit"
+            )
         try:
             data = json.loads(raw_schema)
         except json.JSONDecodeError as exc:
@@ -120,4 +132,8 @@ def validate_json_schemas(repo: Path) -> list[str]:
             errors.append(f"schemas/{name}: missing title")
         if data.get("type") != "object":
             errors.append(f"schemas/{name}: top-level type must be object")
+        try:
+            load_json_schema(path)
+        except SchemaDefinitionError as exc:
+            errors.append(f"schemas/{name}: unusable schema references: {exc}")
     return errors

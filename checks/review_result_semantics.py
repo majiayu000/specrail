@@ -9,6 +9,14 @@ from pathlib import Path
 import re
 from typing import Any
 
+from github_evidence_common import EvidenceError
+from review_content_binding import (
+    artifact_binding_errors,
+    evaluate_review_evidence,
+    load_review_content_binding,
+    load_review_json as _load_manifest_json,
+)
+from review_round_semantics import validate_bounded_rounds
 from schema_validation import validate_instance
 from specrail_lib import SpecRailError, resolve_path, resolve_repo_path
 
@@ -22,8 +30,6 @@ REVIEW_EXECUTIONS = {"hosted", "local"}
 FINDING_SEVERITIES = {"critical", "important", "suggestion", "nit"}
 PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
 REVIEW_MODES = {"full", "resumed", "diff_only"}
-ROUND_POLICY = "bounded_diff_v1"
-ROUND_CAP = 3
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DIFF_SHA_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 GATE_STATUSES = {"gated", "unavailable"}
@@ -256,6 +262,9 @@ def validate_review_artifact(
     expected_head_sha: str | None = None,
     expected_lane: str | None = None,
     expected_producer: str | None = None,
+    current_binding: dict[str, Any] | None = None,
+    original_binding: dict[str, Any] | None = None,
+    enforcement_sensitive: bool = False,
 ) -> dict[str, Any]:
     """Validate one v2 artifact without deciding final merge authority."""
 
@@ -283,8 +292,15 @@ def validate_review_artifact(
         errors.append("pr must be a positive integer")
     if expected_pr is not None and artifact.get("pr") != expected_pr:
         errors.append(f"pr must match manifest PR {expected_pr}")
-    if expected_head_sha is not None and artifact.get("head_sha") != expected_head_sha:
-        errors.append("head_sha must match the expected final head")
+    errors.extend(
+        artifact_binding_errors(
+            artifact,
+            expected_head_sha=expected_head_sha,
+            current_binding=current_binding,
+            original_binding=original_binding,
+            enforcement_sensitive=enforcement_sensitive,
+        )
+    )
     if expected_lane is not None and artifact.get("reviewer_lane") != expected_lane:
         errors.append("reviewer_lane must match its manifest lane")
     if expected_producer is not None and artifact.get("producer_identity") != expected_producer:
@@ -405,142 +421,14 @@ def validate_review_artifact(
     }
 
 
-def _load_manifest_json(repo: Path, raw_path: str, label: str) -> tuple[Path, dict[str, Any]]:
-    try:
-        path = resolve_repo_path(repo, raw_path, label=label)
-    except SpecRailError as exc:
-        raise ReviewSemanticError(
-            f"{label} must use repo-relative POSIX paths within the repository: {exc}"
-        ) from exc
-    if not path.is_file():
-        raise ReviewSemanticError(f"{label} is missing: {raw_path}")
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise ReviewSemanticError(f"cannot read {label} {raw_path}: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise ReviewSemanticError(f"{label} is not valid JSON: {exc.msg}") from exc
-    if not isinstance(data, dict):
-        raise ReviewSemanticError(f"{label} must contain a JSON object")
-    return path, data
-
-
-def _bounded_round_semantics(
-    manifest: dict[str, Any], artifacts: list[dict[str, Any]], errors: list[str]
-) -> dict[str, Any] | None:
-    policy, rounds = manifest.get("round_policy"), manifest.get("rounds")
-    if policy != {"name": ROUND_POLICY, "cap": ROUND_CAP}:
-        errors.append("review manifest v2 round_policy must be bounded_diff_v1 with cap 3")
-    if not isinstance(rounds, list) or not rounds:
-        errors.append("review manifest v2 rounds must be a non-empty list")
-        return None
-    fields = {
-        "artifact_id", "review_round", "review_mode", "base_head_sha",
-        "head_sha", "diff_sha256", "escalation_authorization_id",
-    }
-    by_id = {item.get("artifact_id"): item for item in artifacts if _nonempty(item.get("artifact_id"))}
-    if len(rounds) != len(artifacts):
-        errors.append("review manifest v2 rounds must cover every loaded artifact exactly once")
-    all_ids, seen_ids, seen_heads = set(by_id), set(), set()
-    unresolved: set[tuple[str, str]] = set()
-    definitions: set[tuple[str, str]] = set()
-    audit_rounds: list[dict[str, Any]] = []
-    for index, declared in enumerate(rounds, start=1):
-        label = f"review manifest rounds[{index - 1}]"
-        if not isinstance(declared, dict) or set(declared) != fields:
-            errors.append(f"{label} must contain exactly the bounded round fields")
-            continue
-        artifact_id = declared.get("artifact_id")
-        artifact = by_id.get(artifact_id)
-        if artifact is None:
-            errors.append(f"{label}.artifact_id does not reference a loaded artifact")
-            continue
-        if artifact.get("round_policy_version") != 1:
-            errors.append(f"{label} artifact round_policy_version must be 1")
-        if artifact_id in seen_ids:
-            errors.append(f"duplicate bounded review artifact: {artifact_id}")
-        seen_ids.add(artifact_id)
-        escalation = artifact.get("round_cap_escalation")
-        authorization_id = escalation.get("authorization_id") if isinstance(escalation, dict) else None
-        derived = {
-            "artifact_id": artifact_id,
-            "review_round": artifact.get("review_round"),
-            "review_mode": artifact.get("review_mode"),
-            "base_head_sha": artifact.get("base_head_sha"),
-            "head_sha": artifact.get("head_sha"),
-            "diff_sha256": artifact.get("diff_sha256"),
-            "escalation_authorization_id": authorization_id,
-        }
-        if declared != derived:
-            errors.append(f"{label} does not match its loaded artifact")
-        if derived["review_round"] != index:
-            errors.append(f"bounded review rounds must be exactly 1..N; expected {index}")
-        if index >= 2 and derived["review_mode"] not in {"resumed", "diff_only"}:
-            errors.append(f"bounded review round {index} must be resumed or diff_only")
-        if index == 1 and (derived["base_head_sha"] is not None or derived["diff_sha256"] is not None):
-            errors.append("bounded review round 1 base_head_sha and diff_sha256 must be null")
-        if index >= 2 and (
-            not audit_rounds or derived["base_head_sha"] != audit_rounds[-1]["head_sha"]
-        ):
-            errors.append(f"bounded review round {index} base_head_sha must equal prior round head_sha")
-        if derived["head_sha"] in seen_heads:
-            errors.append(f"bounded review head_sha must be unique: {derived['head_sha']}")
-        seen_heads.add(derived["head_sha"])
-
-        prior = artifact.get("prior_findings") if isinstance(artifact.get("prior_findings"), list) else []
-        prior_map: dict[tuple[str, str], dict[str, Any]] = {}
-        for item in prior:
-            if not isinstance(item, dict):
-                continue
-            key = (str(item.get("source_artifact_id", "")), str(item.get("finding_id", "")))
-            if key in prior_map:
-                errors.append(f"duplicate compact prior finding key: {key[0]}/{key[1]}")
-            prior_map[key] = item
-            if key not in definitions:
-                errors.append(f"compact prior finding has no source definition: {key[0]}/{key[1]}")
-            pointer = item.get("evidence_pointer")
-            if isinstance(pointer, dict) and pointer.get("kind") == "artifact" and pointer.get("value") not in all_ids:
-                errors.append(f"compact prior finding references unknown evidence artifact: {pointer.get('value')}")
-        for key in sorted(unresolved - set(prior_map)):
-            errors.append(f"missing compact prior finding carry-forward: {key[0]}/{key[1]}")
-        for key in sorted(set(prior_map) - unresolved):
-            errors.append(f"compact prior finding is not currently unresolved: {key[0]}/{key[1]}")
-        still_unresolved = {key for key, item in prior_map.items() if item.get("status") == "unresolved"}
-        current_keys: set[tuple[str, str]] = set()
-        actionable: set[tuple[str, str]] = set()
-        for finding in artifact.get("findings", []):
-            if isinstance(finding, dict) and _nonempty(finding.get("id")):
-                key = (str(artifact_id), str(finding["id"]))
-                current_keys.add(key)
-                if finding.get("severity") in {"critical", "important"} or finding.get("actionable") is True:
-                    actionable.add(key)
-        definitions.update(current_keys)
-        expected_escalation = still_unresolved | actionable
-        if index <= ROUND_CAP and escalation is not None:
-            errors.append(f"bounded review round {index} must not declare round_cap_escalation")
-        if index > ROUND_CAP:
-            supplied = escalation.get("unresolved_findings") if isinstance(escalation, dict) else None
-            supplied_keys = {
-                (str(item.get("source_artifact_id", "")), str(item.get("finding_id", "")))
-                for item in supplied or [] if isinstance(item, dict)
-            }
-            if not _nonempty(authorization_id):
-                errors.append(f"bounded review round {index} requires round_cap_escalation authorization_id")
-            if not isinstance(supplied, list) or supplied_keys != expected_escalation or len(supplied_keys) != len(supplied):
-                errors.append(f"bounded review round {index} escalation findings must exactly match unresolved/actionable findings")
-        unresolved = still_unresolved | current_keys
-        audit_rounds.append(derived)
-    if seen_ids != all_ids:
-        errors.append("review manifest v2 rounds omit or duplicate loaded artifacts")
-    return {"policy": ROUND_POLICY, "cap": ROUND_CAP, "total_rounds": len(rounds), "rounds": audit_rounds}
-
-
 def load_review_manifest(
     repo: Path,
     manifest_path: str,
     *,
     expected_pr: int,
     expected_head_sha: str,
+    current_binding: dict[str, Any] | None = None,
+    enforcement_sensitive: bool = False,
 ) -> dict[str, Any]:
     """Load every manifest artifact through repository-safe paths."""
 
@@ -567,6 +455,7 @@ def load_review_manifest(
         lanes = []
 
     artifacts: list[dict[str, Any]] = []
+    original_bindings: dict[str, dict[str, Any]] = {}
     artifact_paths_seen: set[str] = set()
     lane_ids: set[str] = set()
     lane_roster: list[dict[str, Any]] = []
@@ -623,11 +512,21 @@ def load_review_manifest(
                 )
             except SpecRailError as exc:
                 errors.append(str(exc))
+            original_binding = None
+            try:
+                original_binding = load_review_content_binding(resolved_repo, artifact)
+            except EvidenceError as exc:
+                errors.append(f"{normalized_path}: {exc}")
+            if original_binding is not None and _nonempty(artifact.get("artifact_id")):
+                original_bindings[str(artifact["artifact_id"])] = original_binding
             result = validate_review_artifact(
                 artifact,
                 expected_pr=expected_pr,
                 expected_lane=str(lane_id),
                 expected_producer=str(producer),
+                current_binding=None,
+                original_binding=original_binding,
+                enforcement_sensitive=False,
             )
             errors.extend(f"{normalized_path}: {item}" for item in result["errors"])
             artifact_copy = dict(artifact)
@@ -649,33 +548,109 @@ def load_review_manifest(
                 f"duplicate terminal artifacts for lane {lane_id} at head {head_sha}"
             )
 
-    current_head = [
-        item for item in artifacts if item.get("head_sha") == expected_head_sha
-    ]
-    current = [
-        item
-        for item in current_head
-        if item.get("status") in TERMINAL_STATUSES
-    ]
-    if not current:
-        errors.append("review manifest has no terminal artifact for the current head")
-    elif len(current) > 1:
-        errors.append("review manifest has multiple terminal artifacts for the current head")
-
     new_fields = {"round_policy_version", "diff_sha256", "round_cap_escalation"}
     round_audit = None
     if version == 1:
-        if len(artifacts) != 1 or any(new_fields & set(item) for item in artifacts):
+        if sum(item.get("content_binding_version") != 1 for item in artifacts) > 1 or any(new_fields & set(item) for item in artifacts):
             errors.append("review manifest v1 supports one legacy artifact only; migrate bounded rounds to v2")
+        eligible_artifacts = artifacts
     else:
-        round_audit = _bounded_round_semantics(manifest, artifacts, errors)
+        round_audit = validate_bounded_rounds(manifest, artifacts, errors)
+        latest_artifact_id = (
+            round_audit["rounds"][-1]["artifact_id"]
+            if round_audit and round_audit["rounds"]
+            else None
+        )
+        eligible_artifacts = [
+            item for item in artifacts
+            if item.get("artifact_id") == latest_artifact_id
+        ]
 
+    current_head = [
+        item for item in eligible_artifacts
+        if item.get("head_sha") == expected_head_sha
+    ]
+    exact_terminal = [
+        item for item in current_head if item.get("status") in TERMINAL_STATUSES
+    ]
+    reusable = [
+        item
+        for item in eligible_artifacts
+        if item.get("head_sha") != expected_head_sha
+        and item.get("status") in TERMINAL_STATUSES
+        and not artifact_binding_errors(
+            item,
+            expected_head_sha=expected_head_sha,
+            current_binding=current_binding,
+            original_binding=original_bindings.get(str(item.get("artifact_id"))),
+            enforcement_sensitive=enforcement_sensitive,
+        )
+    ]
+    current = exact_terminal or reusable
+    if not current:
+        errors.append("review manifest has no terminal artifact for the current head or bindings")
+    elif len(current) > 1:
+        if len([item for item in current if item.get("head_sha") == expected_head_sha]) > 1:
+            errors.append("review manifest has multiple terminal artifacts for the current head")
+        else:
+            errors.append("review manifest has multiple current or reusable terminal artifacts")
+
+    stale_findings: dict[tuple[str, str], dict[str, Any]] = {}
+    required_carry: set[tuple[str, str]] = set()
+    selected_objects = {id(item) for item in current}
+    for artifact in artifacts if version == 1 else []:
+        source_head = artifact.get("head_sha")
+        if source_head == expected_head_sha or id(artifact) in selected_objects:
+            continue
+        for finding in artifact.get("findings", []):
+            if isinstance(finding, dict) and _nonempty(finding.get("id")) and _nonempty(source_head):
+                key = (str(finding["id"]), str(source_head))
+                if key in stale_findings and stale_findings[key] != finding:
+                    errors.append(f"conflicting stale finding definition: {key[0]} at {key[1]}")
+                stale_findings[key] = finding
+                required_carry.add(key)
+        for finding in artifact.get("prior_findings", []):
+            if (
+                isinstance(finding, dict)
+                and finding.get("status") == "unresolved"
+                and _nonempty(finding.get("id"))
+                and _nonempty(finding.get("source_head_sha"))
+            ):
+                required_carry.add(
+                    (str(finding["id"]), str(finding["source_head_sha"]))
+                )
+
+    carried: dict[tuple[str, str], dict[str, Any]] = {}
+    for artifact in current if version == 1 else []:
+        for finding in artifact.get("prior_findings", []):
+            if isinstance(finding, dict) and _nonempty(finding.get("id")) and _nonempty(finding.get("source_head_sha")):
+                key = (str(finding["id"]), str(finding["source_head_sha"]))
+                if key in carried and carried[key] != finding:
+                    errors.append(f"conflicting prior finding carry-forward: {key[0]} at {key[1]}")
+                carried[key] = finding
+    missing_carry = sorted(required_carry - set(carried))
+    for finding_id, source_head in missing_carry:
+        errors.append(f"missing prior finding carry-forward: {finding_id} from {source_head}")
+    extra_carry = sorted(set(carried) - required_carry)
+    for finding_id, source_head in extra_carry:
+        errors.append(f"prior finding has no manifest source artifact: {finding_id} from {source_head}")
     blockers: list[str] = []
     review_sources: set[str] = set()
     review_executions: set[str] = set()
     completed_times: list[str] = []
-    for artifact in current_head:
-        result = validate_review_artifact(artifact, expected_pr=expected_pr, expected_head_sha=expected_head_sha)
+    blocker_artifacts = [
+        *current_head,
+        *(item for item in current if item.get("head_sha") != expected_head_sha),
+    ]
+    for artifact in blocker_artifacts:
+        result = validate_review_artifact(
+            artifact,
+            expected_pr=expected_pr,
+            expected_head_sha=expected_head_sha,
+            current_binding=current_binding,
+            original_binding=original_bindings.get(str(artifact.get("artifact_id"))),
+            enforcement_sensitive=enforcement_sensitive,
+        )
         blockers.extend(result["blocking_reasons"])
     for artifact in current:
         if artifact.get("human_final_review_required") != manifest.get(
@@ -724,73 +699,4 @@ def load_review_manifest(
         "round_audit": round_audit,
         "errors": errors,
         "blocking_reasons": sorted(set(blockers)),
-    }
-
-
-def evaluate_review_evidence(
-    evidence: Any,
-    *,
-    expected_pr: int | None,
-    expected_head_sha: str | None,
-) -> dict[str, list[str]]:
-    """Revalidate embedded manifest evidence inside the offline PR gate."""
-
-    errors: list[str] = []
-    blockers: list[str] = []
-    satisfied: list[str] = []
-    if not isinstance(evidence, dict):
-        return {
-            "errors": ["review_evidence must be an object"],
-            "blocking_reasons": [],
-            "satisfied": [],
-        }
-    if evidence.get("pr") != expected_pr:
-        errors.append("review_evidence.pr must match pr")
-    if evidence.get("head_sha") != expected_head_sha:
-        errors.append("review_evidence.head_sha must match head_sha")
-    execution = evidence.get("review_execution")
-    if execution not in REVIEW_EXECUTIONS:
-        errors.append(
-            f"review_evidence.review_execution must be one of: {', '.join(sorted(REVIEW_EXECUTIONS))}"
-        )
-    elif execution != "local":
-        errors.append("hosted review evidence is supplemental only; primary review must be local")
-    embedded_errors = evidence.get("errors")
-    if not isinstance(embedded_errors, list):
-        errors.append("review_evidence.errors must be a list")
-    else:
-        errors.extend(str(item) for item in embedded_errors if _nonempty(item))
-    embedded_blockers = evidence.get("blocking_reasons")
-    if not isinstance(embedded_blockers, list):
-        errors.append("review_evidence.blocking_reasons must be a list")
-    else:
-        blockers.extend(str(item) for item in embedded_blockers if _nonempty(item))
-    artifacts = evidence.get("artifacts")
-    if not isinstance(artifacts, list) or not artifacts:
-        errors.append("review_evidence.artifacts must be a non-empty list")
-    else:
-        current = 0
-        current_executions: set[str] = set()
-        for index, artifact in enumerate(artifacts):
-            result = validate_review_artifact(artifact, expected_pr=expected_pr)
-            errors.extend(f"review_evidence.artifacts[{index}]: {item}" for item in result["errors"])
-            if not isinstance(artifact, dict):
-                continue
-            if artifact.get("head_sha") == expected_head_sha and artifact.get("status") in TERMINAL_STATUSES:
-                current += 1
-                if _nonempty(artifact.get("review_execution")):
-                    current_executions.add(str(artifact["review_execution"]))
-                blockers.extend(result["blocking_reasons"])
-        if current == 0:
-            errors.append("review_evidence has no current-head terminal artifact")
-        if len(current_executions) == 1 and execution not in current_executions:
-            errors.append("review_evidence.review_execution must be derived from current-head artifacts")
-    if not errors:
-        satisfied.append("review manifest and artifacts are semantically valid")
-    if not blockers:
-        satisfied.append("terminal review evidence has no blocking findings")
-    return {
-        "errors": sorted(set(errors)),
-        "blocking_reasons": sorted(set(blockers)),
-        "satisfied": satisfied,
     }

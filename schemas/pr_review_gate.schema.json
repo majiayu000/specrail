@@ -25,6 +25,41 @@
   "additionalProperties": false,
   "allOf": [
     {
+      "if": {"required": ["content_binding_version"]},
+      "then": {
+        "required": ["snapshot", "content_hashes", "reused_components"]
+      },
+      "else": {
+        "properties": {
+          "snapshot": {"const": null},
+          "content_hashes": {"const": null},
+          "reused_components": {"const": null},
+          "checks": {
+            "items": {
+              "properties": {
+                "content_binding_version": {"const": null},
+                "covered_categories": {"const": null},
+                "content_bindings": {"const": null}
+              }
+            }
+          },
+          "review_evidence": {
+            "properties": {
+              "artifacts": {
+                "items": {
+                  "properties": {
+                    "content_binding_version": {"const": null},
+                    "covered_categories": {"const": null},
+                    "content_bindings": {"const": null}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "if": {
         "anyOf": [
           {
@@ -66,6 +101,79 @@
     }
   ],
   "properties": {
+    "content_binding_version": {"const": 1},
+    "snapshot": {
+      "type": "object",
+      "required": ["head_sha", "base_tree_oid", "algorithm", "normalization", "collector"],
+      "additionalProperties": false,
+      "properties": {
+        "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
+        "base_tree_oid": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
+        "algorithm": {"const": "sha256"},
+        "normalization": {"const": "specrail-v1"},
+        "collector": {"const": "github_pr_evidence"}
+      }
+    },
+    "content_hashes": {
+      "type": "object",
+      "required": ["code_inputs", "spec_files", "pr_metadata"],
+      "additionalProperties": false,
+      "properties": {
+        "code_inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "spec_files": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "pr_metadata": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "reused_components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifact_id", "original_head_sha", "covered_categories", "original_content_bindings", "current_content_bindings", "collector_provenance", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {"type": "string", "minLength": 1},
+          "original_head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
+          "covered_categories": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"enum": ["code_inputs", "spec_files", "pr_metadata"]}
+          },
+          "original_content_bindings": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "code_inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "spec_files": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "pr_metadata": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          },
+          "current_content_bindings": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "code_inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "spec_files": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "pr_metadata": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          },
+          "collector_provenance": {
+            "type": "object",
+            "required": ["head_sha", "base_tree_oid", "algorithm", "normalization", "collector"],
+            "additionalProperties": false,
+            "properties": {
+              "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
+              "base_tree_oid": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
+              "algorithm": {"const": "sha256"},
+              "normalization": {"const": "specrail-v1"},
+              "collector": {"const": "github_pr_evidence"}
+            }
+          },
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
     "pr": {
       "type": "integer",
       "minimum": 1
@@ -355,8 +463,38 @@
       "items": {
         "type": "object",
         "required": ["name", "status", "conclusion"],
-        "additionalProperties": true,
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {"required": ["content_binding_version"]},
+            "then": {"required": ["artifact_id", "head_sha", "covered_categories", "content_bindings"]},
+            "else": {
+              "properties": {
+                "covered_categories": {"const": null},
+                "content_bindings": {"const": null}
+              }
+            }
+          }
+        ],
         "properties": {
+          "artifact_id": {"type": "string", "minLength": 1},
+          "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
+          "content_binding_version": {"const": 1},
+          "covered_categories": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"enum": ["code_inputs", "spec_files", "pr_metadata"]}
+          },
+          "content_bindings": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "code_inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "spec_files": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "pr_metadata": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          },
           "name": {
             "type": "string",
             "minLength": 1
@@ -367,6 +505,10 @@
           },
           "conclusion": {
             "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }
@@ -617,44 +759,10 @@
       "description": "Execution provenance derived from the trusted review manifest. hosted is supplemental only."
     },
     "human_authorization": {
-      "type": "object",
-      "required": ["actor", "source"],
-      "additionalProperties": true,
-      "properties": {
-        "actor": {
-          "type": "string",
-          "minLength": 1
-        },
-        "source": {
-          "type": "string",
-          "minLength": 1
-        },
-        "summary": {
-          "type": "string"
-        }
-      }
+      "$ref": "pr_review_authorizations.schema.json#/properties/human_authorization"
     },
     "self_review_authorization": {
-      "type": "object",
-      "required": ["actor", "source", "scope"],
-      "additionalProperties": true,
-      "properties": {
-        "actor": {
-          "type": "string",
-          "minLength": 1
-        },
-        "source": {
-          "type": "string",
-          "minLength": 1
-        },
-        "scope": {
-          "type": "string",
-          "minLength": 1
-        },
-        "summary": {
-          "type": "string"
-        }
-      }
+      "$ref": "pr_review_authorizations.schema.json#/properties/self_review_authorization"
     }
   }
 }

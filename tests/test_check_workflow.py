@@ -12,7 +12,10 @@ from check_workflow_test_support import ROOT, _auth_workflow, _config
 import check_workflow  # noqa: E402
 
 from check_workflow import REQUIRED_FILES, main as check_workflow_main  # noqa: E402
-from check_workflow import validate_required_file_globs  # noqa: E402
+from check_workflow import (  # noqa: E402
+    validate_required_file_globs,
+    validate_required_files,
+)
 from check_workflow import (  # noqa: E402
     validate_auth_mode,
     validate_impl_branch_template,
@@ -47,6 +50,34 @@ def test_required_files_include_duplicate_work_checks() -> None:
 def test_required_files_include_pr_issue_reference_module() -> None:
     assert "checks/github_evidence_common.py" in REQUIRED_FILES
     assert "checks/github_issue_reference.py" in REQUIRED_FILES
+
+
+def test_required_files_include_content_binding_runtime_dependencies() -> None:
+    for path in [
+        "checks/evidence_content_binding.py",
+        "checks/review_content_binding.py",
+        "checks/review_round_semantics.py",
+        "checks/runtime_review_evidence.py",
+    ]:
+        assert path in REQUIRED_FILES
+
+
+def test_required_files_reject_missing_review_round_runtime_dependency(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+    shutil.copytree(
+        ROOT,
+        target,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", ".coverage*"),
+    )
+    helper = target / "checks" / "review_round_semantics.py"
+    helper.unlink()
+
+    assert (
+        "missing required file: checks/review_round_semantics.py"
+        in validate_required_files(target)
+    )
 
 
 def test_required_files_include_schema_validation_runtime_dependency() -> None:

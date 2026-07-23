@@ -378,98 +378,10 @@
       }
     },
     "thread_dispatch_gate": {
-      "type": ["object", "null"],
-      "additionalProperties": true,
-      "properties": {
-        "explicit_thread_request": {
-          "type": ["string", "boolean", "null"]
-        },
-        "native_subagents": {
-          "type": ["string", "boolean", "null"]
-        },
-        "spawn_requirement": {
-          "type": ["string", "boolean", "null"]
-        },
-        "fallback_mode": {
-          "type": ["string", "null"]
-        },
-        "planned_native_threads": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": true,
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1
-              },
-              "role": {
-                "type": "string",
-                "minLength": 1
-              },
-              "target": {
-                "type": "string",
-                "minLength": 1
-              },
-              "write_scope": {
-                "type": "string",
-                "minLength": 1
-              },
-              "spawn_status": {
-                "type": "string",
-                "minLength": 1
-              },
-              "no_spawn_reason": {
-                "type": ["string", "null"]
-              }
-            }
-          }
-        },
-        "native_thread_evidence": {
-          "type": ["object", "null"],
-          "additionalProperties": true,
-          "properties": {
-            "spawned_agents": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": true,
-                "properties": {
-                  "lane_id": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "spawn_tool": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "agent_id_or_thread_id": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "wait_evidence": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "close_evidence": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "result_collected": {
-                    "type": ["string", "boolean"]
-                  }
-                }
-              }
-            },
-            "fallback_reason": {
-              "type": ["string", "null"]
-            }
-          }
-        },
-        "no_spawn_reason": {
-          "type": ["string", "null"]
-        }
-      }
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "runtime_thread_dispatch_gate.schema.json"}
+      ]
     },
     "items": {
       "type": "array",
@@ -478,7 +390,64 @@
         "type": "object",
         "required": ["state", "next_action"],
         "additionalProperties": true,
+        "description": "Legacy runtime metadata remains extensible. Versioned v1 runtime items use the closed field set declared by the conditional below.",
         "allOf": [
+          {
+            "if": {"required": ["content_binding_version"]},
+            "then": {
+              "required": ["snapshot", "content_hashes", "reused_components"],
+              "additionalProperties": false,
+              "properties": {
+                "approved_spec_evidence": {},
+                "authorization_tier": {},
+                "blocked_reason": {},
+                "blocker": {},
+                "branch": {},
+                "ci": {},
+                "ci_tier_check": {},
+                "content_binding_version": {},
+                "content_hashes": {},
+                "enforcement_sensitive": {},
+                "head_sha": {},
+                "issue": {},
+                "lane_failures": {},
+                "local_verification": {},
+                "merge_authorization": {},
+                "merge_state": {},
+                "next_action": {},
+                "pr": {},
+                "pr_gate": {},
+                "pr_kind": {},
+                "pr_tier": {},
+                "pr_tier_evidence": {},
+                "post_authorization_findings": {},
+                "re_authorization": {},
+                "reused_components": {},
+                "review": {},
+                "review_source": {},
+                "review_threads": {},
+                "self_review_authorization": {},
+                "sensitive_route": {},
+                "snapshot": {},
+                "spec_approval_evidence": {},
+                "spec_status": {
+                  "enum": [
+                    "complete",
+                    "needs_tasks",
+                    "needs_spec",
+                    "umbrella_covered",
+                    "exception_allowed",
+                    null
+                  ]
+                },
+                "spec_status_reason": {},
+                "state": {},
+                "truth_level": {},
+                "worktree": {}
+              }
+            },
+            "else": {"properties": {"snapshot": {"const": null}, "content_hashes": {"const": null}, "reused_components": {"const": null}}}
+          },
           {
             "if": {"properties": {"enforcement_sensitive": {"const": true}}, "required": ["enforcement_sensitive"]},
             "then": {
@@ -491,6 +460,16 @@
           }
         ],
         "properties": {
+          "content_binding_version": {"const": 1},
+          "snapshot": {"type":"object","required":["head_sha","base_tree_oid","algorithm","normalization","collector"],"additionalProperties":false,"properties":{"head_sha":{"type":"string","pattern":"^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},"base_tree_oid":{"type":"string","pattern":"^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},"algorithm":{"const":"sha256"},"normalization":{"const":"specrail-v1"},"collector":{"const":"github_pr_evidence"}}},
+          "content_hashes": {"type":"object","required":["code_inputs","spec_files","pr_metadata"],"additionalProperties":false,"properties":{"code_inputs":{"type":"string","pattern":"^[0-9a-f]{64}$"},"spec_files":{"type":"string","pattern":"^[0-9a-f]{64}$"},"pr_metadata":{"type":"string","pattern":"^[0-9a-f]{64}$"}}},
+          "reused_components": {"type":"array","items":{"type":"object","required":["artifact_id","original_head_sha","covered_categories","original_content_bindings","current_content_bindings","collector_provenance","reason"],"additionalProperties":false,"properties":{"artifact_id":{"type":"string","minLength":1},"original_head_sha":{"type":"string","pattern":"^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},"covered_categories":{"type":"array","minItems":1,"items":{"enum":["code_inputs","spec_files","pr_metadata"]}},"original_content_bindings":{"type":"object","minProperties":1,"additionalProperties":false,"properties":{"code_inputs":{"type":"string","pattern":"^[0-9a-f]{64}$"},"spec_files":{"type":"string","pattern":"^[0-9a-f]{64}$"},"pr_metadata":{"type":"string","pattern":"^[0-9a-f]{64}$"}}},"current_content_bindings":{"type":"object","minProperties":1,"additionalProperties":false,"properties":{"code_inputs":{"type":"string","pattern":"^[0-9a-f]{64}$"},"spec_files":{"type":"string","pattern":"^[0-9a-f]{64}$"},"pr_metadata":{"type":"string","pattern":"^[0-9a-f]{64}$"}}},"collector_provenance":{"type":"object","required":["head_sha","base_tree_oid","algorithm","normalization","collector"],"additionalProperties":false,"properties":{"head_sha":{"type":"string","pattern":"^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},"base_tree_oid":{"type":"string","pattern":"^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},"algorithm":{"const":"sha256"},"normalization":{"const":"specrail-v1"},"collector":{"const":"github_pr_evidence"}}},"reason":{"type":"string","minLength":1}}}},
+          "pr_tier": {"$ref":"runtime_tier_authorization.schema.json#/properties/pr_tier"},
+          "pr_tier_evidence": {"$ref":"runtime_tier_authorization.schema.json#/properties/pr_tier_evidence"},
+          "authorization_tier": {"$ref":"runtime_tier_authorization.schema.json#/properties/authorization_tier"},
+          "ci_tier_check": {"$ref":"runtime_tier_authorization.schema.json#/properties/ci_tier_check"},
+          "post_authorization_findings": {"$ref":"runtime_tier_authorization.schema.json#/properties/post_authorization_findings"},
+          "re_authorization": {"$ref":"runtime_tier_authorization.schema.json#/properties/re_authorization"},
           "issue": {
             "type": ["integer", "null"],
             "minimum": 1

@@ -235,6 +235,24 @@ def _scope_binds_pr(scope: Any, pr: Any) -> bool:
     return re.search(rf"\bPR\s*#?\s*{pr}(?!\d)", str(scope), re.IGNORECASE) is not None
 
 
+def _current_binding(evidence: dict[str, Any]) -> dict[str, Any] | None:
+    keys = ["content_binding_version", "snapshot", "content_hashes"]
+    if not any(key in evidence for key in keys):
+        return None
+    return {key: evidence.get(key) for key in keys}
+
+
+def _enforcement_sensitive(evidence: dict[str, Any]) -> bool:
+    classification = evidence.get("sensitive_classification")
+    return bool(
+        evidence.get("enforcement_sensitive") is True
+        or (
+            isinstance(classification, dict)
+            and classification.get("enforcement_sensitive") is True
+        )
+    )
+
+
 def _github_review_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
     satisfied: list[str] = []
     reasons: list[str] = []
@@ -267,7 +285,11 @@ def _verified_reviewer_resolver(
     ):
         return False
     roster = review_evidence.get("lane_roster", [])
-    current_ids = review_evidence.get("current_artifact_ids", [])
+    raw_current_ids = review_evidence.get("current_artifact_ids", [])
+    current_ids = {
+        item for item in raw_current_ids
+        if isinstance(item, str) and item
+    } if isinstance(raw_current_ids, list) else set()
     raw_artifacts = review_evidence.get("artifacts", [])
     artifacts = raw_artifacts if isinstance(raw_artifacts, list) else []
     for lane in roster if isinstance(roster, list) else []:
@@ -293,9 +315,9 @@ def _verified_reviewer_resolver(
         verified_re_review = any(
             isinstance(artifact, dict)
             and artifact.get("artifact_id") == re_review_artifact_id
+            and artifact.get("artifact_id") in current_ids
             and artifact.get("reviewer_lane") == lane_id
             and artifact.get("producer_identity") == resolved_by
-            and artifact.get("head_sha") == review_evidence.get("head_sha")
             and artifact.get("status") == "completed"
             and artifact.get("verdict") in {"clean", "non_blocking"}
             for artifact in artifacts
@@ -459,12 +481,17 @@ def _source_and_lane_items(
     return satisfied, missing, reasons
 
 
-def _terminal_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+def _terminal_items(
+    evidence: dict[str, Any], repo: Path | None = None,
+) -> tuple[list[str], list[str], list[str]]:
     review_evidence = evidence.get("review_evidence")
     result = evaluate_review_evidence(
         review_evidence,
         expected_pr=evidence.get("pr"),
         expected_head_sha=evidence.get("head_sha"),
+        current_binding=_current_binding(evidence),
+        repo=repo,
+        enforcement_sensitive=_enforcement_sensitive(evidence),
     )
     missing = [] if isinstance(review_evidence, dict) else ["review_evidence"]
     return result["satisfied"], missing, [
@@ -495,6 +522,8 @@ def _manifest_trust_items(
             str(manifest_path),
             expected_pr=evidence.get("pr"),
             expected_head_sha=evidence.get("head_sha"),
+            current_binding=_current_binding(evidence),
+            enforcement_sensitive=_enforcement_sensitive(evidence),
         )
     except ReviewSemanticError as exc:
         return [], [], [f"review manifest trust validation failed: {exc}"]
@@ -623,7 +652,6 @@ def evaluate_review_contract(
     for checker in [
         _github_review_items,
         _thread_items,
-        _terminal_items,
         _source_and_lane_items,
         _ordering_items,
     ]:
@@ -631,6 +659,10 @@ def evaluate_review_contract(
         satisfied.extend(nested_satisfied)
         missing.extend(nested_missing)
         reasons.extend(nested_reasons)
+    nested_satisfied, nested_missing, nested_reasons = _terminal_items(evidence, repo)
+    satisfied.extend(nested_satisfied)
+    missing.extend(nested_missing)
+    reasons.extend(nested_reasons)
     trust_satisfied, trust_missing, trust_reasons = _manifest_trust_items(evidence, repo)
     satisfied.extend(trust_satisfied)
     missing.extend(trust_missing)

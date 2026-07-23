@@ -1,3 +1,5 @@
+"""Review manifest and content-binding provenance tests."""
+
 from __future__ import annotations
 
 import hashlib
@@ -8,12 +10,14 @@ from shutil import copyfile
 
 import pytest
 
+
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
 FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
 from review_result_semantics import (  # noqa: E402
+    ReviewSemanticError,
     UNGATED_DISCLOSURE_MARKER,
     evaluate_review_evidence,
     load_review_manifest,
@@ -36,85 +40,23 @@ def load_review(name: str) -> dict[str, object]:
     review.setdefault("status", "completed")
     review["verdict"] = "blocking"
     review.setdefault("human_final_review_required", False)
-    review.setdefault("findings", [{
-        "id": "fixture-finding", "severity": "important", "actionable": True,
-        "summary": "Fixture review finding.",
-    }])
-    review.setdefault("prior_findings", [])
-    for index, finding in enumerate(review["prior_findings"], start=1):
+    review.setdefault(
+        "findings",
+        [{
+            "id": "fixture-finding",
+            "severity": "important",
+            "actionable": True,
+            "summary": "Fixture review finding.",
+        }],
+    )
+    if name != "review-resumed-no-checklist.json":
+        review.setdefault("prior_findings", [])
+    for index, finding in enumerate(review.get("prior_findings", []), start=1):
         finding.setdefault("id", f"prior-{index}")
-        finding.setdefault("source_head_sha", "a" * 40)
+        finding.setdefault("source_head_sha", "aaaa000000000000000000000000000000000000")
         if finding.get("status") in {"resolved", "obsolete"}:
-            finding.setdefault("closure_evidence", f"round {index} evidence")
+            finding.setdefault("closure_evidence", f"review round {index} evidence")
     return review
-
-
-@pytest.mark.parametrize("status", ["pending", "failed", "cancelled", "superseded"])
-def test_review_semantics_terminal_lifecycle_blocks_merge_readiness(status: str) -> None:
-    review = load_review("review-valid.json")
-    review["status"] = status
-    if status == "pending":
-        review["review_completed_at"] = None
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is True
-    assert any("status is not completed" in item for item in result["blocking_reasons"])
-
-
-def test_review_semantics_blocks_duplicate_finding_ids() -> None:
-    review = load_review("review-valid.json")
-    review["findings"].append(dict(review["findings"][0]))
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is False
-    assert "findings IDs must be unique" in result["errors"]
-
-
-def test_review_semantics_requires_prior_finding_closure_evidence() -> None:
-    review = load_review("review-valid.json")
-    review["prior_findings"] = [
-        {
-            "id": "finding-old",
-            "source_head_sha": "b" * 40,
-            "summary": "Old blocking finding.",
-            "status": "resolved",
-        }
-    ]
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is False
-    assert any("closure_evidence" in item for item in result["errors"])
-
-
-def test_review_semantics_blocks_unresolved_prior_finding() -> None:
-    review = load_review("review-valid.json")
-    review["prior_findings"] = [
-        {
-            "id": "finding-old",
-            "source_head_sha": "b" * 40,
-            "summary": "Old blocking finding.",
-            "status": "unresolved",
-        }
-    ]
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is True
-    assert any("unresolved prior finding" in item for item in result["blocking_reasons"])
-
-
-def test_review_semantics_requires_self_review_human_final_gate() -> None:
-    review = load_review("review-valid.json")
-    review["review_source"] = "self_review"
-    review["human_final_review_required"] = False
-
-    result = validate_review_artifact(review)
-
-    assert result["valid"] is False
-    assert "self_review requires human_final_review_required=true" in result["errors"]
 
 
 def clean_terminal_artifact(
@@ -139,6 +81,52 @@ def clean_terminal_artifact(
     return review
 
 
+def content_binding(head_sha: str = "a" * 40) -> dict[str, object]:
+    return {
+        "content_binding_version": 1,
+        "snapshot": {
+            "head_sha": head_sha,
+            "base_tree_oid": "d" * 40,
+            "algorithm": "sha256",
+            "normalization": "specrail-v1",
+            "collector": "github_pr_evidence",
+        },
+        "content_hashes": {
+            "code_inputs": "1" * 64,
+            "spec_files": "2" * 64,
+            "pr_metadata": "3" * 64,
+        },
+    }
+
+
+def bind_review(
+    repo: Path, artifact: dict[str, object], categories: list[str]
+) -> dict[str, object]:
+    binding = content_binding(str(artifact["head_sha"]))
+    sidecar = build_content_binding_evidence(489, binding)
+    relative = f"artifacts/content-bindings/{sidecar['artifact_id']}.json"
+    path = repo / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(sidecar, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    path.write_bytes(raw)
+    artifact.update(
+        {
+            "content_binding_version": 1,
+            "covered_categories": categories,
+            "content_bindings": {
+                category: binding["content_hashes"][category]  # type: ignore[index]
+                for category in categories
+            },
+            "content_binding_evidence": {
+                "artifact_id": sidecar["artifact_id"],
+                "path": relative,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            },
+        }
+    )
+    return artifact
+
+
 def install_review_schema(repo: Path) -> None:
     schema_dir = repo / "schemas"
     schema_dir.mkdir(exist_ok=True)
@@ -158,7 +146,7 @@ def write_review_manifest(
 ) -> str:
     install_review_schema(repo)
     review_dir = repo / "artifacts" / "reviews"
-    review_dir.mkdir(parents=True, exist_ok=True)
+    review_dir.mkdir(parents=True)
     lanes: dict[tuple[str, str], list[str]] = {}
     for index, artifact in enumerate(artifacts, start=1):
         path = review_dir / f"artifact-{index}.json"
@@ -197,6 +185,147 @@ def test_review_manifest_allows_clean_current_head(tmp_path: Path) -> None:
     assert result["errors"] == []
     assert result["blocking_reasons"] == []
     assert result["review_execution"] == "local"
+
+
+def test_review_manifest_allows_previous_head_when_all_covered_bindings_match(
+    tmp_path: Path,
+) -> None:
+    artifact = bind_review(tmp_path, clean_terminal_artifact(head_sha="b" * 40), [
+        "code_inputs", "spec_files", "pr_metadata"
+    ])
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+        current_binding=content_binding(),
+    )
+
+    assert result["errors"] == []
+    assert result["current_artifact_ids"] == [artifact["artifact_id"]]
+
+
+@pytest.mark.parametrize("changed_category", ["spec_files", "pr_metadata"])
+def test_previous_head_review_invalidates_when_covered_binding_changes(
+    tmp_path: Path,
+    changed_category: str,
+) -> None:
+    install_review_schema(tmp_path)
+    artifact = bind_review(tmp_path, clean_terminal_artifact(head_sha="b" * 40), [changed_category])
+    binding = content_binding()
+    binding["content_hashes"][changed_category] = "f" * 64  # type: ignore[index]
+    result = evaluate_review_evidence(
+        {
+            "pr": 489,
+            "head_sha": "a" * 40,
+            "review_execution": "local",
+            "artifacts": [artifact],
+            "current_artifact_ids": [artifact["artifact_id"]],
+            "errors": [],
+            "blocking_reasons": [],
+        },
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+        current_binding=binding,
+        repo=tmp_path,
+    )
+
+    assert any("covered content bindings do not match" in item for item in result["errors"])
+
+
+def test_previous_head_review_blocks_joint_embedded_binding_rewrite(tmp_path: Path) -> None:
+    install_review_schema(tmp_path)
+    artifact = bind_review(
+        tmp_path, clean_terminal_artifact(head_sha="b" * 40), ["spec_files"]
+    )
+    current = content_binding()
+    current["content_hashes"]["spec_files"] = "f" * 64  # type: ignore[index]
+    artifact["content_bindings"]["spec_files"] = "f" * 64  # type: ignore[index]
+    artifact["original_content_binding"] = content_binding("b" * 40)
+    artifact["original_content_binding"]["content_hashes"]["spec_files"] = "f" * 64  # type: ignore[index]
+
+    result = evaluate_review_evidence(
+        {
+            "pr": 489, "head_sha": "a" * 40, "review_execution": "local",
+            "artifacts": [artifact], "current_artifact_ids": [artifact["artifact_id"]],
+            "errors": [], "blocking_reasons": [],
+        },
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+        current_binding=current,
+        repo=tmp_path,
+    )
+
+    assert any(
+        "must match its collector sidecar" in item
+        for item in result["errors"]
+    )
+
+
+def test_review_manifest_schema_requires_sidecar_reference(tmp_path: Path) -> None:
+    artifact = bind_review(
+        tmp_path, clean_terminal_artifact(head_sha="b" * 40), ["code_inputs"]
+    )
+    artifact.pop("content_binding_evidence")
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+        current_binding=content_binding(),
+    )
+
+    assert any("content_binding_evidence" in item for item in result["errors"])
+
+
+@pytest.mark.parametrize("failure", ["missing", "digest"])
+def test_review_manifest_blocks_untrusted_sidecar(
+    tmp_path: Path, failure: str,
+) -> None:
+    artifact = bind_review(
+        tmp_path, clean_terminal_artifact(head_sha="b" * 40), ["code_inputs"]
+    )
+    reference = artifact["content_binding_evidence"]
+    if failure == "missing":
+        (tmp_path / reference["path"]).unlink()  # type: ignore[index]
+    else:
+        reference["sha256"] = "f" * 64  # type: ignore[index]
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path, manifest_path, expected_pr=489, expected_head_sha="a" * 40,
+        current_binding=content_binding(),
+    )
+
+    expected = "cannot read content binding evidence" if failure == "missing" else "sha256"
+    assert any(expected in item for item in result["errors"])
+
+
+def test_sensitive_previous_head_review_requires_code_spec_and_independent_lane(tmp_path: Path) -> None:
+    install_review_schema(tmp_path)
+    artifact = bind_review(tmp_path, clean_terminal_artifact(head_sha="b" * 40), ["code_inputs"])
+    result = validate_review_artifact(
+        artifact,
+        expected_head_sha="a" * 40,
+        current_binding=content_binding(),
+        original_binding=content_binding("b" * 40),
+        enforcement_sensitive=True,
+    )
+
+    assert any("must cover actual code_inputs and spec_files" in item for item in result["errors"])
+
+
+def test_legacy_previous_head_review_remains_exact_head() -> None:
+    result = validate_review_artifact(
+        clean_terminal_artifact(head_sha="b" * 40),
+        expected_head_sha="a" * 40,
+    )
+
+    assert "legacy review artifact head_sha must match the expected final head" in result["errors"]
 
 
 def test_review_manifest_allows_explicit_ungated_review_fields(tmp_path: Path) -> None:
@@ -492,252 +621,58 @@ def test_review_manifest_blocks_duplicate_terminal_for_lane_and_head(tmp_path: P
     assert any("duplicate terminal artifacts" in item for item in result["errors"])
 
 
-def bounded_artifact(
-    review_round: int, *, findings: list[dict[str, object]] | None = None,
-    prior: list[dict[str, object]] | None = None,
-) -> dict[str, object]:
-    artifact = clean_terminal_artifact(
-        artifact_id=f"round-{review_round}", head_sha=f"{review_round:040x}"
-    )
-    artifact.update({
-        "round_policy_version": 1,
-        "review_round": review_round,
-        "review_mode": "full" if review_round == 1 else "resumed",
-        "findings": findings or [],
-        "prior_findings": prior or [],
-    })
-    if review_round >= 2:
-        artifact["base_head_sha"] = f"{review_round - 1:040x}"
-        artifact["diff_sha256"] = f"{review_round:064x}"
-    return artifact
-
-
-def bind_bounded_artifact(
-    repo: Path, artifact: dict[str, object], hash_prefix: str
-) -> dict[str, object]:
-    binding = {
-        "content_binding_version": 1,
-        "snapshot": {
-            "head_sha": artifact["head_sha"],
-            "base_tree_oid": "d" * 40,
-            "algorithm": "sha256",
-            "normalization": "specrail-v1",
-            "collector": "github_pr_evidence",
-        },
-        "content_hashes": {
-            "code_inputs": hash_prefix * 64,
-            "spec_files": "2" * 64,
-            "pr_metadata": "3" * 64,
-        },
-    }
-    sidecar = build_content_binding_evidence(489, binding)
-    relative = f"artifacts/content-bindings/{sidecar['artifact_id']}.json"
-    path = repo / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    raw = json.dumps(sidecar, sort_keys=True).encode("utf-8")
-    path.write_bytes(raw)
-    artifact.update(
+def test_review_manifest_requires_stale_finding_carry_forward(tmp_path: Path) -> None:
+    stale = clean_terminal_artifact(artifact_id="old", head_sha="b" * 40)
+    stale["verdict"] = "blocking"
+    stale["findings"] = [
         {
-            "content_binding_version": 1,
-            "covered_categories": ["code_inputs", "spec_files", "pr_metadata"],
-            "content_bindings": binding["content_hashes"],
-            "content_binding_evidence": {
-                "artifact_id": sidecar["artifact_id"],
-                "path": relative,
-                "sha256": hashlib.sha256(raw).hexdigest(),
-            },
+            "id": "finding-old",
+            "severity": "important",
+            "actionable": True,
+            "summary": "Old blocking finding.",
         }
-    )
-    return binding
-
-
-def write_bounded_manifest(repo: Path, artifacts: list[dict[str, object]]) -> str:
-    install_review_schema(repo)
-    review_dir = repo / "artifacts" / "reviews"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    paths = []
-    rounds = []
-    for artifact in artifacts:
-        artifact_id = str(artifact["artifact_id"])
-        path = review_dir / f"{artifact_id}.json"
-        path.write_text(json.dumps(artifact), encoding="utf-8")
-        paths.append(path.relative_to(repo).as_posix())
-        escalation = artifact.get("round_cap_escalation")
-        rounds.append({
-            "artifact_id": artifact_id,
-            "review_round": artifact.get("review_round"),
-            "review_mode": artifact.get("review_mode"),
-            "base_head_sha": artifact.get("base_head_sha"),
-            "head_sha": artifact.get("head_sha"),
-            "diff_sha256": artifact.get("diff_sha256"),
-            "escalation_authorization_id": (
-                escalation.get("authorization_id") if isinstance(escalation, dict) else None
-            ),
-        })
-    manifest = {
-        "version": 2, "pr": 489, "head_sha": artifacts[-1]["head_sha"],
-        "human_final_review_required": False,
-        "round_policy": {"name": "bounded_diff_v1", "cap": 3},
-        "rounds": rounds,
-        "lanes": [{
-            "lane_id": "reviewer-1", "producer_identity": "agent-reviewer-1",
-            "artifact_paths": paths,
-        }],
-    }
-    path = review_dir / "manifest.json"
-    path.write_text(json.dumps(manifest), encoding="utf-8")
-    return path.relative_to(repo).as_posix()
-
-
-def load_bounded(repo: Path, artifacts: list[dict[str, object]]) -> dict[str, object]:
-    path = write_bounded_manifest(repo, artifacts)
-    return load_review_manifest(
-        repo, path, expected_pr=489, expected_head_sha=str(artifacts[-1]["head_sha"])
-    )
-
-
-def compact(source: str, finding_id: str = "F-1", status: str = "unresolved") -> dict[str, object]:
-    return {
-        "finding_id": finding_id, "source_artifact_id": source, "status": status,
-        "evidence_pointer": {"kind": "thread", "value": "PRRT_167"},
-    }
-
-
-def test_v1_multi_artifact_requires_explicit_migration(tmp_path: Path) -> None:
-    path = write_review_manifest(
-        tmp_path, [clean_terminal_artifact(head_sha="b" * 40), clean_terminal_artifact()]
-    )
-    result = load_review_manifest(tmp_path, path, expected_pr=489, expected_head_sha="a" * 40)
-    assert any("v1 supports one legacy artifact only" in item for item in result["errors"])
-
-
-def test_v2_derives_round_audit_and_compact_carry(tmp_path: Path) -> None:
-    finding = {"id": "F-1", "severity": "important", "actionable": True, "summary": "fix"}
-    artifacts = [
-        bounded_artifact(1, findings=[finding]),
-        bounded_artifact(2, prior=[compact("round-1")]),
-        bounded_artifact(3, prior=[compact("round-1", status="resolved")]),
     ]
-    result = load_bounded(tmp_path, artifacts)
-    assert result["errors"] == []
-    assert result["round_audit"] == {
-        "policy": "bounded_diff_v1", "cap": 3, "total_rounds": 3,
-        "rounds": [
-            {
-                "artifact_id": item["artifact_id"], "review_round": item["review_round"],
-                "review_mode": item["review_mode"], "base_head_sha": item.get("base_head_sha"),
-                "head_sha": item["head_sha"], "diff_sha256": item.get("diff_sha256"),
-                "escalation_authorization_id": None,
-            } for item in artifacts
-        ],
-    }
-
-
-def test_v2_does_not_reuse_older_clean_round_past_newer_blocking_round(
-    tmp_path: Path,
-) -> None:
-    first = bounded_artifact(1)
-    current_binding = bind_bounded_artifact(tmp_path, first, "1")
-    finding = {
-        "id": "F-latest",
-        "severity": "important",
-        "actionable": True,
-        "summary": "Latest round blocks.",
-    }
-    second = bounded_artifact(2, findings=[finding])
-    second["verdict"] = "blocking"
-    bind_bounded_artifact(tmp_path, second, "4")
-    relative = write_bounded_manifest(tmp_path, [first, second])
-    manifest_path = tmp_path / relative
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    current_head = "f" * 40
-    manifest["head_sha"] = current_head
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    current_binding["snapshot"]["head_sha"] = current_head
+    manifest_path = write_review_manifest(
+        tmp_path,
+        [stale, clean_terminal_artifact()],
+    )
 
     result = load_review_manifest(
         tmp_path,
-        relative,
+        manifest_path,
         expected_pr=489,
-        expected_head_sha=current_head,
-        current_binding=current_binding,
+        expected_head_sha="a" * 40,
     )
 
-    assert result["current_artifact_ids"] == []
-    assert any("no terminal artifact" in item for item in result["errors"])
+    assert any("missing prior finding carry-forward" in item for item in result["errors"])
 
 
-def test_v2_requires_bounded_marker_on_every_artifact(tmp_path: Path) -> None:
-    artifact = bounded_artifact(1)
-    artifact.pop("round_policy_version")
-
-    result = load_bounded(tmp_path, [artifact])
-
-    assert any("round_policy_version must be 1" in item for item in result["errors"])
-
-
-@pytest.mark.parametrize("rounds", [[1, 1], [1, 3], [2, 1]])
-def test_v2_rejects_duplicate_gap_and_rollback(tmp_path: Path, rounds: list[int]) -> None:
-    artifacts = [bounded_artifact(index + 1) for index in range(len(rounds))]
-    for artifact, review_round in zip(artifacts, rounds):
-        artifact["review_round"] = review_round
-    result = load_bounded(tmp_path, artifacts)
-    assert any("exactly 1..N" in item for item in result["errors"])
-
-
-def test_v2_malformed_first_round_fails_closed_without_crashing(tmp_path: Path) -> None:
-    artifacts = [bounded_artifact(1), bounded_artifact(2)]
-    relative = write_bounded_manifest(tmp_path, artifacts)
-    path = tmp_path / relative
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-    manifest["rounds"][0] = None
-    path.write_text(json.dumps(manifest), encoding="utf-8")
+def test_review_manifest_requires_transitive_unresolved_prior_finding(
+    tmp_path: Path,
+) -> None:
+    stale = clean_terminal_artifact(head_sha="b" * 40)
+    stale["prior_findings"] = [
+        {
+            "id": "finding-transitive",
+            "source_head_sha": "c" * 40,
+            "summary": "Still unresolved from an omitted source artifact.",
+            "status": "unresolved",
+        }
+    ]
+    current = clean_terminal_artifact()
+    manifest_path = write_review_manifest(tmp_path, [stale, current])
 
     result = load_review_manifest(
-        tmp_path, relative, expected_pr=489, expected_head_sha=str(artifacts[-1]["head_sha"])
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
     )
 
-    assert any("bounded round fields" in item for item in result["errors"])
-
-
-def test_v2_rejects_full_round_two_and_missing_carry(tmp_path: Path) -> None:
-    finding = {"id": "F-1", "severity": "suggestion", "actionable": False, "summary": "note"}
-    second = bounded_artifact(2)
-    second["review_mode"] = "full"
-    second["human_full_review_request"] = "continue"
-    result = load_bounded(tmp_path, [bounded_artifact(1, findings=[finding]), second])
-    assert any("must be resumed or diff_only" in item for item in result["errors"])
-    assert any("missing compact prior finding carry-forward" in item for item in result["errors"])
-
-
-def test_v2_rejects_unknown_duplicate_and_prose_compact_findings(tmp_path: Path) -> None:
-    prior = compact("missing")
-    prior["summary"] = "forbidden replay"
-    second = bounded_artifact(2, prior=[prior, dict(prior)])
-    result = load_bounded(tmp_path, [bounded_artifact(1), second])
-    joined = "\n".join(result["errors"])
-    assert "prior_findings" in joined and "only" in joined
-    assert "duplicate compact prior finding key" in joined
-    assert "no source definition" in joined
-
-
-def test_v2_round_four_requires_exact_escalation_union(tmp_path: Path) -> None:
-    finding = {"id": "F-1", "severity": "suggestion", "actionable": False, "summary": "open"}
-    current = {"id": "F-4", "severity": "important", "actionable": True, "summary": "new"}
-    artifacts = [bounded_artifact(1, findings=[finding])]
-    artifacts.extend(bounded_artifact(i, prior=[compact("round-1")]) for i in [2, 3])
-    fourth = bounded_artifact(4, prior=[compact("round-1")], findings=[current])
-    fourth["round_cap_escalation"] = {
-        "authorization_id": "RCA-167-4",
-        "unresolved_findings": [
-            {"source_artifact_id": "round-1", "finding_id": "F-1"},
-            {"source_artifact_id": "round-4", "finding_id": "F-4"},
-        ],
-    }
-    artifacts.append(fourth)
-    assert load_bounded(tmp_path, artifacts)["errors"] == []
-    fourth["round_cap_escalation"]["unresolved_findings"].pop()
-    assert any("exactly match" in item for item in load_bounded(tmp_path, artifacts)["errors"])
+    assert any(
+        "missing prior finding carry-forward: finding-transitive" in item
+        for item in result["errors"]
+    )
 
 
 def test_review_manifest_blocks_concurrent_clean_and_blocking_verdicts(tmp_path: Path) -> None:

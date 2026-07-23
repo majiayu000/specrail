@@ -323,7 +323,7 @@ def test_collect_evidence_queries_partial_issue_inside_pr_snapshots(
         expected_issue=671,
     )
 
-    assert calls == ["pr", "threads", "issue", "pr"]
+    assert calls == ["pr", "threads", "issue", "pr", "issue"]
     assert evidence["linked_issue"] == 671
     assert evidence["issue_reference"]["closing_issue_numbers"] == [806]
 
