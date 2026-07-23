@@ -147,6 +147,26 @@ def test_review_json_gate_blocks_unknown_top_level_field() -> None:
     assert "unknown top-level field: undeclared_field" in result["reasons"]
 
 
+@pytest.mark.parametrize(
+    ("field", "malformed"),
+    [
+        ("tier_attestation", {}),
+        ("tier_dispute", "false"),
+        ("finding_classifications", [{}]),
+    ],
+)
+def test_review_json_gate_blocks_schema_invalid_tier_evidence(
+    field: str, malformed: object
+) -> None:
+    review = load_review("review-valid.json")
+    review[field] = malformed
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any(field in reason for reason in result["reasons"])
+
+
 def test_review_semantics_blocks_missing_execution_provenance() -> None:
     review = load_review("review-valid.json")
     del review["review_execution"]

@@ -27,6 +27,7 @@ from review_result_semantics import (
     validate_review_artifact,
     validate_degraded_review_provenance,
 )
+from schema_validation import SpecRailError, load_json_schema, validate_instance
 
 
 VERDICTS = REVIEW_VERDICTS
@@ -120,13 +121,6 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("review JSON must be an object")
     return data
-
-
-def _load_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ValueError(f"cannot read diff file {path}: {exc}") from exc
 
 
 def _load_bytes(path: Path) -> bytes:
@@ -643,6 +637,11 @@ def evaluate_review_gate(
     satisfied: list[str] = []
     missing: list[str] = []
 
+    try:
+        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "review_result.schema.json"
+        validate_instance(load_json_schema(schema_path), review, "review_result")
+    except SpecRailError as exc:
+        reasons.append(f"review_result schema validation failed: {exc}")
     top_satisfied, top_missing, top_reasons = _validate_top_level(review)
     satisfied.extend(top_satisfied)
     missing.extend(top_missing)

@@ -9,6 +9,7 @@ failures, session budgets, tranche spec/impl mix, and goal candidates.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from evidence_content_binding import CONTENT_BINDING_VERSION
@@ -19,6 +20,7 @@ from runtime_budget_dimensions import (
     judge_dimension,
     judge_hard_dimensions,
 )
+from schema_validation import SpecRailError, load_json_schema, validate_instance
 from session_telemetry import parse_timestamp
 
 
@@ -126,6 +128,16 @@ def _validate_runtime_content_binding(
         return
     for key in sorted(set(item) - RUNTIME_V1_ITEM_FIELDS):
         errors.append(f"{label}: unknown v1 runtime item field {key!r}")
+    try:
+        checkpoint_schema = load_json_schema(
+            Path(__file__).resolve().parents[1]
+            / "schemas"
+            / "runtime_checkpoint.schema.json"
+        )
+        item_schema = checkpoint_schema["properties"]["items"]["items"]
+        validate_instance(item_schema, item, label)
+    except (KeyError, TypeError, SpecRailError) as exc:
+        errors.append(f"{label}: runtime v1 schema validation failed: {exc}")
     audits = item.get("reused_components")
     if not isinstance(audits, list):
         return

@@ -123,6 +123,75 @@ def _use_current_head_legacy_review(checkpoint: dict[str, object]) -> None:
     item["review"]["head_sha"] = CURRENT_HEAD  # type: ignore[index]
 
 
+def _minimal_v1_checkpoint() -> dict[str, object]:
+    checkpoint = clean_checkpoint()
+    checkpoint["items"] = [
+        {
+            "state": "running",
+            "next_action": "continue",
+            "content_binding_version": 1,
+            "snapshot": SNAPSHOT,
+            "content_hashes": HASHES,
+            "reused_components": [
+                {
+                    "artifact_id": "component-1",
+                    "original_head_sha": PREVIOUS_HEAD,
+                    "covered_categories": ["code_inputs", "spec_files"],
+                    "original_content_bindings": {
+                        "code_inputs": HASHES["code_inputs"],
+                        "spec_files": HASHES["spec_files"],
+                    },
+                    "current_content_bindings": {
+                        "code_inputs": HASHES["code_inputs"],
+                        "spec_files": HASHES["spec_files"],
+                    },
+                    "collector_provenance": SNAPSHOT,
+                    "reason": "covered inputs match",
+                }
+            ],
+        }
+    ]
+    return checkpoint
+
+
+@pytest.mark.parametrize("field", ["snapshot", "content_hashes", "reused_components"])
+def test_runtime_v1_schema_blocks_missing_binding_fields(field: str) -> None:
+    checkpoint = _minimal_v1_checkpoint()
+    checkpoint["items"][0].pop(field)  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(field in error for error in result["errors"])
+
+
+@pytest.mark.parametrize(
+    ("path", "malformed"),
+    [
+        (("snapshot",), []),
+        (("content_hashes",), {"code_inputs": "not-a-digest"}),
+        (("reused_components",), {}),
+        (("reused_components", 0), "not-an-audit"),
+        (("reused_components", 0, "covered_categories"), "code_inputs"),
+        (("reused_components", 0, "original_content_bindings"), []),
+        (("reused_components", 0, "current_content_bindings"), {"unknown": "a" * 64}),
+    ],
+)
+def test_runtime_v1_schema_blocks_malformed_binding_shape(
+    path: tuple[str | int, ...], malformed: object
+) -> None:
+    checkpoint = _minimal_v1_checkpoint()
+    target: object = checkpoint["items"][0]  # type: ignore[index]
+    for key in path[:-1]:
+        target = target[key]  # type: ignore[index]
+    target[path[-1]] = malformed  # type: ignore[index]
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("runtime v1 schema validation failed" in error for error in result["errors"])
+
+
 def test_runtime_allows_previous_head_component_with_matching_v1_bindings(
     tmp_path: Path,
 ) -> None:
