@@ -513,6 +513,19 @@
         }
       }
     },
+    "checks_unavailable": {
+      "type": "object",
+      "required": ["reason", "base_ref", "default_base_ref", "workflow_trigger_evidence", "local_verification", "verified"],
+      "additionalProperties": false,
+      "properties": {
+        "reason": {"enum": ["hosted_ci_not_triggered_for_base"]},
+        "base_ref": {"type": "string", "minLength": 1},
+        "default_base_ref": {"type": "string", "minLength": 1},
+        "workflow_trigger_evidence": {"type": "string", "minLength": 1},
+        "local_verification": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "verified": {"const": true}
+      }
+    },
     "reviews": {
       "type": "array",
       "items": {
