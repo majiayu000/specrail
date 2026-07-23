@@ -111,6 +111,7 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
             "original_author": "reviewer",
             "resolved_by": "reviewer",
             "resolver_role": "reviewer_lane",
+            "resolver_role_source": "explicit_map",
             "lane_id": "reviewer-1",
         }
     ]
@@ -386,6 +387,7 @@ def test_build_evidence_maps_resolver_role_from_lane_roster() -> None:
     )
 
     assert evidence["review_threads"][0]["resolver_role"] == "reviewer_lane"
+    assert evidence["review_threads"][0]["resolver_role_source"] == "explicit_map"
     assert evidence["review_threads"][0]["lane_id"] == "reviewer-1"
     assert evidence["review_threads"][0]["original_author"] == "reviewer"
     assert evidence["review_threads"][0]["original_comment_id"] == "PRRC_kwDOExampleRoot"
@@ -422,6 +424,10 @@ def test_resolver_role_map_supports_thread_specific_lane_override(
                         "resolver_role": "reviewer_lane",
                         "lane_id": "reviewer-successor",
                         "successor_of": "bot-root",
+                        "external_root": {
+                            "author": "bot",
+                            "review_execution": "hosted",
+                        },
                         "re_review_artifact_id": "current-clean",
                     }
                 },
@@ -438,6 +444,7 @@ def test_resolver_role_map_supports_thread_specific_lane_override(
     assert normalized[0]["lane_id"] == "reviewer-root"
     assert normalized[1]["lane_id"] == "reviewer-successor"
     assert normalized[1]["successor_of"] == "bot-root"
+    assert normalized[1]["external_root"]["author"] == "bot"
     assert normalized[1]["re_review_artifact_id"] == "current-clean"
 
     role_map.write_text(
@@ -491,6 +498,20 @@ def test_thread_specific_resolver_override_requires_resolver_login(
     )
 
     with pytest.raises(EvidenceError, match="resolver_login"):
+        load_resolver_role_map(str(role_map))
+
+
+def test_resolver_role_map_rejects_duplicate_global_lane_login(tmp_path: Path) -> None:
+    role_map = tmp_path / "resolver-map.json"
+    role_map.write_text(
+        json.dumps({"lane_roster": [
+            {"login": "shared", "resolver_role": "reviewer_lane", "lane_id": "one"},
+            {"login": "shared", "resolver_role": "reviewer_lane", "lane_id": "two"},
+        ]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EvidenceError, match="duplicate global resolver login"):
         load_resolver_role_map(str(role_map))
 
 

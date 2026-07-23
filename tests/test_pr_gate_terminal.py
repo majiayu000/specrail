@@ -475,6 +475,7 @@ def test_pr_gate_allows_successor_resolver_with_current_head_rereview() -> None:
         {
             "resolved_by": "reviewer-2",
             "resolver_role": "reviewer_lane",
+            "resolver_role_source": "explicit_map",
             "original_author": "reviewer-1",
             "original_comment_id": "PRRC_fixture-root",
             "lane_id": "reviewer-successor",
@@ -507,6 +508,7 @@ def test_successor_resolver_accepts_validated_reusable_previous_head_review(
     thread.update({
         "resolved_by": "reviewer-2",
         "resolver_role": "reviewer_lane",
+        "resolver_role_source": "explicit_map",
         "original_author": "reviewer-1",
         "original_comment_id": "PRRC_fixture-root",
         "lane_id": "reviewer-successor",

@@ -125,6 +125,17 @@ finding is fixed or no longer applies. A reviewer lane may resolve its own
 thread, a successor reviewer lane may resolve after re-review, and a human
 maintainer may resolve directly.
 
+When a local reviewer uses a shared repository GitHub credential, record the
+credential login through `--resolver-role-map`; do not rename the local
+artifact `producer_identity` to impersonate that login. For hosted-review roots,
+successor lane lineage must terminate at the exact hosted `original_author`,
+and the resolving lane must provide a trusted terminal re-review artifact.
+Every successor resolution requires an explicit resolver mapping. When one
+GitHub login represents multiple lanes, use a thread-specific mapping instead
+of duplicate global login entries. A hosted root omitted from the local roster
+must be declared as `external_root` with the exact author and
+`review_execution: hosted`; an untyped missing predecessor is not proof.
+
 Implementation lanes and orchestrators must not call `resolveReviewThread` for
 reviewer-lane findings. They may reply with context and push fixes, but the
 resolution action stays with the reviewer or human.
