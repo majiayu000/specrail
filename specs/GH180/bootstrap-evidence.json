@@ -2,14 +2,16 @@
   "version": 1,
   "issue": 180,
   "repository": "majiayu000/specrail",
-  "purpose": "GH180 one-time staged-packet lifecycle bootstrap audit only; not reusable route authorization",
+  "purpose": "GH180 one-time old-validator auto bootstrap exception audit only; not proof of the normal lifecycle and not reusable route authorization",
   "authorization": {
     "auth_mode": "auto",
     "actor": "user",
     "source": "current conversation",
     "quote": "可以 按照你的来做 你又全部授权 你是auto模式",
     "recorded_at": "2026-07-22T23:48:08Z",
-    "waived_human_gate": "spec_approval"
+    "waived_human_gate": "spec_approval",
+    "scope": "GH180 bootstrap exception only",
+    "does_not_prove": "spec_pr_open -> spec_review -> spec_approved lifecycle"
   },
   "write_spec_stage": {
     "issue_labels": ["enhancement", "ready_to_spec", "agent_generated"],
@@ -18,13 +20,18 @@
     "state_trusted": true,
     "route": "write_spec",
     "route_decision": "allowed",
+    "route_decision_status": "reported_not_independently_recoverable",
     "issue_url": "https://github.com/majiayu000/specrail/issues/180",
     "route_satisfied": [
       "linked_issue: GH-180",
       "state provided by evidence: ready_to_spec (label)",
       "state ready_to_spec allows write_spec"
     ],
-    "duplicate_evidence_collected_at": "2026-07-22T23:47:20Z"
+    "duplicate_evidence_collected_at": "2026-07-22T23:47:20Z",
+    "issue_evidence_collected_at": null,
+    "issue_evidence_sha256": null,
+    "issue_evidence_status": "unproven",
+    "issue_evidence_status_reason": "the named runtime issue-evidence artifact is not tracked and its collected_at/hash could not be recovered from this checkout"
   },
   "implement_stage": {
     "issue_labels": ["enhancement", "ready_to_implement", "agent_generated"],
@@ -33,6 +40,7 @@
     "state_trusted": true,
     "route": "implement",
     "route_decision": "allowed",
+    "route_decision_status": "reported_not_independently_recoverable",
     "duplicate_work_decision": "allowed",
     "issue_url": "https://github.com/majiayu000/specrail/issues/180",
     "route_satisfied": [
@@ -43,24 +51,56 @@
       "tech_spec: specs/GH180/tech.md"
     ],
     "duplicate_evidence_collected_at": "2026-07-23T00:04:15Z",
+    "issue_evidence_collected_at": null,
+    "issue_evidence_sha256": null,
+    "issue_evidence_status": "unproven",
+    "issue_evidence_status_reason": "the named runtime issue-evidence artifact is not tracked and its collected_at/hash could not be recovered from this checkout",
     "open_prs_referencing_issue": [],
     "remote_branches_matching_implementation_token": []
   },
   "transition": {
     "from_state": "ready_to_spec",
     "to_state": "ready_to_implement",
-    "scope": "task planning only; no production implementation in T10"
+    "observed_kind": "direct readiness-label transition",
+    "normal_lifecycle_completed": false,
+    "exception": "GH180 one-time auth_mode=auto old-validator bootstrap",
+    "scope": "task planning only; no production implementation in T10",
+    "not_reusable": true
+  },
+  "evidence_verdict": {
+    "status": "partial_unproven",
+    "observed": [
+      "ready_to_spec and ready_to_implement label states",
+      "direct label transition",
+      "duplicate evidence collection timestamps"
+    ],
+    "reported_not_independently_recoverable": [
+      "write_spec route decision",
+      "implement route decision"
+    ],
+    "unproven": [
+      "write_spec issue-evidence collected_at and sha256",
+      "implement issue-evidence collected_at and sha256",
+      "normal spec_pr_open -> spec_review -> spec_approved lifecycle"
+    ],
+    "authorization_effect": "none"
   },
   "spec_content_sha256": {
     "product.md": "c082343a367599d089b1473b72114e1b3b7ebcbbb6cd38510c3e68bd9d06ff39",
     "tech.md": "4327afad8989c284e2d51a1b24307520205b655d6964ecd2b2727c95b6e8b695"
   },
-  "source_runtime_artifacts": [
+  "spec_content_sha256_scope": {
+    "head_sha": "08a42e16650deca970913a943b5a5a05d902581a",
+    "status": "historical_pre_correction_snapshot",
+    "authorization_effect": "none"
+  },
+  "untracked_source_runtime_artifact_names": [
     "gh180-issue-evidence.json",
     "gh180-route-gate.json",
     "gh180-bootstrap-auto-waiver.json",
     "gh180-issue-evidence-ready-to-implement.json",
     "gh180-duplicate-evidence-ready-to-implement.json",
     "gh180-implement-route-gate.json"
-  ]
+  ],
+  "source_runtime_artifacts_recoverable_from_checkout": false
 }
