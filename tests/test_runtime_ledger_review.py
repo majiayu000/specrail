@@ -152,6 +152,18 @@ def test_review_contract_blocks_hosted_successor_with_wrong_external_root() -> N
     assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
 
 
+def test_review_contract_blocks_matching_non_root_predecessor() -> None:
+    evidence = _hosted_successor_evidence()
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    predecessor = evidence["review_evidence"]["lane_roster"][0]  # type: ignore[index]
+    predecessor["producer_identity"] = thread["original_author"]  # type: ignore[index]
+    predecessor["successor_of"] = "unrelated-external-root"  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
 def test_review_contract_blocks_hosted_successor_without_external_root_proof() -> None:
     evidence = _hosted_successor_evidence()
     evidence["review_threads"][0].pop("external_root")  # type: ignore[index]

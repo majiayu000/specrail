@@ -355,7 +355,11 @@ def _verified_reviewer_resolver(
         if len(predecessors) != 1:
             return False
         predecessor = predecessors[0]
-        if predecessor.get("producer_identity") == original_author:
+        predecessor_successor = predecessor.get("successor_of")
+        if (
+            predecessor.get("producer_identity") == original_author
+            and not predecessor_successor
+        ):
             original_lanes = [
                 candidate for candidate in roster
                 if (
@@ -364,7 +368,7 @@ def _verified_reviewer_resolver(
                 )
             ]
             return len(original_lanes) == 1
-        cursor = predecessor.get("successor_of")
+        cursor = predecessor_successor
     return False
 
 
