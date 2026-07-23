@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specrail.local/schemas/pr_review_authorizations.schema.json",
+  "title": "Pull Request Review Authorizations",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "human_authorization": {
+      "type": "object",
+      "required": ["actor", "source"],
+      "additionalProperties": true,
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    },
+    "self_review_authorization": {
+      "type": "object",
+      "required": ["actor", "source", "scope"],
+      "additionalProperties": true,
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

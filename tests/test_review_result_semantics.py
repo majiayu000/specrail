@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ from review_result_semantics import (  # noqa: E402
     load_review_manifest,
     validate_review_artifact,
 )
+from evidence_content_binding import build_content_binding_evidence  # noqa: E402
 
 
 def load_review(name: str) -> dict[str, object]:
@@ -143,6 +145,10 @@ def install_review_schema(repo: Path) -> None:
     copyfile(
         ROOT / "schemas" / "review_result.schema.json",
         schema_dir / "review_result.schema.json",
+    )
+    copyfile(
+        ROOT / "schemas" / "content_binding_evidence.schema.json",
+        schema_dir / "content_binding_evidence.schema.json",
     )
 
 
@@ -506,6 +512,45 @@ def bounded_artifact(
     return artifact
 
 
+def bind_bounded_artifact(
+    repo: Path, artifact: dict[str, object], hash_prefix: str
+) -> dict[str, object]:
+    binding = {
+        "content_binding_version": 1,
+        "snapshot": {
+            "head_sha": artifact["head_sha"],
+            "base_tree_oid": "d" * 40,
+            "algorithm": "sha256",
+            "normalization": "specrail-v1",
+            "collector": "github_pr_evidence",
+        },
+        "content_hashes": {
+            "code_inputs": hash_prefix * 64,
+            "spec_files": "2" * 64,
+            "pr_metadata": "3" * 64,
+        },
+    }
+    sidecar = build_content_binding_evidence(489, binding)
+    relative = f"artifacts/content-bindings/{sidecar['artifact_id']}.json"
+    path = repo / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(sidecar, sort_keys=True).encode("utf-8")
+    path.write_bytes(raw)
+    artifact.update(
+        {
+            "content_binding_version": 1,
+            "covered_categories": ["code_inputs", "spec_files", "pr_metadata"],
+            "content_bindings": binding["content_hashes"],
+            "content_binding_evidence": {
+                "artifact_id": sidecar["artifact_id"],
+                "path": relative,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            },
+        }
+    )
+    return binding
+
+
 def write_bounded_manifest(repo: Path, artifacts: list[dict[str, object]]) -> str:
     install_review_schema(repo)
     review_dir = repo / "artifacts" / "reviews"
@@ -586,6 +631,40 @@ def test_v2_derives_round_audit_and_compact_carry(tmp_path: Path) -> None:
             } for item in artifacts
         ],
     }
+
+
+def test_v2_does_not_reuse_older_clean_round_past_newer_blocking_round(
+    tmp_path: Path,
+) -> None:
+    first = bounded_artifact(1)
+    current_binding = bind_bounded_artifact(tmp_path, first, "1")
+    finding = {
+        "id": "F-latest",
+        "severity": "important",
+        "actionable": True,
+        "summary": "Latest round blocks.",
+    }
+    second = bounded_artifact(2, findings=[finding])
+    second["verdict"] = "blocking"
+    bind_bounded_artifact(tmp_path, second, "4")
+    relative = write_bounded_manifest(tmp_path, [first, second])
+    manifest_path = tmp_path / relative
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    current_head = "f" * 40
+    manifest["head_sha"] = current_head
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    current_binding["snapshot"]["head_sha"] = current_head
+
+    result = load_review_manifest(
+        tmp_path,
+        relative,
+        expected_pr=489,
+        expected_head_sha=current_head,
+        current_binding=current_binding,
+    )
+
+    assert result["current_artifact_ids"] == []
+    assert any("no terminal artifact" in item for item in result["errors"])
 
 
 def test_v2_requires_bounded_marker_on_every_artifact(tmp_path: Path) -> None:

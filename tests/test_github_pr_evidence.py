@@ -31,7 +31,11 @@ from github_pr_evidence import (  # noqa: E402
     references_partial_issue,
 )
 from pr_gate import evaluate_pr_gate  # noqa: E402
-from schema_validation import SpecRailError, validate_instance  # noqa: E402
+from schema_validation import (  # noqa: E402
+    SpecRailError,
+    load_json_schema,
+    validate_instance,
+)
 from specrail_lib import PackConfig, load_pack  # noqa: E402
 
 
@@ -726,9 +730,7 @@ def test_merge_authorization_does_not_create_round_cap_authorization() -> None:
 
 
 def test_pr_gate_schema_closes_round_audit_and_cap_authorizations() -> None:
-    schema = json.loads(
-        (ROOT / "schemas" / "pr_review_gate.schema.json").read_text(encoding="utf-8")
-    )
+    schema = load_json_schema(ROOT / "schemas" / "pr_review_gate.schema.json")
     authorization_schema = schema["properties"]["round_cap_authorizations"]
     normalized_authorization = {
         **_round_cap_authorization(),

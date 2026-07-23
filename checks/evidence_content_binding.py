@@ -15,7 +15,7 @@ from github_evidence_common import (
     EvidenceError,
     trusted_ci_coverage,
 )
-from schema_validation import validate_instance
+from schema_validation import load_json_schema, validate_instance
 from specrail_lib import PackConfig, SpecRailError, resolve_repo_path, spec_packet_root
 
 
@@ -220,7 +220,7 @@ def load_content_binding_evidence(
         )
         raw = evidence_path.read_bytes()
         payload = json.loads(raw.decode("utf-8"))
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        schema = load_json_schema(schema_path)
     except (OSError, UnicodeError) as exc:
         raise EvidenceError(f"cannot read content binding evidence: {exc}") from exc
     except (json.JSONDecodeError, SpecRailError) as exc:
@@ -436,11 +436,13 @@ def load_versioned_pr_evidence(repo: Path, raw_path: str) -> dict[str, Any]:
     )
     try:
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        schema = load_json_schema(schema_path)
     except OSError as exc:
         raise EvidenceError(f"cannot read reused PR evidence: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise EvidenceError(f"reused PR evidence is invalid JSON: {exc.msg}") from exc
+    except SpecRailError as exc:
+        raise EvidenceError(f"reused PR evidence schema is invalid: {exc}") from exc
     if not isinstance(evidence, dict) or not isinstance(schema, dict):
         raise EvidenceError("reused PR evidence and schema must be objects")
     try:

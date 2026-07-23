@@ -378,98 +378,10 @@
       }
     },
     "thread_dispatch_gate": {
-      "type": ["object", "null"],
-      "additionalProperties": true,
-      "properties": {
-        "explicit_thread_request": {
-          "type": ["string", "boolean", "null"]
-        },
-        "native_subagents": {
-          "type": ["string", "boolean", "null"]
-        },
-        "spawn_requirement": {
-          "type": ["string", "boolean", "null"]
-        },
-        "fallback_mode": {
-          "type": ["string", "null"]
-        },
-        "planned_native_threads": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": true,
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1
-              },
-              "role": {
-                "type": "string",
-                "minLength": 1
-              },
-              "target": {
-                "type": "string",
-                "minLength": 1
-              },
-              "write_scope": {
-                "type": "string",
-                "minLength": 1
-              },
-              "spawn_status": {
-                "type": "string",
-                "minLength": 1
-              },
-              "no_spawn_reason": {
-                "type": ["string", "null"]
-              }
-            }
-          }
-        },
-        "native_thread_evidence": {
-          "type": ["object", "null"],
-          "additionalProperties": true,
-          "properties": {
-            "spawned_agents": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": true,
-                "properties": {
-                  "lane_id": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "spawn_tool": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "agent_id_or_thread_id": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "wait_evidence": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "close_evidence": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "result_collected": {
-                    "type": ["string", "boolean"]
-                  }
-                }
-              }
-            },
-            "fallback_reason": {
-              "type": ["string", "null"]
-            }
-          }
-        },
-        "no_spawn_reason": {
-          "type": ["string", "null"]
-        }
-      }
+      "anyOf": [
+        {"type": "null"},
+        {"$ref": "runtime_thread_dispatch_gate.schema.json"}
+      ]
     },
     "items": {
       "type": "array",
@@ -478,11 +390,56 @@
         "type": "object",
         "required": ["state", "next_action"],
         "additionalProperties": true,
-        "description": "Legacy runtime metadata remains extensible. For v1 items, runtime_ledger_gate closes the content-binding namespace; nested binding objects are closed below.",
+        "description": "Legacy runtime metadata remains extensible. Versioned v1 runtime items use the closed field set declared by the conditional below.",
         "allOf": [
           {
             "if": {"required": ["content_binding_version"]},
-            "then": {"required": ["snapshot", "content_hashes", "reused_components"]},
+            "then": {
+              "required": ["snapshot", "content_hashes", "reused_components"],
+              "additionalProperties": false,
+              "properties": {
+                "approved_spec_evidence": {},
+                "blocked_reason": {},
+                "blocker": {},
+                "branch": {},
+                "ci": {},
+                "content_binding_version": {},
+                "content_hashes": {},
+                "enforcement_sensitive": {},
+                "head_sha": {},
+                "issue": {},
+                "lane_failures": {},
+                "local_verification": {},
+                "merge_authorization": {},
+                "merge_state": {},
+                "next_action": {},
+                "pr": {},
+                "pr_gate": {},
+                "pr_kind": {},
+                "reused_components": {},
+                "review": {},
+                "review_source": {},
+                "review_threads": {},
+                "self_review_authorization": {},
+                "sensitive_route": {},
+                "snapshot": {},
+                "spec_approval_evidence": {},
+                "spec_status": {
+                  "enum": [
+                    "complete",
+                    "needs_tasks",
+                    "needs_spec",
+                    "umbrella_covered",
+                    "exception_allowed",
+                    null
+                  ]
+                },
+                "spec_status_reason": {},
+                "state": {},
+                "truth_level": {},
+                "worktree": {}
+              }
+            },
             "else": {"properties": {"snapshot": {"const": null}, "content_hashes": {"const": null}, "reused_components": {"const": null}}}
           },
           {

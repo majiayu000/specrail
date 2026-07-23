@@ -281,16 +281,23 @@ def test_runtime_sensitive_reuse_requires_code_and_spec_coverage(
     assert any("code_inputs and spec_files" in error for error in result["errors"])
 
 
-def test_runtime_v1_binding_rejects_unknown_binding_like_item_field(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "field",
+    ["content_binding_extra", "covered_categories", "original_content_bindings"],
+)
+def test_runtime_v1_binding_rejects_unknown_item_field(
+    tmp_path: Path, field: str
 ) -> None:
     checkpoint = _v1_checkpoint(tmp_path)
-    checkpoint["items"][0]["content_binding_extra"] = "undeclared"  # type: ignore[index]
+    checkpoint["items"][0][field] = "undeclared"  # type: ignore[index]
 
     result = evaluate_checkpoint(checkpoint, repo=tmp_path)
 
     assert result["decision"] == "blocked"
-    assert any("unknown v1 content-binding field" in error for error in result["errors"])
+    assert any(
+        f"unknown v1 runtime item field {field!r}" in error
+        for error in result["errors"]
+    )
 
 
 def test_runtime_legacy_item_keeps_extension_compatibility() -> None:
@@ -300,7 +307,7 @@ def test_runtime_legacy_item_keeps_extension_compatibility() -> None:
     result = evaluate_checkpoint(checkpoint)
 
     assert result["decision"] in {"allowed", "warn"}, result["errors"]
-    assert not any("unknown v1 content-binding field" in error for error in result["errors"])
+    assert not any("unknown v1 runtime item field" in error for error in result["errors"])
 
 
 def test_runtime_v1_reuse_rejects_duplicate_coverage(tmp_path: Path) -> None:

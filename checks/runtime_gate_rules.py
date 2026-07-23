@@ -35,6 +35,41 @@ BUDGET_BASES_V3 = BUDGET_BASES | {"runtime_dims"}
 BUDGET_STOP_REASONS = {"budget_exhausted", "queue_empty", "user_interrupt", "blocked"}
 TELEMETRY_SOURCES = {"runtime", "session_log", "unavailable"}
 TRUSTED_TELEMETRY_SOURCES = {"runtime", "session_log"}
+RUNTIME_V1_ITEM_FIELDS = frozenset(
+    {
+        "approved_spec_evidence",
+        "blocked_reason",
+        "blocker",
+        "branch",
+        "ci",
+        "content_binding_version",
+        "content_hashes",
+        "enforcement_sensitive",
+        "head_sha",
+        "issue",
+        "lane_failures",
+        "local_verification",
+        "merge_authorization",
+        "merge_state",
+        "next_action",
+        "pr",
+        "pr_gate",
+        "pr_kind",
+        "reused_components",
+        "review",
+        "review_source",
+        "review_threads",
+        "self_review_authorization",
+        "sensitive_route",
+        "snapshot",
+        "spec_approval_evidence",
+        "spec_status",
+        "spec_status_reason",
+        "state",
+        "truth_level",
+        "worktree",
+    }
+)
 
 def _require_positive_int(
     data: dict[str, Any],
@@ -80,14 +115,11 @@ def _item_review_source(raw_item: dict[str, Any]) -> str:
 def _validate_runtime_content_binding(
     item: dict[str, Any], label: str, errors: list[str]
 ) -> None:
-    """Close v1 binding names and reuse-audit category mappings."""
+    """Close v1 runtime items and validate reuse-audit category mappings."""
     if item.get("content_binding_version") != CONTENT_BINDING_VERSION:
         return
-    known = {"content_binding_version", "snapshot", "content_hashes", "reused_components"}
-    prefixes = ("content_binding", "content_hash", "snapshot", "reused_component")
-    for key in item:
-        if key not in known and key.startswith(prefixes):
-            errors.append(f"{label}: unknown v1 content-binding field {key!r}")
+    for key in sorted(set(item) - RUNTIME_V1_ITEM_FIELDS):
+        errors.append(f"{label}: unknown v1 runtime item field {key!r}")
     audits = item.get("reused_components")
     if not isinstance(audits, list):
         return

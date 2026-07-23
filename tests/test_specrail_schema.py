@@ -12,6 +12,8 @@ CHECKS = ROOT / "checks"
 sys.path.insert(0, str(CHECKS))
 
 from runtime_ledger_gate import evaluate_checkpoint  # noqa: E402
+from runtime_gate_rules import RUNTIME_V1_ITEM_FIELDS  # noqa: E402
+from schema_validation import load_json_schema  # noqa: E402
 from specrail_lib import (  # noqa: E402
     InstanceMismatch,
     SchemaDefinitionError,
@@ -21,15 +23,11 @@ from specrail_lib import (  # noqa: E402
 
 
 def runtime_checkpoint_schema() -> dict[str, object]:
-    return json.loads(
-        (ROOT / "schemas" / "runtime_checkpoint.schema.json").read_text(encoding="utf-8")
-    )
+    return load_json_schema(ROOT / "schemas" / "runtime_checkpoint.schema.json")
 
 
 def pr_review_gate_schema() -> dict[str, object]:
-    return json.loads(
-        (ROOT / "schemas" / "pr_review_gate.schema.json").read_text(encoding="utf-8")
-    )
+    return load_json_schema(ROOT / "schemas" / "pr_review_gate.schema.json")
 
 
 def review_result_schema() -> dict[str, object]:
@@ -264,6 +262,31 @@ def test_validate_instance_rejects_invalid_nested_schema_before_evaluation(
         match="unsupported JSON Schema keyword",
     ):
         validate_instance(schema, {"legacy": True})
+
+
+def test_load_json_schema_rejects_reference_escape(tmp_path: Path) -> None:
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    (tmp_path / "outside.schema.json").write_text(
+        '{"type":"object"}', encoding="utf-8"
+    )
+    entry = schema_dir / "entry.schema.json"
+    entry.write_text(
+        '{"$ref":"../outside.schema.json"}', encoding="utf-8"
+    )
+
+    with pytest.raises(SchemaDefinitionError, match="escapes the schema directory"):
+        load_json_schema(entry)
+
+
+def test_load_json_schema_rejects_reference_cycle(tmp_path: Path) -> None:
+    entry = tmp_path / "entry.schema.json"
+    helper = tmp_path / "helper.schema.json"
+    entry.write_text('{"$ref":"helper.schema.json"}', encoding="utf-8")
+    helper.write_text('{"$ref":"entry.schema.json"}', encoding="utf-8")
+
+    with pytest.raises(SchemaDefinitionError, match="circular"):
+        load_json_schema(entry)
 
 
 def test_validate_instance_supports_min_properties_for_approved_spec_revisions() -> None:
@@ -998,8 +1021,24 @@ def test_component_binding_key_equality_is_reserved_for_semantic_validator() -> 
     validate_instance(review_result_schema(), review)
 
 
-def test_runtime_schema_keeps_item_extensions_for_semantic_v1_closure() -> None:
+@pytest.mark.parametrize("field", ["covered_categories", "original_content_bindings"])
+def test_runtime_schema_closes_v1_item_field_set(field: str) -> None:
     checkpoint = valid_v1_checkpoint()
-    checkpoint["items"][0]["content_binding_extra"] = "semantic gate owns names"
+    checkpoint["items"][0][field] = {}
+
+    with pytest.raises(InstanceMismatch, match=rf"{field}.*additional property"):
+        validate_instance(runtime_checkpoint_schema(), checkpoint)
+
+
+def test_runtime_schema_keeps_legacy_item_extensions() -> None:
+    checkpoint = valid_checkpoint()
+    checkpoint["items"][0]["consumer_extension"] = "legacy metadata"
 
     validate_instance(runtime_checkpoint_schema(), checkpoint)
+
+
+def test_runtime_v1_schema_and_semantic_field_sets_match() -> None:
+    item_schema = runtime_checkpoint_schema()["properties"]["items"]["items"]
+    schema_fields = set(item_schema["allOf"][0]["then"]["properties"])
+
+    assert schema_fields == RUNTIME_V1_ITEM_FIELDS

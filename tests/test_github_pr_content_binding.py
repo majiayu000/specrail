@@ -514,6 +514,12 @@ def test_versioned_pr_evidence_loader_requires_repo_local_schema_backed_input(
         (ROOT / "schemas/pr_review_gate.schema.json").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    (tmp_path / "schemas/pr_review_authorizations.schema.json").write_text(
+        (ROOT / "schemas/pr_review_authorizations.schema.json").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
     evidence = json.loads(
         (ROOT / "examples/fixtures/pr-clean-authorized.json").read_text(
             encoding="utf-8"

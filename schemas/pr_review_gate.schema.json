@@ -759,44 +759,10 @@
       "description": "Execution provenance derived from the trusted review manifest. hosted is supplemental only."
     },
     "human_authorization": {
-      "type": "object",
-      "required": ["actor", "source"],
-      "additionalProperties": true,
-      "properties": {
-        "actor": {
-          "type": "string",
-          "minLength": 1
-        },
-        "source": {
-          "type": "string",
-          "minLength": 1
-        },
-        "summary": {
-          "type": "string"
-        }
-      }
+      "$ref": "pr_review_authorizations.schema.json#/properties/human_authorization"
     },
     "self_review_authorization": {
-      "type": "object",
-      "required": ["actor", "source", "scope"],
-      "additionalProperties": true,
-      "properties": {
-        "actor": {
-          "type": "string",
-          "minLength": 1
-        },
-        "source": {
-          "type": "string",
-          "minLength": 1
-        },
-        "scope": {
-          "type": "string",
-          "minLength": 1
-        },
-        "summary": {
-          "type": "string"
-        }
-      }
+      "$ref": "pr_review_authorizations.schema.json#/properties/self_review_authorization"
     }
   }
 }

@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "checks"))
 
 from pack_asset_validation import (  # noqa: E402
+    MAX_SCHEMA_LINES,
     SPEC_SCHEMA_FILES,
     SPEC_TEMPLATE_FILES,
     validate_json_schemas,
@@ -62,6 +63,39 @@ def test_validation_requires_specrail_owned_assets(tmp_path: Path) -> None:
     assert validate_template_parity(repo) == [
         "templates/zh-CN: missing localized template issue_bug.md"
     ]
+
+
+def test_schema_validation_requires_extracted_reference_assets(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    copy_pack_assets(repo)
+    fragment = repo / "schemas" / "runtime_thread_dispatch_gate.schema.json"
+    fragment.unlink()
+
+    errors = validate_json_schemas(repo)
+
+    assert (
+        "schemas: missing SpecRail schema runtime_thread_dispatch_gate.schema.json"
+        in errors
+    )
+    assert any(
+        "runtime_checkpoint.schema.json: unusable schema references" in error
+        for error in errors
+    )
+
+
+def test_schema_validation_enforces_hard_line_limit(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    copy_pack_assets(repo)
+    schema = repo / "schemas" / "flow_manifest.schema.json"
+    schema.write_text(
+        schema.read_text(encoding="utf-8") + "\n" * MAX_SCHEMA_LINES,
+        encoding="utf-8",
+    )
+
+    assert any(
+        f"exceeds {MAX_SCHEMA_LINES}-line hard limit" in error
+        for error in validate_json_schemas(repo)
+    )
 
 
 def test_template_validation_reports_owned_base_and_stable_token_errors(

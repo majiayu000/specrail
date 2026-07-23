@@ -20,14 +20,13 @@ from pr_gate import evaluate_pr_gate
 from pr_gate_test_support import sensitive_evidence
 from runtime_ledger_gate import evaluate_checkpoint
 from runtime_ledger_test_support import clean_checkpoint
+from schema_validation import load_json_schema
 from sensitive_enforcement import classify_sensitive_changes
 from specrail_lib import PackConfig, validate_instance
 
 
 def _schema(name: str) -> dict[str, object]:
-    return json.loads(
-        (ROOT / "schemas" / name).read_text(encoding="utf-8")
-    )
+    return load_json_schema(ROOT / "schemas" / name)
 
 
 def _git(repo: Path, *args: str) -> str:
