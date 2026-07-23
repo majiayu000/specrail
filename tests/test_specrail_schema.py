@@ -1045,3 +1045,48 @@ def test_runtime_v1_schema_and_semantic_field_sets_match() -> None:
     schema_fields = set(item_schema["allOf"][0]["then"]["properties"])
 
     assert schema_fields == RUNTIME_V1_ITEM_FIELDS
+
+
+def _checks_unavailable_evidence() -> dict[str, object]:
+    evidence = json.loads(
+        (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    evidence["checks"] = []
+    evidence["base_ref"] = "spec/GH60-transactional-patching"
+    evidence["default_base_ref"] = "main"
+    evidence["checks_unavailable"] = {
+        "reason": "hosted_ci_not_triggered_for_base",
+        "base_ref": "spec/GH60-transactional-patching",
+        "default_base_ref": "main",
+        "workflow_trigger_evidence": (
+            ".github/workflows/ci.yml: on.pull_request.branches == ['main']"
+        ),
+        "local_verification": ["cargo test --workspace --locked"],
+        "verified": True,
+    }
+    return evidence
+
+
+def test_pr_gate_schema_accepts_checks_unavailable_declaration() -> None:
+    validate_instance(pr_review_gate_schema(), _checks_unavailable_evidence())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"reason": "ci_is_slow"},
+        {"verified": False},
+        {"local_verification": []},
+        {"extra": "x"},
+    ],
+)
+def test_pr_gate_schema_rejects_invalid_checks_unavailable(
+    mutation: dict[str, object],
+) -> None:
+    evidence = _checks_unavailable_evidence()
+    evidence["checks_unavailable"].update(mutation)
+
+    with pytest.raises(InstanceMismatch):
+        validate_instance(pr_review_gate_schema(), evidence)
