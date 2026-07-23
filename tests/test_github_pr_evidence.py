@@ -111,6 +111,7 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
             "original_author": "reviewer",
             "resolved_by": "reviewer",
             "resolver_role": "reviewer_lane",
+            "resolver_role_source": "explicit_map",
             "lane_id": "reviewer-1",
         }
     ]
@@ -386,6 +387,7 @@ def test_build_evidence_maps_resolver_role_from_lane_roster() -> None:
     )
 
     assert evidence["review_threads"][0]["resolver_role"] == "reviewer_lane"
+    assert evidence["review_threads"][0]["resolver_role_source"] == "explicit_map"
     assert evidence["review_threads"][0]["lane_id"] == "reviewer-1"
     assert evidence["review_threads"][0]["original_author"] == "reviewer"
     assert evidence["review_threads"][0]["original_comment_id"] == "PRRC_kwDOExampleRoot"

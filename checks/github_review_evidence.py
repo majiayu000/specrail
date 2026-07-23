@@ -401,6 +401,7 @@ def normalize_review_threads(
         if resolver:
             thread["resolved_by"] = resolver
         role = _resolver_role(item)
+        role_source = "github_payload" if role else None
         metadata: dict[str, Any] = {}
         if resolver and resolver_roles:
             raw_metadata = None
@@ -425,8 +426,13 @@ def normalize_review_threads(
             )
             if not role:
                 role = metadata.get("resolver_role")
+                role_source = "explicit_map"
+            elif metadata.get("resolver_role") == role:
+                role_source = "explicit_map"
         if role:
             thread["resolver_role"] = role
+        if role_source:
+            thread["resolver_role_source"] = role_source
         for key in [
             "lane_id",
             "successor_of",
