@@ -310,6 +310,8 @@ def _verified_reviewer_resolver(
         return False
 
     mapped_login = thread.get("resolver_role_source") == "explicit_map"
+    if successor_of and not mapped_login:
+        return False
     if resolved_by != producer_identity and not mapped_login:
         return False
     re_review_artifact_id = thread.get("re_review_artifact_id")

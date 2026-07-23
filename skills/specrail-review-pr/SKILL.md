@@ -102,6 +102,9 @@ credential login through `--resolver-role-map`; do not rename the local
 artifact `producer_identity` to impersonate that login. For hosted-review roots,
 successor lane lineage must terminate at the exact hosted `original_author`,
 and the resolving lane must provide a trusted terminal re-review artifact.
+Every successor resolution requires an explicit resolver mapping. When one
+GitHub login represents multiple lanes, use a thread-specific mapping instead
+of duplicate global login entries.
 
 Implementation lanes and orchestrators must not call `resolveReviewThread` for
 reviewer-lane findings. They may reply with context and push fixes, but the

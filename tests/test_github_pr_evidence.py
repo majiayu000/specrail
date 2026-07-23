@@ -496,6 +496,20 @@ def test_thread_specific_resolver_override_requires_resolver_login(
         load_resolver_role_map(str(role_map))
 
 
+def test_resolver_role_map_rejects_duplicate_global_lane_login(tmp_path: Path) -> None:
+    role_map = tmp_path / "resolver-map.json"
+    role_map.write_text(
+        json.dumps({"lane_roster": [
+            {"login": "shared", "resolver_role": "reviewer_lane", "lane_id": "one"},
+            {"login": "shared", "resolver_role": "reviewer_lane", "lane_id": "two"},
+        ]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(EvidenceError, match="duplicate global resolver login"):
+        load_resolver_role_map(str(role_map))
+
+
 @pytest.mark.parametrize(
     ("root_mutation", "message"),
     [

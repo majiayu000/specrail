@@ -130,12 +130,22 @@ def _resolver_role_map(payload: Any) -> dict[str, dict[str, Any]]:
             source = payload["lanes"]
 
     roles: dict[str, dict[str, Any]] = {}
+    seen_global_logins: dict[str, str] = {}
     if isinstance(source, dict):
         for login, value in source.items():
             if not isinstance(login, str) or not login.strip():
                 raise EvidenceError("resolver role map login must be a non-empty string")
-            roles[login.strip()] = _normalize_resolver_entry(
-                value, f"resolver role map {login.strip()}"
+            normalized_login = login.strip()
+            folded_login = normalized_login.casefold()
+            if folded_login in seen_global_logins:
+                raise EvidenceError(
+                    "duplicate global resolver login: "
+                    f"{seen_global_logins[folded_login]} and {normalized_login}; "
+                    "use thread_resolver_roles to disambiguate"
+                )
+            seen_global_logins[folded_login] = normalized_login
+            roles[normalized_login] = _normalize_resolver_entry(
+                value, f"resolver role map {normalized_login}"
             )
         _add_thread_resolver_roles(payload, roles)
         return roles
@@ -147,7 +157,16 @@ def _resolver_role_map(payload: Any) -> dict[str, dict[str, Any]]:
             login = lane.get("login") or lane.get("github_login") or lane.get("actor") or lane.get("resolved_by")
             if not isinstance(login, str) or not login.strip():
                 raise EvidenceError(f"resolver role lane_roster item #{index} requires login")
-            roles[login.strip()] = _normalize_resolver_entry(
+            normalized_login = login.strip()
+            folded_login = normalized_login.casefold()
+            if folded_login in seen_global_logins:
+                raise EvidenceError(
+                    "duplicate global resolver login: "
+                    f"{seen_global_logins[folded_login]} and {normalized_login}; "
+                    "use thread_resolver_roles to disambiguate"
+                )
+            seen_global_logins[folded_login] = normalized_login
+            roles[normalized_login] = _normalize_resolver_entry(
                 lane, f"resolver role lane_roster item #{index}"
             )
         _add_thread_resolver_roles(payload, roles)

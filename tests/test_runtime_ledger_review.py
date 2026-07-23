@@ -122,6 +122,23 @@ def test_review_contract_blocks_unmapped_shared_github_resolver_login() -> None:
     assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
 
 
+def test_review_contract_blocks_unmapped_hosted_root_roster_impersonation() -> None:
+    evidence = _hosted_successor_evidence()
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    thread.pop("resolver_role_source")  # type: ignore[union-attr]
+    resolved_by = thread["resolved_by"]  # type: ignore[index]
+    review_evidence = evidence["review_evidence"]  # type: ignore[index]
+    review_evidence["artifacts"][0]["producer_identity"] = resolved_by  # type: ignore[index]
+    review_evidence["lane_roster"][1]["producer_identity"] = resolved_by  # type: ignore[index]
+    root_lane = review_evidence["lane_roster"][0]  # type: ignore[index]
+    root_lane["producer_identity"] = thread["original_author"]  # type: ignore[index]
+    root_lane.pop("successor_of")  # type: ignore[union-attr]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
 def test_review_contract_blocks_hosted_successor_with_wrong_external_root() -> None:
     evidence = _hosted_successor_evidence()
     evidence["review_evidence"]["lane_roster"][0]["successor_of"] = "other-bot"  # type: ignore[index]

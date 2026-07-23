@@ -106,6 +106,10 @@ The adapter records `resolver_role_source: explicit_map` for this bridge.
 `resolvedBy` is the GitHub credential login and need not equal the local review
 artifact's `producer_identity`; the gate instead requires the mapped lane,
 current/reusable terminal re-review artifact, and manifest producer to agree.
+Every successor resolver requires this explicit mapping, even when its
+`resolvedBy` login happens to equal the local producer identity. Global
+resolver-login mappings must be unique case-insensitively; use
+`thread_resolver_roles` to disambiguate a shared login across lanes.
 For a hosted root reviewer followed by local successor lanes, the manifest
 lineage must end at the exact GraphQL `original_author`; missing or mismatched
 external roots fail closed.
