@@ -10,6 +10,15 @@
     "quote": "可以 按照你的来做 你又全部授权 你是auto模式",
     "recorded_at": "2026-07-22T23:48:08Z",
     "waived_human_gate": "spec_approval",
+    "invocation_scoped": true,
+    "standing_authorization": false,
+    "waiver_effect": "waives spec_approval only for the historical GH180 bootstrap task-planning invocation",
+    "does_not_waive": [
+      "readiness_label",
+      "duplicate_work_freshness",
+      "packet_validation",
+      "saved_result_binding"
+    ],
     "scope": "GH180 bootstrap exception only",
     "does_not_prove": "spec_pr_open -> spec_review -> spec_approved lifecycle"
   },
@@ -64,6 +73,7 @@
     "observed_kind": "direct readiness-label transition",
     "normal_lifecycle_completed": false,
     "normal_spec_approval_gate_satisfied": false,
+    "spec_approval_waived_for_historical_invocation": true,
     "ready_to_implement_label_alone_satisfies_spec_approval": false,
     "exception": "GH180 one-time auth_mode=auto old-validator bootstrap",
     "scope": "task planning only; no production implementation in T10",
