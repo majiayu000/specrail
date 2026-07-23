@@ -112,6 +112,26 @@ def _normalize_resolver_entry(value: Any, label: str) -> dict[str, Any]:
         item = value.get(key)
         if isinstance(item, str) and item.strip():
             normalized[key] = item.strip()
+    if "external_root" in value:
+        external_root = value["external_root"]
+        if not isinstance(external_root, dict) or set(external_root) != {
+            "author",
+            "review_execution",
+        }:
+            raise EvidenceError(
+                f"{label}.external_root must contain only author and review_execution"
+            )
+        author = external_root.get("author")
+        if not isinstance(author, str) or not author.strip():
+            raise EvidenceError(f"{label}.external_root.author must be a non-empty string")
+        if external_root.get("review_execution") != "hosted":
+            raise EvidenceError(
+                f"{label}.external_root.review_execution must equal hosted"
+            )
+        normalized["external_root"] = {
+            "author": author.strip(),
+            "review_execution": "hosted",
+        }
     if "authorized_human_maintainer" in value:
         if not isinstance(value["authorized_human_maintainer"], bool):
             raise EvidenceError(f"{label}.authorized_human_maintainer must be a boolean")
@@ -455,6 +475,7 @@ def normalize_review_threads(
         for key in [
             "lane_id",
             "successor_of",
+            "external_root",
             "re_review_artifact_id",
             "authorized_human_maintainer",
         ]:

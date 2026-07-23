@@ -301,17 +301,22 @@ def _verified_reviewer_resolver(
     lane = lanes[0]
     producer_identity = lane.get("producer_identity")
     successor_of = lane.get("successor_of")
-    if not successor_of:
-        if producer_identity != original_author:
-            return False
-        if resolved_by == original_author:
-            return True
-    elif successor_of != thread.get("successor_of"):
+    if successor_of and successor_of != thread.get("successor_of"):
         return False
 
     mapped_login = thread.get("resolver_role_source") == "explicit_map"
     if successor_of and not mapped_login:
         return False
+    if not successor_of:
+        direct_root = (
+            producer_identity == original_author
+            and resolved_by == original_author
+        )
+        mapped_shared_root = mapped_login and resolved_by == original_author
+        if direct_root:
+            return True
+        if not mapped_shared_root:
+            return False
     if resolved_by != producer_identity and not mapped_login:
         return False
     re_review_artifact_id = thread.get("re_review_artifact_id")
@@ -328,7 +333,7 @@ def _verified_reviewer_resolver(
     if not verified_re_review:
         return False
     if not successor_of:
-        return producer_identity == original_author
+        return True
 
     cursor = successor_of
     visited: set[str] = set()
@@ -339,7 +344,14 @@ def _verified_reviewer_resolver(
             if isinstance(candidate, dict) and candidate.get("lane_id") == cursor
         ]
         if not predecessors:
-            return mapped_login and cursor == original_author
+            external_root = thread.get("external_root")
+            return bool(
+                mapped_login
+                and cursor == original_author
+                and isinstance(external_root, dict)
+                and external_root.get("author") == original_author
+                and external_root.get("review_execution") == "hosted"
+            )
         if len(predecessors) != 1:
             return False
         predecessor = predecessors[0]

@@ -424,6 +424,10 @@ def test_resolver_role_map_supports_thread_specific_lane_override(
                         "resolver_role": "reviewer_lane",
                         "lane_id": "reviewer-successor",
                         "successor_of": "bot-root",
+                        "external_root": {
+                            "author": "bot",
+                            "review_execution": "hosted",
+                        },
                         "re_review_artifact_id": "current-clean",
                     }
                 },
@@ -440,6 +444,7 @@ def test_resolver_role_map_supports_thread_specific_lane_override(
     assert normalized[0]["lane_id"] == "reviewer-root"
     assert normalized[1]["lane_id"] == "reviewer-successor"
     assert normalized[1]["successor_of"] == "bot-root"
+    assert normalized[1]["external_root"]["author"] == "bot"
     assert normalized[1]["re_review_artifact_id"] == "current-clean"
 
     role_map.write_text(

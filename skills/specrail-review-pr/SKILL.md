@@ -104,7 +104,9 @@ successor lane lineage must terminate at the exact hosted `original_author`,
 and the resolving lane must provide a trusted terminal re-review artifact.
 Every successor resolution requires an explicit resolver mapping. When one
 GitHub login represents multiple lanes, use a thread-specific mapping instead
-of duplicate global login entries.
+of duplicate global login entries. A hosted root omitted from the local roster
+must be declared as `external_root` with the exact author and
+`review_execution: hosted`; an untyped missing predecessor is not proof.
 
 Implementation lanes and orchestrators must not call `resolveReviewThread` for
 reviewer-lane findings. They may reply with context and push fixes, but the

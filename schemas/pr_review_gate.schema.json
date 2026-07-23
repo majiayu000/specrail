@@ -574,6 +574,15 @@
           },
           "lane_id": {"type": "string", "minLength": 1},
           "successor_of": {"type": "string", "minLength": 1},
+          "external_root": {
+            "type": "object",
+            "required": ["author", "review_execution"],
+            "additionalProperties": false,
+            "properties": {
+              "author": {"type": "string", "minLength": 1},
+              "review_execution": {"const": "hosted"}
+            }
+          },
           "re_review_artifact_id": {"type": "string", "minLength": 1},
           "authorized_human_maintainer": {"type": "boolean"}
         }

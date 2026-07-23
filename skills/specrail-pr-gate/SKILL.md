@@ -112,7 +112,10 @@ resolver-login mappings must be unique case-insensitively; use
 `thread_resolver_roles` to disambiguate a shared login across lanes.
 For a hosted root reviewer followed by local successor lanes, the manifest
 lineage must end at the exact GraphQL `original_author`; missing or mismatched
-external roots fail closed.
+external roots fail closed. If that root is intentionally external to the
+manifest roster, the resolver mapping must include `external_root` with the
+exact author and `review_execution: hosted`. A mapped root lane using a shared
+credential still needs its current terminal artifact and exact lane producer.
 
 If the PR head changes, new review activity appears, CI changes, or merge is
 deferred long enough that the evidence may be stale, collect fresh PR evidence

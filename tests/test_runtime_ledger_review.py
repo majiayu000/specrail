@@ -99,6 +99,10 @@ def _hosted_successor_evidence() -> dict[str, object]:
             "resolver_role_source": "explicit_map",
             "lane_id": "reviewer-successor",
             "successor_of": "reviewer-local-root",
+            "external_root": {
+                "author": "chatgpt-codex-connector",
+                "review_execution": "hosted",
+            },
             "re_review_artifact_id": artifact["artifact_id"],  # type: ignore[index]
         }
     )
@@ -146,6 +150,37 @@ def test_review_contract_blocks_hosted_successor_with_wrong_external_root() -> N
     _, _, reasons = evaluate_review_contract(evidence)
 
     assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
+def test_review_contract_blocks_hosted_successor_without_external_root_proof() -> None:
+    evidence = _hosted_successor_evidence()
+    evidence["review_threads"][0].pop("external_root")  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert any("lacks original/successor re-review evidence" in reason for reason in reasons)
+
+
+def test_review_contract_allows_mapped_root_lane_shared_credential() -> None:
+    evidence = _hosted_successor_evidence()
+    review_evidence = evidence["review_evidence"]  # type: ignore[index]
+    artifact = review_evidence["artifacts"][0]  # type: ignore[index]
+    review_evidence["lane_roster"] = [{  # type: ignore[index]
+        "lane_id": "reviewer-successor",
+        "producer_identity": "native-successor",
+    }]
+    thread = evidence["review_threads"][0]  # type: ignore[index]
+    thread.update({  # type: ignore[union-attr]
+        "original_author": "repository-owner-login",
+        "resolved_by": "repository-owner-login",
+    })
+    thread.pop("successor_of")  # type: ignore[union-attr]
+    thread.pop("external_root")  # type: ignore[union-attr]
+    thread["re_review_artifact_id"] = artifact["artifact_id"]  # type: ignore[index]
+
+    _, _, reasons = evaluate_review_contract(evidence)
+
+    assert reasons == []
 
 
 def test_review_contract_blocks_hosted_successor_with_mismatched_artifact_producer() -> None:
