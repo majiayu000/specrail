@@ -35,15 +35,21 @@ wait。Codex direct exec 的有效上限实际为 30000 ms，这段指导既无�
 1. B-001 当 Skill 指导直接调用 `exec_command` 时，必须声明有效
    `yield_time_ms` 上限为 30000；不得建议给 direct exec 传入更大的值来延长等待。
 2. B-002 当 code-mode 编排一个可能超过 30 秒的命令时，必须在同一个外层工具调用内
-   使用长等待预算，并让内层 `exec_command` 使用 `yield_time_ms: 30000`。
-3. B-003 当且仅当 B-002 的内层 exec 返回 `session_id` 时，同一个外层调用才可执行
-   一次空 `write_stdin`，其 `yield_time_ms` 必须为 1800000。
+   使用长等待预算 `// @exec: {"yield_time_ms": 1800000}`，并让内层 `exec_command`
+   使用 `yield_time_ms: 30000`。
+3. B-003 当且仅当 B-002 的内层 exec 返回 `session_id` 时，同一个外层调用才可执行空
+   `write_stdin`，其 `yield_time_ms` 必须为空轮询工具上限 300000；不得声明大于该
+   上限的值（`write_stdin` 空轮询的支持区间是 5000-300000 ms）。当命令可能超过
+   300000 ms 时，重复空 `write_stdin` 只允许发生在同一个外层调用内部的脚本循环中，
+   直到终态或外层 1800000 ms 预算耗尽；这不产生额外模型 turn，因此不算轮询。
 4. B-004 当内层 exec 已完成且没有 `session_id` 时，编排不得调用 `write_stdin`，
    也不得为了“确认完成”再次查询相同命令。
-5. B-005 当单次长 `write_stdin` 返回后任务仍非终态时，模型不得再次空轮询；必须基于
+5. B-005 当外层调用返回后任务仍非终态时，模型不得再发起新的空等待 turn；必须基于
    已返回证据报告未完成，或执行一次有新信息的诊断/终止动作。
-6. B-006 当调用方只能使用 direct `exec_command` 且命令转入 session 时，必须只追加
-   一次 `write_stdin(chars: "", yield_time_ms: 1800000)`；不得循环或指数增长等待。
+6. B-006 当调用方只能使用 direct `exec_command`（无 code-mode）且命令转入 session
+   时，模型可见的空 `write_stdin(chars: "", yield_time_ms: 300000)` 最多一次；若命令
+   预期超过该上限，必须改用自身阻塞到终态的原语（`gh ... --watch`、前台运行并把输出
+   写入 artifact），不得用多个模型 turn 的空等待累积，也不得指数增长等待。
 7. B-007 当等待 reviewer 或其他 subagent 完成时，必须优先执行一次
    `wait_agent(timeout_ms: 1800000)`，且不得在该等待前后用 `list_agents` 做状态轮询。
 8. B-008 当 B-007 的长等待超时时，系统必须只检查一次当前状态；没有可信进展时应
@@ -74,8 +80,9 @@ wait。Codex direct exec 的有效上限实际为 30000 ms，这段指导既无�
 
 ## 验收标准
 
-- [ ] queue/implx 明确区分 direct exec 30 秒上限与外层 1800000 ms 长等待。
-- [ ] 一个长命令最多产生一次空 `write_stdin`；subagent 等待最多产生一次长
+- [ ] queue/implx 明确区分 direct exec 30000 ms 上限、空轮询 300000 ms 上限与
+      外层 cell 1800000 ms 预算。
+- [ ] 一个长命令最多产生一次模型可见的空 `write_stdin`；subagent 等待最多产生一次长
       `wait_agent`，且没有 `list_agents` 轮询包围。
 - [ ] 静态校验对正确合同通过，并对每个已知错误模式给出稳定的失败证据。
 - [ ] 普通 workflow check 不读取用户 session 或安装目录。

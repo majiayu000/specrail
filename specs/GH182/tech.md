@@ -35,31 +35,42 @@ GH-182
 
 ```text
 start
-  └─ exec_command(yield=30000)
+  └─ exec_command(yield=30000)            # tool range 250-30000 ms
        ├─ completed → return result
        └─ session_id
-            └─ write_stdin(chars="", yield=1800000) exactly once
+            └─ write_stdin(chars="", yield=300000)   # empty-poll cap
                  ├─ terminal → return result
-                 └─ non-terminal/error → stop; no second empty poll
+                 ├─ inside one code-mode cell → repeat in-script until
+                 │    terminal or the 1800000 ms cell budget is spent
+                 └─ direct exec only → stop; no second model-visible wait
 ```
+
+工具边界来自 Codex 工具 schema：`exec_command.yield_time_ms` 有效区间 250-30000 ms；
+`write_stdin.yield_time_ms` 空轮询区间 5000-300000 ms。因此 30 分钟量级的单次阻塞
+等待只能由外层 code-mode cell 预算承担，内层调用必须使用各自的支持上限。
 
 对于 code-mode，示例必须把外层调用预算与内层工具参数分开：
 
 ```javascript
 // @exec: {"yield_time_ms": 1800000}
 const result = await tools.exec_command({cmd, yield_time_ms: 30000});
-if (result.session_id) {
-  const done = await tools.write_stdin({
-    session_id: result.session_id,
+let done = result;
+let budgetLeftMs = 1800000 - 30000;
+while (done.session_id && budgetLeftMs >= 300000) {
+  done = await tools.write_stdin({
+    session_id: done.session_id,
     chars: "",
-    yield_time_ms: 1800000
+    yield_time_ms: 300000
   });
+  budgetLeftMs -= 300000;
 }
 ```
 
 示例只描述调用形态，不允许拼接用户输入为 shell 命令，也不建议用 shell
-`while/sleep` 轮询替代工具等待。direct `exec_command` 路径同样是首次
-30000 ms，返回 session 后最多一次 1800000 ms 空续等。
+`while/sleep` 轮询替代工具等待。循环发生在单个外层调用内部，不产生额外模型 turn；
+外层预算耗尽即按 B-005 报告非终态。direct `exec_command` 路径首次 30000 ms，返回
+session 后最多一次模型可见的 300000 ms 空续等；预期更长的命令必须改用
+`gh ... --watch` 等自身阻塞到终态的原语。
 
 ### 2. subagent 与 CI 等待
 
@@ -89,10 +100,12 @@ validate_skill_wait_contract(repo: Path) -> list[str]
 
 规则分两类：
 
-1. 必需 marker：direct cap 30000、blocking wait 1800000、最多一次
-   `write_stdin`、一次 `wait_agent`、禁止 `list_agents` polling、CI watch；
-2. 禁止 marker：`exec_command` 使用 30000 以上 yield、`maximum yield each
-   time`、`grow the yield exponentially`、允许多个 empty wait 的措辞。
+1. 必需 marker：direct cap 30000、empty poll cap 300000、外层 cell 预算 1800000、
+   模型可见空 `write_stdin` 最多一次、一次 `wait_agent`、禁止 `list_agents`
+   polling、CI watch；
+2. 禁止 marker：`exec_command` 使用 30000 以上 yield、`write_stdin` 使用 300000
+   以上 yield、`maximum yield each time`、`grow the yield exponentially`、允许多个
+   模型可见 empty wait 的措辞。
 
 校验不解析用户 session，也不尝试证明 agent 已遵守合同。错误按固定文件/规则顺序
 聚合，并只输出相对路径和规则 ID。`checks/check_workflow.py` 将 checker 文件加入
@@ -103,8 +116,9 @@ validate_skill_wait_contract(repo: Path) -> list[str]
 ```text
 wait-contract-v1
 direct_exec_yield_ms=30000
-blocking_wait_ms=1800000
-empty_write_stdin_max=1
+empty_poll_yield_ms=300000
+outer_cell_wait_ms=1800000
+model_visible_empty_wait_max=1
 wait_agent_max=1
 list_agents_polling=forbidden
 ```
@@ -160,7 +174,8 @@ repo Skill/docs bytes
 long command
   → exec_command(30000)
   → completed OR one session_id
-  → at most one write_stdin("", 1800000)
+  → write_stdin("", 300000) once per model turn
+     (in-cell repeat until terminal or 1800000 ms cell budget)
   → terminal evidence OR explicit stop
 ```
 
