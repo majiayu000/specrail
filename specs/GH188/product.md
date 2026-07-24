@@ -26,15 +26,22 @@ queue 要求在 adopted repo 执行 `checks/runtime_ledger_gate.py`，但 adopti
 1. B-001 当构建 bundle 时，manifest 必须闭集列出 checker、Python 依赖、schema、
    template 与每个内容哈希。
 2. B-002 当文件缺失、额外、漂移、重复、符号链接或路径逃逸时，validator 必须失败。
+   "额外文件"以 manifest 的 `files[]` 与 `retired[]` 闭集判定：`retired[]` 中声明的
+   旧资产在 target 上存在时判为 `drift`（可迁移），不在任一集合中的文件才判为
+   不可迁移的额外文件。
 3. B-003 当显式 consumer target 未采用 bundle 时，doctor 必须返回 `not_adopted`，
    不得冒充 match。
 4. B-004 当 target 存在但任一资产缺失/漂移时，doctor 必须一次报告全部缺陷并非零退出。
 5. B-005 当且仅当闭集全部安全且 hash 匹配时，doctor 才返回 match。
 6. B-006 当 installer 未收到 `--apply` 时，只显示完整计划且不得写文件。
-7. B-007 当 apply 被授权时，只能写 manifest 声明路径，并在写后重新 doctor；post-check
-   非 match 不得成功。
-8. B-008 当 source/target 重叠、权限失败、检查中变化或取消时，必须 fail closed 且
-   不声明采用完成。
+7. B-007 当 apply 被授权时，只能写 manifest 声明路径与 manifest 文件本身
+   （`runtime-bundle-lock.json` 的自指例外：其自身条目的哈希对"把 `self_hash`
+   字段置空后的规范化字节"计算），并删除 `retired[]` 中出现在 target 上的旧资产；
+   写后重新 doctor，post-check 非 match 不得成功。除这三类路径外不得写或删任何文件。
+8. B-008 当权限失败、检查中变化或取消时，必须 fail closed 且不声明采用完成。
+   source/target 重叠只对 **installer 写路径** fail closed（禁止把 bundle 装到自身
+   source 上）；doctor 的只读自校验允许 `--repo . --target .`，这是已采用 consumer
+   在自己 checkout 内验证 bundle 的正常路径，不需要外部 SpecRail checkout。
 9. B-009 当 queue 启动时，bundle unavailable/not_adopted/drift/error 必须在 lane、
    checkpoint 与 remote write 前阻断。
 10. B-010 当普通 SpecRail pack CI 运行时，不得访问真实 consumer 或 HOME。
