@@ -16,7 +16,7 @@ gate 缺失或执行失败时的行为。调用方因此可能在未接入 SpecR
 
 ## 目标
 
-- 为八个目标 skill 建立一致、可观察且 fail-closed 的 Gate Availability 契约。
+- 为九个 route-gate consumer skill 建立一致、可观察且 fail-closed 的 Gate Availability 契约。
 - 让 gate 存在、缺失、执行失败与人工授权降级成为互斥且可审计的结果。
 - 阻止未接入 SpecRail 的仓库、路由器或叶子 skill 把未校验路径表现为 SpecRail 成功。
 - 保留人工在知情后选择普通或降级工作流的能力，同时限制授权作用域并明确披露结果。
@@ -33,7 +33,7 @@ gate 缺失或执行失败时的行为。调用方因此可能在未接入 SpecR
 
 ## Behavior Invariants
 
-1. B-001 当八个目标 skill 声明某个 gate 为 route 前提时，该 gate 必须是进入对应
+1. B-001 当九个目标 skill 声明某个 gate 为 route 前提时，该 gate 必须是进入对应
    SpecRail route 的 mandatory precondition；仅出现 “when available” 而未定义缺失行为，
    不构成完整契约。
 2. B-002 当 `specrail-workflow` 选择或分派 route 时，必须先确定该 route 所需 gate 的
@@ -83,12 +83,12 @@ gate 缺失或执行失败时的行为。调用方因此可能在未接入 SpecR
     留下成功结论；恢复后必须针对当前 repository、route 与 task/run 重新确认 gate 状态，
     不能沿用无法证明完整的部分结果。
 18. B-018 当分发或验证目标 skill 集时，任何 mandatory gate 若只有条件式可选措辞而没有
-    gate 存在、缺失、执行失败与人工降级行为，验证必须确定性拒绝；八个目标 skill 必须
+    gate 存在、缺失、执行失败与人工降级行为，验证必须确定性拒绝；九个目标 skill 必须
     同时满足同一规则，不能只修复单个样本。
 
 ## 验收标准
 
-- [ ] 八个目标 skill 均明确区分 gate 存在且产生有效 decision、gate 缺失、gate 执行失败
+- [ ] 九个目标 skill 均明确区分 gate 存在且产生有效 decision、gate 缺失、gate 执行失败
       与人工授权 degraded operation 四条路径。
 - [ ] `specrail-workflow` 在选路和下游分派之前 fail closed，叶子 skill 直接调用时也执行
       同一契约。
@@ -101,7 +101,7 @@ gate 缺失或执行失败时的行为。调用方因此可能在未接入 SpecR
 - [ ] 并发、重试与中断后恢复均不能借用、覆盖或丢失其他调用和先前失败的 gate 证据。
 - [ ] 已接入 SpecRail 且 gate 有效的既有 route 保持原有 decision 行为，非法状态转换仍
       被阻断。
-- [ ] 确定性验证能一次性暴露八个目标 skill 中所有不完整 Gate Availability 契约，而非只
+- [ ] 确定性验证能一次性暴露九个目标 skill 中所有不完整 Gate Availability 契约，而非只
       报告或修复一个样本。
 
 ## 边界情况清单

@@ -6,7 +6,7 @@ GH-165
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":165,"complete":true,"paths":["checks/check_workflow.py","skills-lock.json","skills/specrail-diagnose-ci/SKILL.md","skills/specrail-implement/SKILL.md","skills/specrail-plan-tasks/SKILL.md","skills/specrail-release-note/SKILL.md","skills/specrail-triage-issue/SKILL.md","skills/specrail-workflow/SKILL.md","skills/specrail-write-product-spec/SKILL.md","skills/specrail-write-tech-spec/SKILL.md","tests/test_check_workflow.py"],"spec_refs":["specs/GH165/product.md","specs/GH165/tech.md","specs/GH165/tasks.md"]}
+{"version":1,"issue":165,"complete":true,"paths":["checks/check_workflow.py","skills-lock.json","skills/specrail-diagnose-ci/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement/SKILL.md","skills/specrail-plan-tasks/SKILL.md","skills/specrail-release-note/SKILL.md","skills/specrail-triage-issue/SKILL.md","skills/specrail-workflow/SKILL.md","skills/specrail-write-product-spec/SKILL.md","skills/specrail-write-tech-spec/SKILL.md","tests/test_check_workflow.py"],"spec_refs":["specs/GH165/product.md","specs/GH165/tech.md","specs/GH165/tasks.md"]}
 -->
 
 ## Product Spec
@@ -34,13 +34,22 @@ GH-165
 
 在 `checks/check_workflow.py` 新增纯读取函数
 `validate_skill_gate_availability(repo: Path) -> list[str]`。函数遍历
-`skills/*/SKILL.md`；只有正文引用精确路径 `checks/route_gate.py` 的 skill 才是候选。
+`skills/*/SKILL.md`；只有把 `checks/route_gate.py` 作为命令**调用**（同一行出现
+`python3` 与 `checks/route_gate.py` 的可执行命令行）的 skill 才是候选。仅在
+Rejection Persistence 之类的散文里提及 gate 名称（如 `skills/specrail-pr-gate/SKILL.md:121`）
+不构成 route-gate consumer，不进入候选集合。
 `validate_skills_lock(repo)` 已负责确保该目录与 `skills-lock.json` 的路径、集合与哈希一致，
 因此这里不复制 lock 解析或安装逻辑，也不维护八文件 allowlist。未来新增的 repo-distributed
 route-gate consumer 会自动进入同一检查。
 
 发现结果按仓库相对路径排序，函数收集所有错误后统一返回，不在第一个缺陷处提前退出。
 这样一次运行能暴露全部目标 skill 的缺陷，并保持稳定输出顺序。
+
+按当前 main 的字节，该规则命中十个 consumer：八个目标 skill、作为兼容基线的
+`skills/specrail-review-pr/SKILL.md`，以及 `skills/specrail-implement-queue/SKILL.md:37`
+的 implement route gate 调用。队列 skill 因此必须与八个目标 skill 一起纳入本次
+manifest（见 §3），否则 `SP165-T1` 之后的验证器会在未修改的仓库上失败——实现者只能
+靠收窄发现规则或私自扩大 planned paths 来绕过，两者都违反本规格。
 
 ### 2. 确定性的 Gate Availability 文本契约
 
@@ -63,12 +72,16 @@ route-gate consumer 会自动进入同一检查。
 可选集成的同名短语误判为 route-gate 缺陷。段落内可以有更严格规则，但缺少上述任一组
 语义时都按路径列出错误。
 
-`specrail-review-pr` 当前的 Gate Availability 段落是兼容性基线：它已有 named route、
-repository gate、exists/absent/error 三分支、显式人工继续、结果内
-`gate_authorization` 和稳定 unavailable 标记。验证器允许这种“命名 route + 当前结果内
-授权证据”的等价限域表达，不要求为了通过检查而机械改写该未在本 issue 范围内的 skill。
+`specrail-review-pr` 当前的 Gate Availability 段落是**按文件名限定的兼容性例外**，
+不是通用的等价表达类：它已有 named route、repository gate、exists/absent/error 三分支、
+显式人工继续、结果内 `gate_authorization` 和稳定 unavailable 标记，但没有把授权绑定到
+当前 repository/route/task/run，也没有排除 `implx auto`、历史或推断授权。验证器只对
+`skills/specrail-review-pr/SKILL.md` 这一路径接受该较弱措辞，并在错误列表中输出一条
+稳定的 `legacy_baseline` 说明；任何其它候选（含未来新增 consumer）都必须满足 B-006/B-007
+的完整限域要求。把 review skill 收紧到同一强度属于独立 issue，不在本 manifest 内，
+因此本规格不允许实现者以该例外为模板放宽其它 skill。
 
-### 3. 八个 skill 的同构契约
+### 3. 九个 skill 的同构契约
 
 在八个目标 `SKILL.md` 中移除入口的 optional-only 表述，并增加同构
 `## Gate Availability` 段落。每个段落写明该 skill 的实际 route 和 gate command，保持
@@ -78,7 +91,11 @@ route-specific 状态、参数与现有 decision 处理不变：
 - `specrail-implement` 与 `specrail-plan-tasks` 使用 `implement`；
 - `specrail-write-product-spec` 与 `specrail-write-tech-spec` 使用 `write_spec`；
 - `specrail-triage-issue`、`specrail-diagnose-ci`、`specrail-release-note` 分别使用
-  `triage_issue`、`fix_ci`、`draft_release_note`。
+  `triage_issue`、`fix_ci`、`draft_release_note`；
+- `specrail-implement-queue` 使用 `implement`（`SKILL.md:37` 的 duplicate-evidence
+  调用）。该文件当前 799 行、硬上限 800 行，因此队列 lane 必须用紧凑块并同步删除
+  等价的冗余散文，Done-when 必须断言 `wc -l < 800`；若 GH-174 的拆分先合并，则在
+  拆分后的 route-gate 调用文件上落地同一契约。
 
 所有段落共同声明：不存在时默认停止；命令错误等价于 unavailable；只有当前人工的专用
 gate-unavailable 授权才能开始 degraded operation；输出必须披露稳定标记、route、gate、
@@ -91,7 +108,7 @@ gate-unavailable 授权才能开始 degraded operation；输出必须披露稳�
 `validate_skill_gate_availability(repo)`。先由 lock 校验报告丢失、越界或哈希问题，再由新
 验证器报告内容契约缺陷；两者都只读并进入现有统一错误列表。
 
-八个 skill 修改后，重新计算并更新 `skills-lock.json` 中对应 `computedHash`。不修改
+九个 skill 修改后，重新计算并更新 `skills-lock.json` 中对应 `computedHash`。不修改
 `tools/install_codex_skills.py` 或 `checks/specrail_lib.py`：安装器继续消费经过整包检查的
 lock，通用库继续负责既有 lock 完整性，无需引入共享片段或第二套分发源。
 
@@ -109,11 +126,11 @@ lock，通用库继续负责既有 lock 完整性，无需引入共享片段或�
 | B-008 | degraded evidence 与稳定标记 | 分别删除 `gate_status`, 授权字段/引用和 `SpecRail gate status: unavailable`，断言所有缺口一次性列出。 |
 | B-009 | 降级结果禁止成功声明 | 检查段落包含 gated/verified/gate passed/merge-ready 禁止项；缺失时拒绝。 |
 | B-010 | 完整性组合 | 构造半完整 Gate Availability 段落，断言不因单个标记存在而通过，并返回全部缺失项。 |
-| B-011 | 动态发现与叶子自检 | 在临时仓库增加并锁定一个引用 `checks/route_gate.py` 的新 skill，断言无需更新 allowlist 即被发现；八个叶子 skill 分别通过。 |
+| B-011 | 动态发现与叶子自检 | 在临时仓库增加并锁定一个引用 `checks/route_gate.py` 的新 skill，断言无需更新 allowlist 即被发现；九个叶子 skill 分别通过，且 `skills/specrail-pr-gate/SKILL.md` 这类仅散文提及者不进入候选。 |
 | B-012 | 调用限域 | 检查 repository/route/task/run 或等价 result-local evidence 组合；并发描述缺失时拒绝目标 skill。 |
 | B-013 | 重试与审计 | 复核八个 skill 保留现有 Rejection Persistence And Retry，且 Gate Availability 要求重试重评、不得覆盖先前失败。 |
 | B-014 | 状态机兼容 | 断言现有 route 命令、state 和 non-`allowed` decision 文本未改变；Gate Availability 不声明绕过状态。 |
-| B-015 | 已接入仓库兼容 | 以当前完整仓库和未修改的 `specrail-review-pr` 作为正例，运行函数测试与整包检查。 |
+| B-015 | 已接入仓库兼容 | 以当前完整仓库和按文件名例外的 `specrail-review-pr` 作为正例，运行函数测试与整包检查；断言该例外只对该路径生效。 |
 | B-016 | 未接入仓库默认停止 | 临时移除 gate 存在语义并保留普通替代说明，断言仍失败；完整 absent/普通非 SpecRail 说明通过。 |
 | B-017 | 取消/中断恢复 | 检查目标段落要求中断后重新判定当前调用且不保留成功结论；删除恢复语义时拒绝。 |
 | B-018 | 动态全量确定性校验 | 同时破坏八个目标 skill，断言单次调用按路径稳定返回八组错误；CLI 返回非零并列出全部路径。 |
@@ -173,8 +190,8 @@ lock，通用库继续负责既有 lock 完整性，无需引入共享片段或�
 
 ## 回滚方案
 
-回滚 `checks/check_workflow.py` 的新函数及 `main()` 接线、对应测试、八个 skill 的
-Gate Availability 文本和 `skills-lock.json` 八项哈希即可恢复原行为。回滚不需要迁移数据、
+回滚 `checks/check_workflow.py` 的新函数及 `main()` 接线、对应测试、九个 skill 的
+Gate Availability 文本和 `skills-lock.json` 九项哈希即可恢复原行为。回滚不需要迁移数据、
 撤销 schema 或清理持久化状态，因为本变更不改变 gate 输出格式、不写运行时数据，也不安装
-任何文件。若只需紧急解除静态检查，可整体回滚这 11 个路径；不得仅删除检查器而保留失配
+任何文件。若只需紧急解除静态检查，可整体回滚这 12 个路径；不得仅删除检查器而保留失配
 哈希，或仅恢复 optional-only 文案却继续声称整包通过。
