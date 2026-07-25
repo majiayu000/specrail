@@ -6,7 +6,7 @@ GH-172
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":172,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/installed_skill_integrity.py","checks/specrail_lib.py","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-install/SKILL.md","tests/test_check_workflow.py","tests/test_evaluate.py","tests/test_install_codex_skills.py","tests/test_installed_skill_integrity.py","tools/check_installed_codex_skills.py","tools/install_codex_skills.py"],"spec_refs":["specs/GH172/product.md","specs/GH172/tech.md","specs/GH172/tasks.md"]}
+{"version":1,"issue":172,"complete":true,"paths":["AGENTS.md","AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/installed_skill_integrity.py","checks/specrail_lib.py","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-install/SKILL.md","skills/specrail-workflow/SKILL.md","tests/test_check_workflow.py","tests/test_evaluate.py","tests/test_install_codex_skills.py","tests/test_installed_skill_integrity.py","tools/check_installed_codex_skills.py","tools/install_codex_skills.py"],"spec_refs":["specs/GH172/product.md","specs/GH172/tech.md","specs/GH172/tasks.md"]}
 -->
 
 ## Product Spec
@@ -31,7 +31,11 @@ GH-172
 
 ### 1. 兼容扩展 `skills-lock.json`
 
-保持顶层 `version: 1`、每个 skill 的 `path` 与 `computedHash` 语义不变：
+顶层 `version` 随声明形态变化：纯单文件 lock 保持 `version: 1`；**任一条目声明
+`files[]` 时，顶层必须为 `version: 2`**。旧 reader（v1 validator/installer）只接受
+`version: 1`，因此会对多文件 lock 直接 fail closed，而不是忽略未知字段、只校验
+`SKILL.md` 后误判通过——这正是本 issue 要防的 stale-install 场景。v2 reader 同时
+接受 v1 与 v2 lock。每个 skill 的 `path` 与 `computedHash` 语义不变：
 它们继续绑定主入口 `skills/<name>/SKILL.md`。每个 skill 条目新增可选
 `files[]`，仅声明入口之外的受分发文件：
 
@@ -51,8 +55,11 @@ GH-172
 
 `files[].path` 必须是相对于该 skill 目录的 POSIX 路径，禁止绝对路径、空路径、
 `.`、`..`、反斜线、重复路径和 `SKILL.md` 重复声明。仓库 validator 枚举 skill
-目录中的普通文件；集合必须恰好等于入口加 `files[]`。目录、符号链接、socket
-或其他非普通文件不属于合法分发资产并 fail closed。未声明 `files` 的现有条目
+目录中的普通文件；集合必须恰好等于入口加 `files[]`。**目录本身不能作为 `files[]`
+条目**（symlink、socket 等非普通文件同样非法并 fail closed），但 `files[]` 条目
+可以包含目录成分（例如 `references/runtime.md`）：其父目录必须是受 containment 检查
+的真实目录，不得为符号链接，也不得逃出 skill 根。因此多文件 skill 可以有嵌套结构，
+只是嵌套目录本身不是被哈希的分发资产。未声明 `files` 的现有条目
 仍只信任 `SKILL.md`，因此 B-015 保持兼容而不会扩大信任面。
 
 在 `checks/specrail_lib.py` 提供共享的不可变 lock manifest 数据结构和 loader。
@@ -70,16 +77,24 @@ GH-172
 - 安装根不存在时返回整体 `not_installed`，不创建目录；
 - 安装根存在时，每个文件返回 `match | drift | missing | unsafe | unstable`，
   结果包含 skill、相对文件、目标路径、expected/actual hash 和非敏感 reason；
-- 路径检查使用 `lstat` 与受控根边界，拒绝 skill 目录、父组件或文件符号链接，
-  且在读取前后比较 inode/device/size/mtime，变化时返回 `unstable`；
-- 只读取 lock 声明的普通文件，不扫描或输出未声明文件正文；
+- 路径检查使用 `lstat` 与受控根边界，拒绝 skill 目录、父组件或文件符号链接；
+  读取必须用 no-follow 描述符（逐段 `openat(..., O_NOFOLLOW|O_DIRECTORY)` 打开目录
+  成分，再 `openat(..., O_NOFOLLOW)` 打开文件），哈希只对该描述符的内容计算，并用
+  同一 fd 的 `fstat` 做前后比较。仅靠读取前后的 `lstat` 不够：文件可能在两次 stat
+  之间被换成符号链接，从而在标记 `unstable` 之前就已经跟随并哈希了逃逸目标（违反
+  B-009 与 B-019）。fd 与 lstat 的 inode/device 不一致，或前后 fstat 的
+  inode/device/size/mtime 变化，返回 `unstable` 且不输出内容；
+- 只读取 lock 声明的普通文件；同时枚举每个受锁 skill 安装目录的条目名，出现未声明
+  文件或目录时该 skill 判为 `undeclared` 并使整体 `invalid`（Codex skill 可以按
+  `SKILL.md` 里的相对路径加载资源，所以"入口匹配 + 残留旧 reference"仍可能把未校验
+  指令喂进 queue preflight）。只输出相对路径名与计数，不读取也不输出这些文件的正文；
 - 返回结构化 Python 结果与稳定 JSON 字典，library 不调用 `sys.exit()`、不写文件。
 
 整体状态规则：
 
 - 目标根不存在：`not_installed`；
 - 根存在且全部文件匹配：`match`；
-- 根存在且出现其他状态：`invalid`。
+- 根存在且出现其他状态（含 `undeclared`）：`invalid`。
 
 ### 3. 独立 doctor CLI
 
@@ -122,6 +137,18 @@ manifest 与 integrity library：
   lock、源包或返回非 `match` 时停止自动 queue，不能把失败降级为 warning。
 - `specrail-implement-queue` 重复声明同一 precondition，保证直接调用时也 fail closed。
   它消费 compact JSON 摘要，不把全部文件哈希正文反复注入父上下文。
+
+仅靠"更新后的 installed skill 会自己调用 doctor"是不够的：stale 安装副本里根本没有
+这段指令，第一次 drain 仍会静默通过。因此 bootstrap 必须来自 installed queue skill
+之外，两层同时生效：
+
+1. **lock 版本闭锁**（见 §1）：多文件 lock 为 `version: 2`，stale v1 reader 读到即
+   fail closed，无法把旧安装副本判为有效。
+2. **源侧 bootstrap**：仓库 `AGENTS.md` 的 Long Queue Guardrails 与
+   `skills/specrail-workflow/SKILL.md`（路由器，源包内、先于分派到 installed queue
+   skill 执行）要求在任何 queue/implx 委派之前先运行
+   `tools/check_installed_codex_skills.py --require-installed`；未 `match` 时不得
+   委派给 installed queue skill。路由器这一层不依赖用户已安装副本的新旧。
 
 如果消费者只有安装后的 `SKILL.md` 而没有可定位的 SpecRail pack/checker，本 issue 的
 queue preflight 会明确阻断；把 runtime gate/checker 本身作为全局可执行依赖分发属于后续
