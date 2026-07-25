@@ -11,10 +11,10 @@ GH-191
 
 ## 实现任务
 
-- [ ] `SP191-T1` Owner: ledger-gate | Depends on: approved spec | Done when: closed append-only ledger、progress recompute、三阈值、scope epoch 与稳定错误全部有测试 | Verify: `python3 -m pytest -q tests/test_issue_progress_gate.py` | Covers: B-001 B-002 B-003 B-004 B-005 B-006 B-007 B-008 B-009 B-011 B-012 | 新增 schema/gate/template。
+- [ ] `SP191-T1` Owner: ledger-gate | Depends on: approved spec | Done when: closed append-only ledger（每 attempt 带 scope_epoch 与 prev_entry_digest/entry_digest 哈希链，链断裂/截断即 blocked）、progress recompute、三阈值（B-005 按 commit 计数，保持 GH-157 的五 commit 口径）、scope epoch 分代计数与稳定错误全部有测试；decision 只用 allowed/warn/needs_human/blocked + 稳定 reason id | Verify: `python3 -m pytest -q tests/test_issue_progress_gate.py` | Covers: B-001 B-002 B-003 B-004 B-005 B-006 B-007 B-008 B-009 B-011 B-012 | 新增 schema/gate/template。
 - [ ] `SP191-T2` Owner: collector | Depends on: SP191-T1 | Done when: bounded read-only collector 绑定 issue/head/run/spec IDs，输出可 append candidate，不读 session/raw logs | Verify: `python3 -m pytest -q tests/test_issue_attempt_collector.py` | Covers: B-001 B-002 B-003 B-004 B-009 B-012 | 新增 collector。
-- [ ] `SP191-T3` Owner: queue-integration | Depends on: SP191-T1 SP191-T2, GH-172 merged | Done when: pre-lane 调 gate，trip/invalid 无继续路径，remote park/draft 仅在已有授权时执行 | Verify: `python3 -m pytest -q tests/test_issue_progress_gate.py -k "queue or authorization"` | Covers: B-005 B-006 B-007 B-008 B-009 B-010 B-011 | 对齐已合并 GH-174/GH-189。
-- [ ] `SP191-T4` Owner: pack-docs | Depends on: SP191-T3 | Done when: assets/wiring/docs/hash 全部同步，普通 workflow 纯仓库通过 | Verify: `python3 checks/check_workflow.py --repo . && python3 -m pytest -q tests/test_check_workflow.py` | Covers: B-012 | pack 收口。
+- [ ] `SP191-T3` Owner: queue-integration | Depends on: SP191-T1 SP191-T2, GH-172 merged | Done when: pre-lane 调 gate，blocked（trip 或 history 缺陷）无继续路径，remote park/draft 仅在已有授权时执行 | Verify: `python3 -m pytest -q tests/test_issue_progress_gate.py -k "queue or authorization"` | Covers: B-005 B-006 B-007 B-008 B-009 B-010 B-011 | 对齐已合并 GH-174/GH-189。
+- [ ] `SP191-T4` Owner: pack-docs | Depends on: SP191-T3 | Done when: assets/wiring/docs/hash 全部同步（新 schema 注册进 `checks/pack_asset_validation.py` 的 `SPEC_SCHEMA_FILES` 并同步 `tests/test_pack_asset_validation.py` 的 ownership 断言），普通 workflow 纯仓库通过 | Verify: `python3 checks/check_workflow.py --repo . && python3 -m pytest -q tests/test_check_workflow.py` | Covers: B-012 | pack 收口。
 
 ## 并行拆分
 

@@ -6,7 +6,7 @@ GH-191
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":191,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/issue_attempt_collector.py","checks/issue_progress_gate.py","schemas/issue_attempt_ledger.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/issue_attempt_ledger.json","tests/test_check_workflow.py","tests/test_issue_attempt_collector.py","tests/test_issue_progress_gate.py"],"spec_refs":["specs/GH191/product.md","specs/GH191/tech.md","specs/GH191/tasks.md"]}
+{"version":1,"issue":191,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/issue_attempt_collector.py","checks/pack_asset_validation.py","checks/issue_progress_gate.py","schemas/issue_attempt_ledger.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/issue_attempt_ledger.json","tests/test_check_workflow.py","tests/test_issue_attempt_collector.py","tests/test_pack_asset_validation.py","tests/test_issue_progress_gate.py"],"spec_refs":["specs/GH191/product.md","specs/GH191/tech.md","specs/GH191/tasks.md"]}
 -->
 
 ## Product Spec
@@ -31,12 +31,24 @@ GH-191
 只读。closed schema：
 
 ```text
-version, repo_id, issue, scope_epoch, attempts[]
-attempt = id, run_id, fencing_token, tranche_id,
+version, repo_id, issue, scope_epoch, scope_epochs[], attempts[]
+scope_epoch_record = epoch, opened_at, rescope_evidence, opened_by
+attempt = id, run_id, fencing_token, tranche_id, scope_epoch,
           started_at, ended_at?, before_head, after_head?,
-          target_ids[], work_fingerprint,
-          evidence[], progress_delta[], outcome
+          target_ids[], work_fingerprint, commit_shas[],
+          evidence[], progress_delta[], outcome,
+          prev_entry_digest, entry_digest
 ```
+
+每个 attempt 自带 `scope_epoch`，另有 append-only `scope_epochs[]` 记录每次 rescope 的
+证据与时间。breaker 计数只统计 **当前 epoch** 的 attempts，历史 epoch 的证据保留可查：
+既不会让旧 attempt 混进新 scope 的计数，也不需要为了重置计数而删除历史。
+
+`entry_digest` = 该 attempt 规范化 JSON（不含 `entry_digest`）的 sha256，
+`prev_entry_digest` = 前一条的 `entry_digest`（首条为 `null`）。哈希链随 ledger 一起
+持久化，因此离线 gate 可以在只读到最终文件时发现被截断或整体重写的历史（链断裂、
+首条 `prev_entry_digest` 非 null、或与 `repo_id/issue` 绑定不符即 fail closed），
+而不是接受一份"看起来合法"的新写 ledger。
 
 每次更新必须提供 previous ledger digest；写 temp+fsync+atomic replace。validator 拒绝
 删除/reorder/改写既有 attempt、重复 ID、时间倒序和 run/head 串线。scope_epoch 只能由
@@ -73,11 +85,17 @@ gate 重新计算 `progress_delta`：
 `issue_progress_gate.py` 返回：
 
 ```text
-allowed | tripped | invalid
-trip_reasons = five_no_progress_attempts |
-               three_same_work_fingerprint |
-               three_no_progress_tranches
+decision = allowed | warn | needs_human | blocked      # 与 schemas/evaluation_result.schema.json 一致
+reason_ids = five_no_progress_commit_attempts |
+             three_same_work_fingerprint |
+             three_no_progress_tranches |
+             ledger_unreadable | ledger_chain_broken | ledger_incomplete
 ```
+
+breaker trip 与非法 history 都编码为 `blocked` + 稳定 reason id（trip 用前三个，
+history 缺陷用后三个），不引入 `tripped`/`invalid` 这类仓库共享契约之外的 decision
+（`checks/specrail_lib.py` 与 `schemas/evaluation_result.schema.json` 只允许四个值），
+以免通用 gate 校验、rejection persistence 与队列调用方误判。
 
 阈值在单次评估中全部计算。unreadable/incomplete history 为 invalid/fail closed。queue 在
 开 lane 前调用；trip/invalid 都不继续。gate 不 park/draft/comment，orchestrator 仅在

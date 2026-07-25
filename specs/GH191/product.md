@@ -33,8 +33,11 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
    解决 blocking review finding 或产生 terminal GitHub transition 时，才计 durable progress。
 4. B-004 当只有新 commit/message、格式改写、重复测试、相同失败或自报“完成”时，
    不得计 durable progress。
-5. B-005 当同一 issue 累计五个带 commit 的 attempt 仍无 durable progress 时，breaker
-   必须 trip，并列出五项证据。
+5. B-005 当同一 issue 在当前 scope epoch 内累计**五个引用该 issue 的 commit**
+   （GH-157 原阈值，按 commit 计数而非 attempt 计数）仍无 durable progress 时，
+   breaker 必须 trip，并列出五项证据。durable-progress 过滤只决定哪些 commit 算作
+   进展，不放宽计数口径：一个 attempt 产生多个无进展 commit 时按 commit 累加，
+   因此不会出现"多轮多 commit 无进展仍未触发"的空档。
 6. B-006 当连续三个 attempt 的规范化 work fingerprint 相同且无 durable progress 时，
    breaker 必须 trip；改写 commit message 不得改变 fingerprint。
 7. B-007 当三个已结束 tranche 都处理该 issue 且没有 durable progress 时，breaker
