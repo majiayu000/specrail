@@ -6,7 +6,7 @@ GH-189
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":189,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/active_run_lease.py","checks/check_workflow.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","schemas/active_run_lease.schema.json","schemas/runtime_checkpoint.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/tranche_checkpoint.md","tests/test_active_run_lease.py","tests/test_check_workflow.py","tests/test_runtime_ledger_gate.py"],"spec_refs":["specs/GH189/product.md","specs/GH189/tech.md","specs/GH189/tasks.md"]}
+{"version":1,"issue":189,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/active_run_lease.py","checks/check_workflow.py","checks/pack_asset_validation.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","schemas/active_run_lease.schema.json","schemas/runtime_checkpoint.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/tranche_checkpoint.md","templates/zh-CN/tranche_checkpoint.md","tests/test_active_run_lease.py","tests/test_check_workflow.py","tests/test_pack_asset_validation.py","tests/test_runtime_ledger_gate.py"],"spec_refs":["specs/GH189/product.md","specs/GH189/tech.md","specs/GH189/tasks.md"]}
 -->
 
 ## Product Spec
@@ -57,7 +57,13 @@ acquire 必须同时成功创建 lock dir、写 temp、fsync、rename；异常�
 纯函数 `inspect_lease()` 返回 `free | held | stale | corrupt | unsafe | unsupported`。
 修改 API：
 
-- `acquire(expected_free, run_id, owner_marker, ttl)`；
+- `acquire(expected_free, run_id, owner_marker, ttl, checkpoint_digest=None)`；
+  队列 startup 在写首个 checkpoint 之前取租，因此 `checkpoint_digest` 允许为显式
+  `null`（sentinel `"" ` 非法）。首租写入 `checkpoint_digest: null` 与
+  `checkpoint_bound: false`，schema 用 `["string","null"]` 表达；首次 checkpoint
+  写入后必须立即 `renew(...)` 填入真实 digest 并置 `checkpoint_bound: true`。
+  gate 只对 `checkpoint_bound: true` 的租约做 digest 交叉检查，对首租只校验
+  run/token 一致，避免实现被迫编造未经验证的占位值；
 - `renew(expected_digest, run_id, token, checkpoint_digest)`；
 - `release(expected_digest, run_id, token)`；
 - `takeover(expected_stale_digest, new_run_id, authorization)`。
@@ -76,7 +82,12 @@ repo_id, run_id, fencing_token, lease_digest
 
 queue 在 Startup acquire；在 spawn lane、checkpoint replace、PR/comment/label/push 等
 远端写前 renew/validate。`runtime_ledger_gate.py` 接受显式 `--lease` 路径，交叉检查
-checkpoint binding；它本身只读。resume 需要 checkpoint+Goal+lease 三者 run/token 相同。
+checkpoint binding；它本身只读。
+
+resume 绑定按 Goal 是否实际存在分两种：checkpoint 声明了启用的 goal（`goal.status`
+为活动态且有 `goal_id`）时，需要 checkpoint+goal+lease 三者 run/token 一致；
+`auth_mode: review`、`bounded_tranche` 或运行时没有 Goal 能力时不创建 goal，
+resume 只要求 checkpoint+lease 一致，不得因缺少 goal 判定失败。
 
 普通 `check_workflow.py` 只校验 checker/schema 是 pack assets，不读取 common dir lease。
 
@@ -92,7 +103,7 @@ checkpoint binding；它本身只读。resume 需要 checkpoint+Goal+lease 三�
 | B-001 B-002 | common-dir + atomic acquire | `python3 -m pytest -q tests/test_active_run_lease.py -k "worktree or concurrent"` |
 | B-003 B-004 B-010 | fencing operations | `python3 -m pytest -q tests/test_active_run_lease.py -k fencing` |
 | B-005 B-006 B-009 | stale/takeover | `python3 -m pytest -q tests/test_active_run_lease.py -k "stale or takeover or clock"` |
-| B-007 | checkpoint/Goal resume binding | `python3 -m pytest -q tests/test_runtime_ledger_gate.py -k lease` |
+| B-007 | checkpoint/Goal resume binding（含 no-goal 分支与首租 `checkpoint_bound: false`） | `python3 -m pytest -q tests/test_runtime_ledger_gate.py -k "lease or no_goal or first_acquire"` |
 | B-008 B-011 B-014 | unsafe/corrupt/failure | `python3 -m pytest -q tests/test_active_run_lease.py -k "unsafe or corrupt or failure"` |
 | B-012 B-013 | pure pack/inspect | `python3 -m pytest -q tests/test_check_workflow.py tests/test_active_run_lease.py -k "workflow or inspect"` |
 
