@@ -11,7 +11,8 @@ GH-172
 
 ## Product Spec
 
-见 `specs/GH172/product.md`。本设计实现 B-001..B-020，并明确排除 GH-160。
+见 `specs/GH172/product.md`。本设计实现 B-001..B-020；GH-160 的功能行为仍排除在本
+issue 外，但其 multi-file skill/lock 实现明确依赖 GH-172。
 
 ## Codebase Context
 
@@ -62,6 +63,12 @@ GH-172
 只是嵌套目录本身不是被哈希的分发资产。未声明 `files` 的现有条目
 仍只信任 `SKILL.md`，因此 B-015 保持兼容而不会扩大信任面。
 
+顶层 completeness discovery 必须枚举 `skills/*/SKILL.md` 对应的所有直接子目录，
+且 `SKILL.md` 必须是普通文件；集合与 lock 的 skill 条目精确相等。不得继续使用
+`skills/specrail-*/SKILL.md` 前缀过滤，因为 `skills/implx` 已是受分发 skill。测试除
+既有 `implx` 外还要创建一个无 `specrail-*` 前缀的顶层 skill fixture，证明整项缺锁会
+fail closed，而不是只检查已被 lock 点名的目录内部闭集。
+
 在 `checks/specrail_lib.py` 提供共享的不可变 lock manifest 数据结构和 loader。
 `validate_skills_lock()`、installer 与 installed doctor 都消费同一规范化结果，
 不再各自解析 JSON。错误聚合保持稳定排序。
@@ -87,8 +94,16 @@ GH-172
 - 只读取 lock 声明的普通文件；同时枚举每个受锁 skill 安装目录的条目名，出现未声明
   文件或目录时该 skill 判为 `undeclared` 并使整体 `invalid`（Codex skill 可以按
   `SKILL.md` 里的相对路径加载资源，所以"入口匹配 + 残留旧 reference"仍可能把未校验
-  指令喂进 queue preflight）。只输出相对路径名与计数，不读取也不输出这些文件的正文；
+  指令喂进 queue preflight）。枚举必须先完成总数统计，再按 POSIX 相对路径的 UTF-8
+  字节序排序。标准 human/JSON 字典只返回 `undeclared_total`、最多 50 项且序列化路径
+  合计最多 8192 UTF-8 bytes 的 `undeclared_sample`，以及
+  `undeclared_omitted = undeclared_total - len(undeclared_sample)`；达到任一上限就停止
+  向样本追加，但仍完成总数统计。不得读取或输出这些文件的正文；
 - 返回结构化 Python 结果与稳定 JSON 字典，library 不调用 `sys.exit()`、不写文件。
+  library 的标准序列化结果不得携带无界完整路径数组。需要排障时，CLI 仅在调用方显式
+  传入 `--undeclared-artifact <new-file>` 后，把完整稳定排序的相对路径及总数写入权限
+  `0600` 的新 JSON artifact；目标已存在、无法安全创建或位于安装目标内时 fail closed，
+  不覆盖文件。queue/`implx` 不得传该参数，因此 runtime preflight 始终只消费有界摘要。
 
 整体状态规则：
 
@@ -104,10 +119,13 @@ GH-172
 - `--target-dir`：显式覆盖安装根；
 - `--json`：输出机器可读结果；
 - `--require-installed`：把 `not_installed` 从显式 skipped 变为非零阻断，供 queue 使用。
+- `--undeclared-artifact <new-file>`：显式导出完整未声明相对路径清单；仅 create-only，
+  不得位于安装目标内，默认与 queue 路径均不启用。
 
 默认退出码：`match=0`、`not_installed=0`、`invalid=1`、lock/运行错误 `=1`。
 带 `--require-installed` 时只有 `match=0`。人类文本与 JSON 都按 skill path 排序，
-不输出正文或环境变量内容。
+未声明项只输出上述总数/有界样本/省略数，不输出正文或环境变量内容。显式 artifact
+只包含相对路径与计数。
 
 `checks/check_workflow.py` 只把新 library/CLI 加入 `REQUIRED_FILES` 并继续执行仓库
 lock 校验；它不调用 doctor，CI 因此不依赖本机安装状态。
@@ -158,7 +176,10 @@ queue preflight 会明确阻断；把 runtime gate/checker 本身作为全局可
 
 更新 `AGENT_USAGE.md` 和 `CHANGELOG.md`，说明普通 pack check 与 installed doctor 的边界。
 三个修改后的 skill 重算入口哈希写入 `skills-lock.json`。本 issue 尚不新增 skill 引用
-文件，因此 `files[]` 可保持缺省；GH-174 将首次消费多文件声明并验证完整链路。
+文件，因此 `files[]` 可保持缺省。GH-160 已计划新增
+`skills/specrail-implement-queue/references/context-budget.md`，GH-174 也将拆分同一
+multi-file skill；两者都依赖 GH-172，并必须在各自实现中把该 skill 的完整文件清单迁移
+到 v2 lock。二者谁先实施，谁就是首个生产 multi-file consumer。
 
 ## Product-to-Test Mapping
 
@@ -168,9 +189,9 @@ queue preflight 会明确阻断；把 runtime gate/checker 本身作为全局可
 | B-002 | `resolve_codex_skills_dir()` + CLI target reporting | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "target or codex_home or default"` |
 | B-003 B-012 | `not_installed` status + `--require-installed` caller policy | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "not_installed or require_installed"` |
 | B-004 B-005 | missing/drift result and exit status | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "missing or drift"` |
-| B-008 B-014 B-015 | `validate_skills_lock()` compatible multi-file contract | `python3 -m pytest -q tests/test_evaluate.py -k skills_lock` |
+| B-008 B-014 B-015 | `validate_skills_lock()` compatible multi-file contract + all top-level skill discovery | `python3 -m pytest -q tests/test_evaluate.py -k "skills_lock or unprefixed_skill"` |
 | B-009 | repository/install path containment and symlink rejection | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "escape or symlink or unsafe"` |
-| B-010 B-017 B-019 | read-only/idempotent inspection and bounded output | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "read_only or idempotent or output"` |
+| B-010 B-017 B-019 | read-only/idempotent inspection, bounded output and explicit artifact export | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "read_only or idempotent or output or undeclared_artifact"` |
 | B-011 | installer preflight, explicit apply and post-check | `python3 -m pytest -q tests/test_install_codex_skills.py` |
 | B-013 | ordinary workflow check remains repo-only | `python3 -m pytest -q tests/test_check_workflow.py -k installed_skill` |
 | B-016 | before/after stat snapshot consistency | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k unstable` |
@@ -213,12 +234,26 @@ skills-lock.json + repo skill files
   单次本地哈希成本可忽略。queue 只保留汇总，不加载正文。
 - Maintenance: 三个消费者共享 library 和 manifest；`check_workflow` 通过 required-file
   与测试保证 checker 没有从 pack 中遗漏。
+- Diagnostics: 标准输出对攻击者制造的大目录仍受 50 项/8192 bytes 双上限约束；完整
+  路径只进入显式 create-only artifact，queue 不创建该 artifact。
 - Race: 无法对任意外部目录获得事务快照；双 stat 检测可观察变化并 fail closed，不能保证
   阻止恶意同内容替换。该 doctor 是完整性诊断，不是操作系统沙箱。
 
 ## 测试计划
 
 - [ ] Unit tests: `python3 -m pytest -q tests/test_installed_skill_integrity.py tests/test_evaluate.py`
+- [ ] Coverage gate:
+      `python3 -m pip install --disable-pip-version-check coverage==7.15.2 &&
+      python3 -m coverage erase &&
+      python3 -m coverage run --branch
+      --source=checks.installed_skill_integrity,tools.check_installed_codex_skills
+      -m pytest -q tests/test_installed_skill_integrity.py &&
+      python3 -m coverage report
+      --include='checks/installed_skill_integrity.py,tools/check_installed_codex_skills.py'
+      --fail-under=80 &&
+      python3 -m coverage report --include='checks/installed_skill_integrity.py'
+      --fail-under=100`；前一个 report 强制新增 integrity/CLI 模块总覆盖率至少 80%，后一个
+      在 `--branch` 数据上强制包含路径安全、快照和状态聚合决策的核心 library 达到 100%。
 - [ ] Installer tests: `python3 -m pytest -q tests/test_install_codex_skills.py`
 - [ ] Workflow integration: `python3 -m pytest -q tests/test_check_workflow.py`
 - [ ] Full regression: `python3 -m pytest -q`
@@ -235,5 +270,5 @@ skills-lock.json + repo skill files
 
 回滚新 checker/library、installer 接线、lock 多文件解析、三个 Skill 入口、测试、文档和
 三个 skill 哈希即可恢复原行为。新增 `files[]` 尚未由本 issue 的生产 lock 使用；若后续
-GH-174 已使用，必须先把其引用内容合回对应 `SKILL.md` 并恢复单文件 lock，不能只删除
-validator 支持。回滚不需要修改用户安装目录，且不得自动运行 installer。
+GH-160 或 GH-174 已使用，必须先把其引用内容合回对应 `SKILL.md` 并恢复单文件 lock，
+不能只删除 validator 支持。回滚不需要修改用户安装目录，且不得自动运行 installer。

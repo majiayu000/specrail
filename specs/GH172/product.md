@@ -10,7 +10,7 @@ SpecRail 的 `skills-lock.json` 只能证明仓库内的 skill 副本与声明�
 Codex 实际加载的已安装副本仍与仓库一致。新守卫合入后如果没有重新安装，运行时会继续
 执行旧 skill；仓库检查仍然全绿，维护者却得到“运行时已受保护”的错误印象。当前锁还只
 覆盖每个 skill 的入口 `SKILL.md`，无法保护后续按需加载的引用或脚本，这也阻塞了
-GH-174 的安全拆分。
+GH-160 与 GH-174 的安全拆分。
 
 ## 目标
 
@@ -18,6 +18,9 @@ GH-174 的安全拆分。
 - 区分未安装、完整匹配、内容漂移和文件缺失，避免任何静默降级。
 - 让 installer 与 queue preflight 消费同一份检测结果，而不是各自重新推断。
 - 让锁和 doctor 覆盖一个 skill 的全部受分发文件，为按需引用和脚本提供完整性保证。
+- 让 lock completeness 覆盖 `skills/` 下所有顶层分发 skill，包括 `implx` 等非
+  `specrail-*` 目录。
+- 明确 GH-160 与 GH-174 的多文件 skill 变更都依赖本合同，并在各自实现时迁移到 v2 lock。
 - 保持安装写入需要人工显式授权，doctor 永不自动修复或覆盖用户文件。
 
 ## 非目标
@@ -25,7 +28,8 @@ GH-174 的安全拆分。
 - 不自动执行安装、更新、删除或重启活动 Codex 会话。
 - 不修改 `$HOME`、`CODEX_HOME`、仓库权限或 GitHub 状态。
 - 不提供跨机器分发、远端配置同步或后台自动更新服务。
-- 不处理 GH-160 的 context budget、水位计算或 handoff 行为。
+- 不实现 GH-160 的 context budget、水位计算或 handoff 行为；这里只约束其多文件
+  skill/lock 的依赖顺序。
 - 不在普通 CI/pack 校验中强制访问开发者的本机安装目录。
 - 不在本 issue 内拆分 `specrail-implement-queue`；GH-174 在本合同落地后单独实施。
 
@@ -46,14 +50,17 @@ GH-174 的安全拆分。
    实际哈希和目标路径，并以非零状态结束；不得用时间戳、文件大小或目录存在替代哈希。
 6. B-006 当且仅当所有声明的 skill 文件都存在、路径安全且哈希匹配时，doctor 才能返回
    整体 `match`；单个入口文件匹配不能掩盖引用文件或脚本漂移。
-7. B-007 当多个 skill 同时存在 `match`、`drift` 与 `missing` 时，doctor 必须按稳定顺序
-   返回全部逐项结果和整体失败，不得在首个错误处提前结束。
+7. B-007 当多个 skill 同时存在 `match`、`drift`、`missing` 与 `undeclared` 时，doctor
+   必须按稳定顺序返回全部声明文件结果和整体失败，不得在首个错误处提前结束；未声明项
+   的标准输出必须使用有界摘要而不是无界路径列表。
 8. B-008 当 lock 缺失、格式非法、哈希非法、声明重复、文件未纳入锁或锁中路径不存在时，
    doctor 必须复用仓库 lock 校验的 fail-closed 结果，不能进入“安装副本匹配”的判定。
 9. B-009 当声明路径或安装目标通过绝对路径、`..`、符号链接或其他解析方式逃逸出允许的
    skill 根目录时，doctor 必须拒绝该项并整体失败；不得读取或哈希逃逸目标。
-10. B-010 当 doctor 运行时，整个操作必须只读：不得创建目录、写 checkpoint、更新 lock、
-    修改安装副本、调用 `--apply` 或以任何形式自动修复。
+10. B-010 默认 doctor、library inspect 与所有 queue/installer preflight 必须只读：不得
+    创建目录、写 checkpoint、更新 lock、修改安装副本、调用 `--apply` 或自动修复。唯一
+    例外是调用方显式传入 B-019 的 artifact 路径时，CLI 可 create-only 写入该新诊断文件；
+    这项授权不允许覆盖文件，也不允许写入安装目标。
 11. B-011 当 installer 以默认 dry-run 运行时，必须先调用同一完整性检查并明确显示现状与
     将要执行的计划；只有调用方另外给出既有的人工 `--apply` 授权时才可写入。
 12. B-012 当 queue/`implx` runtime preflight 启动时，必须要求当前运行所需的锁定 skill
@@ -63,24 +70,28 @@ GH-174 的安全拆分。
     校验且明确不声称已检查 runtime 安装；installed-copy 检查由显式 doctor/queue/install
     preflight 触发。
 14. B-014 当 skill 新增、删除或修改受分发引用、脚本等文件时，lock 必须随之更新完整文件
-    集和哈希；未锁定的分发文件、锁定但未分发的文件、路径越界或重复声明全部被确定性
-    拒绝。
+    集和哈希；completeness discovery 必须枚举 `skills/` 的每个顶层分发 skill 目录，
+    不得只匹配 `specrail-*` 前缀。未锁定的顶层 skill（包括 `implx` 一类无前缀目录）、
+    未锁定的分发文件、锁定但未分发的文件、路径越界或重复声明全部被确定性拒绝。
 15. B-015 当现有只包含 `SKILL.md` 的合法 lock 被读取时，它必须保持可验证和可安装；升级
     后的多文件声明不得把既有单文件 skill 静默解释为目录内任意文件均受信任。任一条目
     声明多文件时，lock 顶层版本必须提升，使旧 reader 直接失败而不是忽略未知字段后
     误判通过。
 16. B-016 当检查期间安装文件发生变化，导致同一项无法获得稳定快照时，doctor 必须报告
     不一致并失败，而不是把检查前路径与检查后哈希组合成 `match`。
-17. B-017 当重复运行 doctor 且 lock 与安装目录均未变化时，输出顺序、逐项状态和退出码
-    必须一致；先前失败或后续成功都不得修改被检查对象。
+17. B-017 当重复运行 doctor 且 lock 与安装目录均未变化时，输出顺序、逐项状态、未声明
+    项总数/样本/省略数和退出码必须一致；先前失败或后续成功都不得修改被检查对象。
 18. B-018 当检查被取消、读取失败或依赖异常导致结果不完整时，调用方不得缓存或复用部分
     `match` 作为后续 queue 证据；恢复后必须重新完整检查。
 19. B-019 当读取已安装文件时，必须使用 no-follow 描述符并对同一描述符计算哈希与
-    前后 stat；不得先跟随路径读取再事后判定不稳定。输出安装路径和哈希证据时，
-    不得输出文件正文、凭据、环境变量值或目录中未被
-    lock 声明的内容；诊断信息只包含状态、受控路径、哈希和非敏感错误。
-20. B-020 当 GH-174 等后续变更使用多文件 skill 时，installer、doctor 与 lock validator
-    必须消费同一文件清单语义；任一组件只处理入口文件都视为合同不完整。
+    前后 stat；不得先跟随路径读取再事后判定不稳定。标准 human/JSON 诊断中的未声明项
+    只允许输出 `undeclared_total`、`undeclared_omitted` 和按 UTF-8 字节序确定的有界
+    `undeclared_sample`：最多 50 项且合计最多 8192 UTF-8 bytes。只有调用方显式指定
+    create-only artifact 时才能写出完整、稳定排序的相对路径清单；不得覆盖既有 artifact，
+    queue preflight 不得启用该导出。任何输出均不得包含文件正文、凭据或环境变量值。
+20. B-020 当 GH-160、GH-174 等后续变更使用多文件 skill 时，installer、doctor 与 lock
+    validator 必须消费同一文件清单语义并迁移到 v2 lock；任一组件只处理入口文件都视为
+    合同不完整。GH-160 与 GH-174 的 multi-file 实现都必须在 GH-172 合并后再开始。
 
 ## 验收标准
 
@@ -88,10 +99,16 @@ GH-174 的安全拆分。
 - [ ] 每个锁定 skill 的全部分发文件均产生 `match | drift | missing` 证据。
 - [ ] 安装根不存在被明确报告；存在但漂移或缺失时返回非零且列出全部问题。
 - [ ] 符号链接、路径逃逸、重复声明、未锁定分发文件和检查中变化全部 fail closed。
-- [ ] doctor 完全只读；installer 保持 dry-run 默认且从不自动调用 `--apply`。
+- [ ] 默认 doctor 与 preflight 完全只读；installer 保持 dry-run 默认且从不自动调用
+      `--apply`。显式 B-019 artifact 导出是唯一诊断写入例外，且只能 create-only。
 - [ ] queue/`implx` 在 runtime 安装不匹配时被阻断，普通 CI 不访问本机安装目录。
 - [ ] 既有单文件 lock 保持兼容，多文件 skill 的 validator/installer/doctor 语义一致。
-- [ ] GH-160 的任何文件、状态或行为均不在本变更范围内。
+- [ ] 未声明项标准输出固定包含总数、省略数和不超过 50 项/8192 bytes 的稳定样本；
+      完整相对路径仅可写入显式、create-only artifact，queue 不产生该 artifact。
+- [ ] 新增无 `specrail-*` 前缀的顶层 skill fixture 会因未入 lock 被拒绝，既有 `implx`
+      明确属于 completeness discovery 集合。
+- [ ] GH-160 的功能文件、状态和行为不在本变更范围内，但其 multi-file lock 迁移明确
+      依赖 GH-172，与 GH-174 一样不得抢先实施。
 
 ## 边界情况清单
 
