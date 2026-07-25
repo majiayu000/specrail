@@ -6,7 +6,7 @@ GH-180
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":180,"complete":true,"paths":["AGENT_USAGE.md","README.md","checks/check_workflow.py","checks/duplicate_work_gate.py","checks/github_approved_spec_evidence.py","checks/github_duplicate_evidence.py","checks/github_issue_evidence.py","checks/route_gate.py","checks/runtime_invocation_context.py","checks/runtime_invocation_provider.py","evaluate.py","examples/fixtures/issue-body-hint-ready-to-implement.json","examples/fixtures/issue-ready-to-implement.json","examples/fixtures/issue-ready-to-spec.json","examples/fixtures/issue-reserved-internal.json","integrations/runtime-invocation-provider.md","labels.yaml","schemas/duplicate_work_evidence.schema.json","schemas/issue_evidence.schema.json","schemas/runtime_invocation_context.schema.json","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement/SKILL.md","skills/specrail-plan-tasks/SKILL.md","skills/specrail-workflow/SKILL.md","skills/specrail-write-product-spec/SKILL.md","skills/specrail-write-tech-spec/SKILL.md","templates/pull_request.md","templates/zh-CN/pull_request.md","tests/route_gate_test_support.py","tests/test_check_workflow.py","tests/test_check_workflow_paths.py","tests/test_configured_spec_path_review_regressions.py","tests/test_duplicate_work_gate.py","tests/test_evaluate.py","tests/test_github_duplicate_evidence.py","tests/test_github_issue_evidence.py","tests/test_github_issue_route_evidence.py","tests/test_issue_evidence_freshness.py","tests/test_route_gate.py","tests/test_runtime_invocation_context.py","tests/test_runtime_invocation_provider.py"],"spec_refs":["specs/GH180/bootstrap-evidence.json","specs/GH180/product.md","specs/GH180/tech.md","specs/GH180/tasks.md"]}
+{"version":1,"issue":180,"complete":true,"paths":["AGENT_USAGE.md","README.md","checks/check_workflow.py","checks/duplicate_work_gate.py","checks/pack_asset_validation.py","checks/github_approved_spec_evidence.py","checks/github_duplicate_evidence.py","checks/github_issue_evidence.py","checks/route_gate.py","checks/runtime_invocation_context.py","checks/runtime_invocation_provider.py","evaluate.py","examples/fixtures/issue-body-hint-ready-to-implement.json","examples/fixtures/issue-ready-to-implement.json","examples/fixtures/issue-ready-to-spec.json","examples/fixtures/issue-reserved-internal.json","integrations/runtime-invocation-provider.md","labels.yaml","schemas/duplicate_work_evidence.schema.json","schemas/issue_evidence.schema.json","schemas/runtime_invocation_context.schema.json","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement/SKILL.md","skills/specrail-plan-tasks/SKILL.md","skills/specrail-workflow/SKILL.md","skills/specrail-write-product-spec/SKILL.md","skills/specrail-write-tech-spec/SKILL.md","templates/pull_request.md","templates/zh-CN/pull_request.md","tests/route_gate_test_support.py","tests/test_check_workflow.py","tests/test_check_workflow_paths.py","tests/test_configured_spec_path_review_regressions.py","tests/test_duplicate_work_gate.py","tests/test_evaluate.py","tests/test_github_duplicate_evidence.py","tests/test_github_issue_evidence.py","tests/test_github_issue_route_evidence.py","tests/test_issue_evidence_freshness.py","tests/test_pack_asset_validation.py","tests/test_route_gate.py","tests/test_runtime_invocation_context.py","tests/test_runtime_invocation_provider.py"],"spec_refs":["specs/GH180/bootstrap-evidence.json","specs/GH180/product.md","specs/GH180/tech.md","specs/GH180/tasks.md"]}
 -->
 
 ## Product Spec
@@ -92,9 +92,17 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   `github_approved_spec_evidence.py` 复用现有 label timeline、default-base 与 permission 查询，
   为 review/default 路径的 trusted `ready_to_implement` issue 收集闭合的
   `spec_lifecycle_approval`：
-  三个 transition 必须属于同一 issue、按时间有序、终态为当前/latest `spec_approved`，approval
-  actor 的 repository permission 必须满足现有 maintainer policy，且 snapshot 前后 issue
-  identity/labels 不得漂移。`github_issue_evidence.py` 在 review/default implement evidence 中
+  四个 transition `ready_to_spec → spec_pr_open → spec_review → spec_approved` 必须属于同一
+  issue、按时间有序、终态为当前/latest `spec_approved`（缺少起始 `ready_to_spec` 事件即
+  拒绝，否则直接跳到 `ready_to_implement` 后补三个 label 也能伪造出通过链，而 product
+  invariant 要求完整生命周期）。approval actor 的 repository permission 必须满足现有
+  maintainer policy，且 snapshot 前后 issue identity/labels 不得漂移。
+
+  该 object 还必须携带 approval 时刻的 `approved_packet_sha256`（同一稳定排序规则下
+  product/tech 的逐文件 sha256 聚合）与 `approved_spec_head_sha`。route 在计算当前
+  `packet_snapshot_sha256` 后必须与之比对：approval 之后被改动的 product/tech 使
+  authorization 失效（`spec_approval_stale`），必须重新走 `spec_approved`。否则 maintainer
+  批准的是 A 版内容，实现却可以从事后改写的 B 版进入 task planning/implementation。`github_issue_evidence.py` 在 review/default implement evidence 中
   嵌入该对象；schema 禁止开放字段；
 - `workflow.yaml` 不在 planned changes 中，现有 auth policy 保持原样：persisted/default
   `auth_mode` 是 review；只有当前用户明确发起的 auto invocation 才能选择 transient auto 并
@@ -114,8 +122,16 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   context、非 current generation 或任一 binding 不匹配均 fail closed。`--auth-mode auto`、
   持久化配置或 readiness label 单独都不能构成 waiver；record 缺失、旧 record 配新 context、
   旧 context 配新 record、跨 invocation/issue/route 复用或字段冲突必须阻断。route result 绑定
-  `spec_approval_authorization_sha256`、`runtime_invocation_context_sha256`、invocation id/
-  generation 与 authorization kind；context 原文、signature 或 trust root 不写进 saved result；
+  `spec_approval_authorization_sha256`、`runtime_invocation_context_binding_sha256`、
+  invocation id/generation 与 authorization kind；context 原文、signature 或 trust root
+  不写进 saved result。
+
+  `runtime_invocation_context_binding_sha256` 只覆盖 **challenge-independent** 绑定字段
+  （invocation id、issue、route、`auth_mode`、精确 waived gates、authorization record 的
+  canonical sha256、runtime key id、generation），显式排除 nonce/challenge、`issued_at`、
+  `expires_at` 与 signature。因为 consumer 侧必须发起新的 challenge，新签发的 context 必然
+  有不同的 nonce 与时间戳，用整份 context 的摘要去比对会让每一次合法的
+  `--verify-result` 都失败，或逼实现复用旧的 signed context 而废掉 replay 防护；
 - 无论 authorization kind 是 `human_lifecycle` 还是 `invocation_auto_waiver`，route 都必须
   独立验证随后取得的 fresh trusted `ready_to_implement`。auto waiver 不替代 duplicate gate、
   packet validation、freshness 或 saved-result binding。sensitive route 原有 exact-head
@@ -136,9 +152,11 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   consumer
   先对 fresh issue
   evidence 重做 identity/source/trust/freshness 校验，再按 saved authorization kind 重验
-  ordered lifecycle；auto 则重新向 runtime-owned provider 验签、查询 current generation，
-  校验 context 仍 live/current 且与 authorization record、saved context digest/id/generation、
-  issue/route/waived gates 全部一致。随后把 fresh duplicate evidence 交给 duplicate gate 重做
+  ordered lifecycle；auto 则重新向 runtime-owned provider 发起新的 challenge、对**新返回的** context 验签并
+  查询 current generation（fresh response 单独验证，不与旧 nonce/时间戳比对），再把新 context
+  的 challenge-independent binding digest 与 saved
+  `runtime_invocation_context_binding_sha256` 比对，并校验与 authorization record、
+  invocation id/generation、issue/route/waived gates 全部一致。随后把 fresh duplicate evidence 交给 duplicate gate 重做
   freshness、open PR 与 branch 检查，重算当前 packet 摘要，最后匹配 saved result 的 issue、
   route、authorization/context/issue/duplicate/packet 摘要与 allowed decision。不得把 saved
   hash 与 saved result 自身比较，也不得把 saved context 副本当作 live trust anchor。新
