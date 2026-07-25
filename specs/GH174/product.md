@@ -47,8 +47,10 @@ readiness、review、authorization、merge 或 fail-closed 合同。
    必须拒绝；所有引用只能由主文件一跳到达。
 8. B-008 当主文件声明未知 phase、重复 phase、重复路径、空路由或未使用引用时，
    检查必须一次报告全部缺陷并稳定排序。
-9. B-009 当主文件与引用出现冲突的 normative contract 时，检查必须失败；引用不得
-   放宽主文件的 MUST/禁止项或声明自己具有更高优先级。
+9. B-009 当主文件与引用出现**可判定的**冲突 normative contract 时，检查必须失败：
+   判定范围是两类——(a) 引用中出现主文件同一 `contract_id` 的规范性句子却未逐字复用
+   主文件短版文本；(b) 命中显式封闭的 weakening pattern 清单。引用不得放宽主文件的
+   MUST/禁止项或声明自己具有更高优先级；检查器不承诺检出清单之外的任意自然语言矛盾。
 10. B-010 当现有 queue 行为测试运行时，拆分前的 readiness、planning、review、
     CI、authorization、merge、checkpoint 与 rejection 语义必须保持通过。
 11. B-011 当 queue/implx 入口引用已拆分资产时，入口不得递归整篇重读 queue 主文件；

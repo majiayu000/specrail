@@ -6,7 +6,7 @@ GH-174
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":174,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/skill_reference_graph.py","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement-queue/references/evidence-and-recovery.md","skills/specrail-implement-queue/references/planning-and-runtime.md","skills/specrail-implement-queue/references/review-and-merge.md","tests/test_check_workflow.py","tests/test_install_codex_skills.py","tests/test_skill_reference_graph.py"],"spec_refs":["specs/GH174/product.md","specs/GH174/tech.md","specs/GH174/tasks.md"]}
+{"version":1,"issue":174,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/installed_skill_integrity.py","checks/skill_reference_graph.py","skills-lock.json","tools/check_installed_codex_skills.py","tools/install_codex_skills.py","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement-queue/references/evidence-and-recovery.md","skills/specrail-implement-queue/references/planning-and-runtime.md","skills/specrail-implement-queue/references/review-and-merge.md","tests/test_check_workflow.py","tests/test_install_codex_skills.py","tests/test_skill_reference_graph.py"],"spec_refs":["specs/GH174/product.md","specs/GH174/tech.md","specs/GH174/tasks.md"]}
 -->
 
 ## Product Spec
@@ -35,14 +35,19 @@ GH-174
 ```json
 {
   "version": 1,
-  "phases": {
-    "startup_planning": ["references/planning-and-runtime.md"],
-    "runtime_handoff": ["references/planning-and-runtime.md", "references/evidence-and-recovery.md"],
-    "review_merge": ["references/review-and-merge.md"],
-    "retry_recovery": ["references/evidence-and-recovery.md"]
-  }
+  "phases": [
+    {"phase": "startup_planning", "references": ["references/planning-and-runtime.md"]},
+    {"phase": "runtime_handoff", "references": ["references/planning-and-runtime.md", "references/evidence-and-recovery.md"]},
+    {"phase": "review_merge", "references": ["references/review-and-merge.md"]},
+    {"phase": "retry_recovery", "references": ["references/evidence-and-recovery.md"]}
+  ]
 }
 ```
+
+`phases` 用**数组**而不是对象：JSON 对象的重复键会被普通 parser 静默折叠成一个值，
+B-008 要求的"重复 phase 声明必须被拒绝并报告"就无法实现（重复的
+`startup_planning` 会隐形并悄悄改变路由）。数组形态让重复 `phase` 值可被确定性检出；
+实现禁止改回对象形态，也不得依赖 pair-preserving parser 之外的隐式行为。
 
 允许同一引用服务多个 phase，但每个 phase 路径必须唯一、稳定排序。主文件对每个 phase
 明确“何时加载”和“在首个什么动作前加载”。implx 只加载 queue 主入口，queue 再按
@@ -60,6 +65,16 @@ GH-174
 - rejection repeat stop。
 
 ### 2. 三个单层引用
+
+与 GH-160 的顺序约束：GH-160 计划新增
+`skills/specrail-implement-queue/references/context-budget.md`
+（`specs/GH160/tasks.md:17`、`specs/GH160/tech.md:106-114`）。本设计把 context/runtime
+budget 收进 `planning-and-runtime.md`，两者的闭集/lock 相等性检查会互相判错。因此显式
+定序：**GH-174 先落地**，GH-160（当前 `parked`）在其之后实现，并在解除 parked 时按本
+manifest 的引用集合调整——要么把 context budget 写进 `planning-and-runtime.md`，要么在
+GH-160 自己的 manifest 里同时更新 phase manifest、lock 与闭集检查。若 GH-160 先合并，
+本 issue 必须先把该文件纳入 phase manifest 与 planned paths 再实现，不得在 manifest
+之外删改它。
 
 - `planning-and-runtime.md`：tier 细节、queue ledger、spec/impl mix、context/runtime
   budget、checkpoint/Goal 字段与操作顺序。
@@ -86,16 +101,36 @@ validate_skill_reference_graph(repo, skill_name) -> list[str]
 1. 解析主文件唯一 JSON marker；
 2. 校验 closed phase enum、非空路由、POSIX 相对路径与 skill-root containment；
 3. 校验每个路径是普通文件且无 symlink component；
-4. 扫描引用中的 Markdown link/marker，拒绝对主/其他引用的二级路由；
+4. 扫描引用中的 Markdown link/marker **以及裸路径 token**（反引号或纯文本里的
+   `SKILL.md`、`references/*.md` 等规范化路径），拒绝对主文件/其他引用的二级路由。
+   只扫链接语法不够：这类 skill 文档习惯用反引号裸写可操作文件名，未加链接语法的
+   `references/review-and-merge.md` 同样会诱导多跳重读；
 5. 与 GH-172 normalized lock manifest 对账：声明集合必须等于 queue 的额外
    `files[]` 集合；
 6. 检查每个引用声明的 phase 与反向路由一致；
-7. 检查关键 marker 只在主文件存在，禁止引用包含 known weakening patterns；
+7. 检查关键 marker 只在主文件存在，并按**结构化清单**判定冲突：每条不可绕过合同在
+   主文件里有稳定语义 ID（`contract_id`），引用中若出现同一 `contract_id` 的规范性
+   句子，必须逐字复用主文件的短版文本，否则报冲突。除此之外只保留一份显式、封闭的
+   weakening pattern 清单（如 "when available"、"optional"、"best effort"、
+   "may skip"）。B-009 的判定范围随之收窄为「同 contract_id 文本不一致」或「命中清单」
+   两类可判定情形——检查器不承诺检出任意自然语言矛盾，规格也不再声称能做到；
 8. 稳定聚合全部错误。
 
 `checks/check_workflow.py` 把 checker 加入 required assets，并对 queue 调用。
 installed doctor 继续负责安装字节/hash；reference graph 负责仓库结构/路由，两者都通过
 才可启动 queue。
+
+仅靠"某次 doctor 或 CI 跑过"不满足 B-005：直接调用 `specrail-implement-queue` 时，
+Startup 在加载任何 phase 引用之前就开始抓取和映射远端队列状态。因此主文件 Startup
+的**第一步**（早于 fetch remote state、写 checkpoint、spawn lane）必须是：
+
+```sh
+python3 checks/skill_reference_graph.py --repo <specrail-source> --skill specrail-implement-queue --json
+python3 tools/check_installed_codex_skills.py --repo <specrail-source> --require-installed --json
+```
+
+两条命令都必须 `allowed`/`match`；缺失、漂移或无法定位源包时停止队列，不得降级为
+warning，也不得先做远端读写再补检查。
 
 ### 4. 机械等价与尺寸门禁
 
@@ -147,7 +182,9 @@ installed files  → GH-172 doctor ────────────┘
 - [ ] Unit: 尺寸、manifest、phase、闭集、循环、路径、冲突与稳定错误。
 - [ ] Integration: workflow + GH-172 lock/installer/doctor 多文件 fixture。
 - [ ] Regression: 全量 pytest、all-specs、depth audit、diff/hash/line/byte checks。
-- [ ] Forward-use: 临时安装目录加载 startup、review、recovery 三条 phase 路径。
+- [ ] Forward-use: 临时安装目录加载 startup_planning、runtime_handoff、review_merge、
+  retry_recovery 四条 phase 路径（`runtime_handoff` 同时需要 planning 与 evidence 两个
+  引用，漏测会让坏掉的 handoff 路由通过最终验收却违反 B-004/B-011）。
 
 ## 回滚方案
 
