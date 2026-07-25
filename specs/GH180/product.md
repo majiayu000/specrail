@@ -59,19 +59,24 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
    “先有 tasks 才能进入创建 tasks 的 route”循环。
 8. B-008 从 spec 写作进入实现时，默认及 `auth_mode: review` 路径必须同时具备：可信、
    按时间有序且完成 `ready_to_spec → spec_pr_open → spec_review → spec_approved` 的
-   lifecycle approval evidence，以及随后取得的 fresh trusted `ready_to_implement`
-   evidence。只有当前用户明确发起的 `auth_mode: auto` invocation 可以按 `workflow.yaml`
-   现有 policy waive `spec_approval`；该 waiver 必须同时绑定 authorization record 和由
-   runtime 独立签发、不可由 record/CLI/saved result 自报的 live current-invocation trust
-   anchor。anchor 必须证明当前 invocation identity/generation、issue/route、授权 record
-   摘要、签发/过期时间与精确 `waived_human_gates: ["spec_approval"]`，且使用 runtime-owned
-   trust root 校验。SpecRail client 必须通过固定的 authenticated local IPC adapter 执行
-   fresh challenge-response；endpoint/provider、peer identity 与 trust root 均不能由 CLI、
-   environment、authorization record、repository 或 saved result 选择。record 中的
-   `invocation_id` 只能参与匹配，不能自行证明“当前”。
-   持久化配置、packet shape、readiness label、旧 authorization record、旧 anchor 或旧 saved
-   result 均不能构成 waiver。provider 未部署、不可用、peer/key/signature 无效、key 被撤销、
-   challenge 重放或 generation 改变时 auto 必须 fail closed；可以显式改走正常
+   lifecycle approval evidence，以及时间严格晚于所接受 `spec_approved` 事件的 fresh trusted
+   `ready_to_implement` label event；只看采集时间或当前 label 不足以证明该顺序。approval
+   必须绑定同一 repository 的 spec PR、该 PR 的不可变 exact head SHA，以及有权限 maintainer
+   对该 exact head 的 approval；被批准的 product/tech 摘要必须从该 SHA 的 blob 计算，不能从
+   当前工作树、当前 base 或调用方给出的 hash 推断。
+   只有当前用户明确发起的 `auth_mode: auto` invocation 可以按 `workflow.yaml` 现有 policy
+   waive `spec_approval`；runtime 必须在 runtime-owned grant registry 中存在由用户授权、
+   与 current invocation/issue/route 和精确 `waived_human_gates: ["spec_approval"]` 匹配的
+   active grant。调用方提供的 authorization record 只能作为 grant selector，不能创建、
+   改写或证明授权。provider 必须从 registry 取出 grant 并把其稳定摘要连同 current invocation
+   identity/generation 绑定到独立签发的 live trust anchor。SpecRail client 必须通过固定的
+   authenticated local IPC adapter 执行 fresh challenge-response，并调用 runtime-owned、
+   可移植的 RFC8785-JCS/Ed25519 verifier；endpoint/provider/verifier、peer identity 与 trust
+   root 均不能由 CLI、environment、authorization record、repository 或 saved result 选择。
+   provider、grant registry 或 verifier 未部署/不可用时 auto 必须 fail closed。
+   持久化配置、packet shape、readiness label、caller selector、旧 grant、旧 anchor 或旧 saved
+   result 均不能构成 waiver。provider/registry/verifier 未部署或不可用、peer/key/signature
+   无效、grant/key 被撤销、challenge 重放或 generation 改变时 auto 必须 fail closed；可以显式改走正常
    human-lifecycle review route，但不得 silent downgrade 或声称 auto available。无论是否 waive
    `spec_approval`，fresh trusted readiness、fresh
    duplicate-work evidence、packet validation 和 saved-result binding 均不可 waive。
@@ -94,20 +99,29 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
     时，implementation-ready 判定必须失效并阻断代码实现；系统不得沿用删除前的
     readiness、验证或 task plan 证据。
 14. B-014 readiness-sensitive 结果必须同时绑定 issue evidence、spec approval authorization
-    evidence（review 路径的 ordered lifecycle 或 auto 路径的 invocation-scoped waiver）、
-    duplicate-work evidence 的规范化内容摘要，以及当前 packet 中已发现 artifact 的路径、
-    内容 sha256 和聚合 snapshot sha256。消费保存的 route 结果时，consumer gate 必须接收
-    重新采集的 fresh issue evidence 与 fresh duplicate-work evidence，并重新验证同一
-    auth mode/authorization record；auto 路径的初次 route 与 `--verify-result` 必须各自消费
-    runtime provider 对各自 fresh unpredictable challenge 的响应，并重验固定算法签名、
-    authenticated peer、active/non-revoked key、generation、expiry、challenge、issue/route、
-    record 摘要和精确 waived gates。两个响应必须绑定同一 current invocation/generation，但
-    不得复用 challenge 或响应。consumer 随后重验 freshness、open PR
-    与 remote branch snapshot 再比较摘要；不得只把 saved hash 与 saved result 自身比较，也
-    不得让 authorization record 或 saved result 自报 current invocation。任一 artifact、linked
-    issue、approval/waiver、runtime current generation、duplicate-work snapshot 或 freshness
-    状态变化后，消费者必须确定性拒绝旧结果并基于最新 snapshot 重跑；旧 record、旧 anchor
-    与旧结果不得授权新 invocation 或新内容。
+    evidence（review 路径的 ordered exact-head lifecycle 或 auto 路径的 runtime-registry
+    grant）、duplicate-work evidence，以及当前 packet artifact。issue 与 duplicate evidence
+    各自必须同时产生：包含 `collected_at` 的完整 envelope audit sha256，以及只排除
+    `collected_at`、其余规范化内容全部保留的 stable semantic snapshot sha256；跨 fresh
+    capture 只比较 semantic snapshot，且必须独立重验每次 envelope 的 `collected_at`
+    freshness，不能因时间戳自然变化误判语义漂移，也不能从 stable digest 删除其它字段。
+    approval 必须比较只含 product/tech 的 `spec_snapshot_sha256`；saved-result 与 artifact
+    漂移必须另用包含当前已发现 product/tech/tasks 的 `packet_snapshot_sha256`，创建合法
+    `tasks.md` 不得使已批准 spec 自动变 stale。
+    消费保存的 route 结果时，consumer gate 必须接收重新采集的 fresh issue evidence 与 fresh
+    duplicate-work evidence，并重新验证同一 auth mode/grant selector；auto 路径的初次 route
+    与 `--verify-result` 必须各自消费 runtime provider 对各自 fresh unpredictable challenge
+    的响应，并由 runtime-owned verifier 独立重验 authenticated peer、RFC8785-JCS/Ed25519、
+    active/non-revoked key、generation、expiry、challenge、issue/route、runtime-owned grant
+    摘要和精确 waived gates。两个响应的 stable cross-challenge binding 必须绑定同一 current
+    invocation/generation/grant，但排除 challenge/request、签发/过期时间、signature 与可合法
+    rotation 的 `key_id`；每个 fresh response 的 `key_id` 和 key activity 仍须分别 fail-closed
+    校验。consumer 随后重验 freshness、open PR 与 remote branch snapshot 再比较 semantic
+    摘要；不得只把 saved hash 与 saved result 自身比较，也不得让 caller record 或 saved result
+    自报 current invocation 或授权。任一 artifact、linked issue、approval/grant、runtime
+    current generation、duplicate-work semantic snapshot 或 freshness 状态变化后，消费者必须
+    确定性拒绝旧结果并基于最新 snapshot 重跑；旧 selector、旧 anchor 与旧结果不得授权新
+    invocation 或新内容。
 15. B-015 对相同 artifact snapshot 与相同 evidence 重复校验必须得到同一 shape
     与 readiness 结论；失败后重试必须重新验证全部前提，不能只修一个字段后复用
     旧的成功片段或 rejection 之前的授权。
@@ -143,22 +157,27 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
 - [ ] 缺 product、缺 tech、无效 tasks、tasks-only 与空/不可读 artifact 均有
   稳定负例，且不得通过降级成 `staged` 掩盖错误。
 - [ ] `write_spec` 在 `ready_to_spec` 只形成 product/tech；`implement` 在 review 路径凭
-  ordered human lifecycle approval 入场，在明确的 auto invocation 中凭 invocation-scoped
-  `spec_approval` waiver 入场；auto 正例同时要求 authorization record 与 runtime 独立签发的
-  live current-invocation anchor 严格匹配。两者都仍须 fresh trusted `ready_to_implement`、
-  fresh duplicate-work evidence 与有效 product/tech，再创建并验证 tasks，最后才允许代码实现。
-- [ ] Host integration 明确区分 runtime provider owner 与 SpecRail client owner：runtime
-  owner 部署 authenticated local IPC、current-generation registry、Ed25519 signer/private key
-  和 OS/runtime-owned trust store；SpecRail client owner 实现 adapter、JCS canonicalization、
-  schema、route binding、fail-closed 与测试。provider 未部署时 auto 不可用，但正常
+  same-repository spec PR 的 immutable exact-head maintainer approval 与 ordered human
+  lifecycle 入场，且所接受的 `ready_to_implement` event 必须晚于 `spec_approved`；在明确的
+  auto invocation 中凭 runtime-owned grant registry 中的 active `spec_approval` waiver 入场，
+  caller record 仅作 selector。两者都仍须 fresh trusted readiness、fresh duplicate-work
+  evidence 与有效 product/tech，再创建并验证 tasks，最后才允许代码实现。
+- [ ] Host integration 明确区分 runtime provider/verifier owner 与 SpecRail client owner：
+  runtime owner 部署 authenticated local IPC、current-generation 与 authorization-grant
+  registry、Ed25519 signer/private key、OS/runtime-owned trust store，以及 guaranteed
+  portable RFC8785-JCS/Ed25519 verifier；SpecRail client owner 实现 adapter、闭合 schema、
+  route binding、fail-closed 与测试，不在 fresh checkout 假设未声明的 Python crypto/JCS
+  dependency。provider、grant registry 或 verifier 未部署时 auto 不可用，但正常
   human-lifecycle review route 保持可用。
-- [ ] readiness/lifecycle/auto-waiver 缺失或冲突、超出 freshness 窗口、未来时间、错误 issue、
-  body hint、CLI `--state`/readiness `--label` 自报，以及 artifact/duplicate-work 并发漂移
-  或 caller/authorization record/saved result 自报 invocation、旧 invocation record/anchor/result
-  重放均不能产生 implementation-ready 结论；route 结果绑定 issue、approval-or-waiver、
-  duplicate-work 与 packet 摘要，consumer gate 使用同一 invocation authorization、fresh issue
-  和 fresh duplicate-work evidence，并再次消费 live runtime-owned invocation anchor 重验，
-  而不是对 saved hash 做自比较。
+- [ ] readiness/lifecycle/auto-waiver 缺失或冲突、readiness event 不晚于 approval、spec PR
+  非同仓或 approval 不绑定 exact head、超出 freshness 窗口、未来时间、错误 issue、body hint、
+  CLI `--state`/readiness `--label` 自报，以及 artifact/duplicate-work 并发漂移或 caller
+  record/saved result 自报 invocation/grant、旧 selector/anchor/result 重放均不能产生
+  implementation-ready 结论；fresh evidence 的完整 envelope hash 用于审计，排除且只排除
+  `collected_at` 的 semantic snapshot 用于跨采集比较，freshness 单独校验；approval 使用
+  product/tech `spec_snapshot_sha256`，saved result 使用完整 `packet_snapshot_sha256`。
+  runtime signing key 可在两次 challenge 间合法 rotation：stable binding 排除 `key_id`，但
+  每份 response 仍由 portable verifier 独立校验其 active/non-revoked key。
 - [ ] 既有完整 packet 保持兼容；提前生成 tasks 的 `ready_to_spec` 在途 PR 可以在
   可信 route evidence 下删除 tasks 并恢复为 `staged`。
 - [ ] GH-180 bootstrap 的 tracked evidence 诚实记录 observed direct label transition、
@@ -174,13 +193,13 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
 | --- | --- |
 | 空/缺失输入 | covered: B-001, B-004, B-005, B-009（缺 tasks 是合法 staged；缺 product/tech、空文件或缺 evidence 分别 fail closed） |
 | 错误与失败路径 | covered: B-004, B-005, B-013, B-017, B-019（无效 artifact、采集/权限失败、部分写入均不可伪装成功） |
-| 授权/权限 | covered: B-003, B-008, B-009, B-016, B-017（shape/readiness label 不单独授权；review implement 验证人类 lifecycle approval；auto 必须让 record 与独立 runtime current-invocation anchor 匹配且只 waive spec_approval；两者都验证其余 current evidence） |
-| 并发/竞态 | covered: B-014（artifact、issue、lifecycle/waiver、runtime current generation 或 duplicate-work snapshot 漂移后必须重判） |
+| 授权/权限 | covered: B-003, B-008, B-009, B-016, B-017（shape/readiness label 不单独授权；review implement 验证同仓 spec PR exact-head 人类 approval 与后续 readiness event；auto 只接受 runtime-owned registry grant，caller record 仅作 selector；两者都验证其余 current evidence） |
+| 并发/竞态 | covered: B-014（artifact、issue、lifecycle/grant、runtime current generation 或 duplicate-work semantic snapshot 漂移后必须重判；freshness 与 key activity 分别校验，合法 key rotation 不改变 stable binding） |
 | 重试/幂等 | covered: B-015, B-019（同输入同结论；失败或中断后全量重验，不复用旧片段） |
 | 非法状态转换 | covered: B-006..B-008, B-012, B-013（write_spec/implement 职责分离，禁止靠文件跳状态） |
 | 兼容/迁移 | covered: B-011, B-012, B-016, B-017（旧完整 packet、提前 tasks 纠偏与 GH-180 两阶段 bootstrap 均有窄化合同） |
 | 降级/回退 | covered: B-005, B-010, B-013, B-017（结构可验证不等于授权；错误 tasks/evidence 不得静默回退成功） |
-| 证据与审计完整性 | covered: B-009, B-010, B-014..B-018（fresh issue/approval-or-waiver/duplicate evidence、内容摘要、snapshot、unproven bootstrap 字段与判定理由均可追溯） |
+| 证据与审计完整性 | covered: B-009, B-010, B-014..B-018（fresh envelope 与 semantic snapshot 分离、spec/packet snapshot 分离、exact-head approval、runtime grant 与 unproven bootstrap 字段/判定理由均可追溯） |
 | 取消/中断 | covered: B-019（只认中断后的真实文件与状态，部分完成不升级） |
 
 ## 发布说明
@@ -190,6 +209,6 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
 implementation readiness。GH-180 的一次性旧-validator bootstrap 被诚实记录为 direct
 `ready_to_spec → ready_to_implement` auto exception，且缺失的原 issue-evidence
 `collected_at`/hash 明确为 `unproven`；历史 auto/waiver 仅为 `reported_unproven`，因为缺少
-current-invocation trust anchor 与闭合 record，不能证明当次 `spec_approval` waiver 成立，
+current-invocation trust anchor 与 runtime-owned grant，不能证明当次 `spec_approval` waiver 成立，
 更不是正常生命周期、standing authorization 或其它 gate 的 waiver。其它在途 spec PR 必须使用
 staged 纠偏，不能通过提前创建 tasks、伪造 readiness 或跳过校验完成迁移。
