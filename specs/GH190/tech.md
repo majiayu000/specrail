@@ -6,7 +6,7 @@ GH-190
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":190,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/goal_contract.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","schemas/runtime_checkpoint.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/tranche_checkpoint.md","tests/test_check_workflow.py","tests/test_goal_contract.py","tests/test_runtime_ledger_gate.py","tests/test_specrail_schema.py"],"spec_refs":["specs/GH190/product.md","specs/GH190/tech.md","specs/GH190/tasks.md"]}
+{"version":1,"issue":190,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/goal_contract.py","checks/pack_asset_validation.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","schemas/goal_contract.schema.json","schemas/runtime_checkpoint.schema.json","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","templates/tranche_checkpoint.md","templates/zh-CN/tranche_checkpoint.md","tests/test_check_workflow.py","tests/test_goal_contract.py","tests/test_pack_asset_validation.py","tests/test_runtime_ledger_gate.py","tests/test_specrail_schema.py"],"spec_refs":["specs/GH190/product.md","specs/GH190/tech.md","specs/GH190/tasks.md"]}
 -->
 
 ## Product Spec
@@ -32,12 +32,16 @@ GH-190
 ```text
 build_goal_contract(
   repo, auth_mode, queue_mode, capability,
-  queue_snapshot_digest, human_decisions_digest,
+  queue_records, human_decision_records,
   token_budget, budget_source, run_binding
 ) -> GoalContract | GoalCandidate
 ```
 
-输入先 canonicalize：排序 queue item identity，但不丢状态/head；摘要用 SHA-256。
+builder 接收**原始 queue / human-decision 记录**（issue/pr identity、state、head 等
+字段），自己做 canonicalize：按 identity 稳定排序、保留状态/head、生成 RFC8785 canonical
+JSON 后取 SHA-256，得到 `queue_snapshot_digest` 与 `human_decisions_digest`。不接受
+调用方预先算好的 digest：那样顺序等价的同一队列会因调用方各自的排序实现产生不同摘要，
+B-002 的字节稳定性就退化成"每个调用方各自复刻一套 canonicalization"。
 active contract 包含：
 
 ```text
@@ -67,19 +71,38 @@ active → complete | exhausted | interrupted | blocked
 ```
 
 terminal 不可回到 active。complete 需要 runtime checkpoint 已证明 queue empty/fully
-blocked/only human decisions；exhausted 需要 `tokens_used >= token_budget` 与 handoff；
+blocked/only human decisions；exhausted 需要 `tokens_used == token_budget` 与 handoff（`tokens_used > token_budget`
+按 B-012 判为预算违规 `blocked`，不得记为合法耗尽）；
 interrupted 需要 user interrupt marker；blocked 需要 blocker。
 
 ### 3. schema/gate
 
-checkpoint schema 对 active `goal` 使用 `additionalProperties:false` 和全字段 required。
-auto full-drain+capability 要求 active goal；其他分支禁止 active goal并要求合法 candidate
-或 disabled reason。
+active `goal` 的闭合契约独立成 `schemas/goal_contract.schema.json`，由
+`schemas/runtime_checkpoint.schema.json` 以 `$ref` 引用。原因是 checkpoint schema 已有
+778 行，而 pack 校验对单个 schema 有 800 行上限；把状态/预算/binding 条件全部内联必然
+超限。新 schema 必须注册进 `checks/pack_asset_validation.py` 的 `SPEC_SCHEMA_FILES` 并
+同步 `tests/test_pack_asset_validation.py`。
+
+checkpoint 必须持久化分支输入：`goal_routing`（`auth_mode`、`queue_mode`、
+`goal_capability: available | unavailable`）与封闭的 `goal_disabled_reason`
+（`review_mode` | `bounded_tranche` | `capability_unavailable` | `missing_budget` |
+`invalid_budget`）。因为 gate 按 B-013 离线运行、不访问 Goal API，没有这些字段就无法把
+"能力不可用/review/bounded" 与"该有 active goal 却缺失"区分开，B-007 不可执行。
+
+规则：`auth_mode: auto` + `full_queue_drain` + `goal_capability: available` **且**
+存在合法 `token_budget` 时要求 active goal；缺预算或预算非法（`goal_disabled_reason`
+为 `missing_budget`/`invalid_budget`）时，B-003 的 fail-closed 路径只允许写
+`goal_candidate`，此时 gate 必须接受没有 active goal 的 checkpoint——否则那条路径
+不可 checkpoint，实现会被逼着创建一个没有预算的 Goal。其他分支禁止 active goal 并要求
+合法 candidate 或 disabled reason。
 
 runtime gate 调用共享 `validate_goal_contract()`，交叉校验：
 
 - objective digest 与 canonical structure；
-- queue/human decision digest 与 checkpoint items；
+- queue/human decision digest 与 checkpoint items：checkpoint 增加封闭的
+  `human_decisions[]` 集合（每项 `item`、`reason`、`recommended_action`），
+  `human_decisions_digest` 定义为对该集合规范化后的 sha256，gate 自行重算比对，
+  不接受调用方自报摘要，也不从 `remaining_queue` 的松散状态推断；
 - repo/run/fencing 与 GH-189 binding（若 GH-189 尚未合并，实现需先 rebase）；
 - budget/tokens/status；
 - checkpoint status 与 Goal terminal transition。
@@ -89,8 +112,9 @@ gate 只读，无 Goal API/网络/session 访问。
 ### 4. 迁移与 queue 集成
 
 checkpoint version 升级，旧宽松 `goal` 不能作为 active 证据；resume 时转成
-goal_candidate 并要求人工/新 Goal 决策。queue/implx 只调用 builder，不再自行拼
-objective 或发明 conservative default。GH-174 已合并时，详细操作放 canonical runtime
+goal_candidate 并要求人工/新 Goal 决策。queue 与 implx 两个入口都只调用 builder，不再自行拼 objective 或发明 conservative
+default；`skills/implx/SKILL.md` 的 Goal 启动指引必须同步改写并重新 lock，否则一行式
+快捷入口仍会把 agent 引向旧的 create-goal 路径。GH-174 已合并时，详细操作放 canonical runtime
 reference，主文件保留不可绕过 marker。
 
 ## Product-to-Test Mapping
