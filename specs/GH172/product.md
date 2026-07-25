@@ -48,11 +48,14 @@ GH-160 与 GH-174 的安全拆分。
    `missing`、列出期望哈希和目标路径，并以非零状态结束；其他缺陷仍须一并报告。
 5. B-005 当文件存在但内容哈希与 lock 不一致时，结果必须标记 `drift`，同时披露期望哈希、
    实际哈希和目标路径，并以非零状态结束；不得用时间戳、文件大小或目录存在替代哈希。
-6. B-006 当且仅当所有声明的 skill 文件都存在、路径安全且哈希匹配时，doctor 才能返回
-   整体 `match`；单个入口文件匹配不能掩盖引用文件或脚本漂移。
+6. B-006 当且仅当所有声明的 skill 文件都存在、路径安全且哈希匹配，并且安装 skill
+   目录中除这些文件及其必要、安全的严格父目录外不存在任何未声明项时，doctor 才能返回
+   整体 `match`；单个入口文件匹配不能掩盖引用文件/脚本漂移或 stale undeclared content。
 7. B-007 当多个 skill 同时存在 `match`、`drift`、`missing` 与 `undeclared` 时，doctor
    必须按稳定顺序返回全部声明文件结果和整体失败，不得在首个错误处提前结束；未声明项
-   的标准输出必须使用有界摘要而不是无界路径列表。
+   的标准输出必须使用有界摘要而不是无界路径列表。声明文件的严格父目录只有在它是
+   containment 内的真实目录且恰好属于声明路径前缀时才是 structural entry；structural
+   entry 不计为 `undeclared`，其它文件、目录或特殊项仍必须计入并阻断 `match`。
 8. B-008 当 lock 缺失、格式非法、哈希非法、声明重复、文件未纳入锁或锁中路径不存在时，
    doctor 必须复用仓库 lock 校验的 fail-closed 结果，不能进入“安装副本匹配”的判定。
 9. B-009 当声明路径或安装目标通过绝对路径、`..`、符号链接或其他解析方式逃逸出允许的
@@ -62,7 +65,10 @@ GH-160 与 GH-174 的安全拆分。
     例外是调用方显式传入 B-019 的 artifact 路径时，CLI 可 create-only 写入该新诊断文件；
     这项授权不允许覆盖文件，也不允许写入安装目标。
 11. B-011 当 installer 以默认 dry-run 运行时，必须先调用同一完整性检查并明确显示现状与
-    将要执行的计划；只有调用方另外给出既有的人工 `--apply` 授权时才可写入。
+    将要执行的计划；只有调用方另外给出既有的人工 `--apply` 授权时才可写入。apply 必须
+    仅从 lock 声明的 source regular file 的 stable no-follow snapshot 复制；若 source 路径
+    在验证与复制之间变成 symlink/special file、逃逸或发生变化，必须在替换已安装 skill 前
+    fail closed，且不得读取或复制逃逸目标内容。
 12. B-012 当 queue/`implx` runtime preflight 启动时，必须要求当前运行所需的锁定 skill
     全部为 `match`；`not_installed`、`drift`、`missing`、不安全路径或 doctor 运行错误
     均阻断自动队列，并给出 dry-run 安装或人工处理的下一步。
@@ -83,9 +89,11 @@ GH-160 与 GH-174 的安全拆分。
     项总数/样本/省略数和退出码必须一致；先前失败或后续成功都不得修改被检查对象。
 18. B-018 当检查被取消、读取失败或依赖异常导致结果不完整时，调用方不得缓存或复用部分
     `match` 作为后续 queue 证据；恢复后必须重新完整检查。
-19. B-019 当读取已安装文件时，必须使用 no-follow 描述符并对同一描述符计算哈希与
-    前后 stat；不得先跟随路径读取再事后判定不稳定。标准 human/JSON 诊断中的未声明项
-    只允许输出 `undeclared_total`、`undeclared_omitted` 和按 UTF-8 字节序确定的有界
+19. B-019 当读取已安装文件时，最终路径组件必须以 no-follow、nonblocking 方式打开，并在
+    open 后立即对同一描述符执行首次 stat；只有确认为 regular file 后才能读取/哈希，随后
+    再比较同一描述符的 stat。symlink、FIFO、socket/device 等特殊文件或任一 snapshot
+    不一致必须 fail closed，不得先跟随/阻塞/读取后再事后判定不稳定。标准 human/JSON
+    诊断中的未声明项只允许输出 `undeclared_total`、`undeclared_omitted` 和按 UTF-8 字节序确定的有界
     `undeclared_sample`：最多 50 项且合计最多 8192 UTF-8 bytes。只有调用方显式指定
     create-only artifact 时才能写出完整、稳定排序的相对路径清单；不得覆盖既有 artifact，
     queue preflight 不得启用该导出。任何输出均不得包含文件正文、凭据或环境变量值。
@@ -98,11 +106,13 @@ GH-160 与 GH-174 的安全拆分。
 - [ ] 显式目标、`$CODEX_HOME` 和默认目录三种解析路径都有确定性结果。
 - [ ] 每个锁定 skill 的全部分发文件均产生 `match | drift | missing` 证据。
 - [ ] 安装根不存在被明确报告；存在但漂移或缺失时返回非零且列出全部问题。
-- [ ] 符号链接、路径逃逸、重复声明、未锁定分发文件和检查中变化全部 fail closed。
+- [ ] 符号链接、FIFO/special file、路径逃逸、重复声明、未锁定分发文件和检查中变化
+      全部 fail closed；嵌套声明文件所需的真实父目录不被误报为 undeclared。
 - [ ] 默认 doctor 与 preflight 完全只读；installer 保持 dry-run 默认且从不自动调用
       `--apply`。显式 B-019 artifact 导出是唯一诊断写入例外，且只能 create-only。
 - [ ] queue/`implx` 在 runtime 安装不匹配时被阻断，普通 CI 不访问本机安装目录。
-- [ ] 既有单文件 lock 保持兼容，多文件 skill 的 validator/installer/doctor 语义一致。
+- [ ] 既有单文件 lock 保持兼容，多文件 skill 的 validator/installer/doctor 语义一致；
+      installer 不使用会跟随 source race 的 whole-directory copy。
 - [ ] 未声明项标准输出固定包含总数、省略数和不超过 50 项/8192 bytes 的稳定样本；
       完整相对路径仅可写入显式、create-only artifact，queue 不产生该 artifact。
 - [ ] 新增无 `specrail-*` 前缀的顶层 skill fixture 会因未入 lock 被拒绝，既有 `implx`
@@ -117,12 +127,12 @@ GH-160 与 GH-174 的安全拆分。
 | 空/缺失输入 | covered: B-003 B-004 B-008 B-014 |
 | 错误与失败路径 | covered: B-004 B-005 B-008 B-009 B-016 B-018 |
 | 授权/权限 | covered: B-010 B-011 B-012 |
-| 并发/竞态 | covered: B-016 B-017 |
+| 并发/竞态 | covered: B-011 B-016 B-017 B-019 |
 | 重试/幂等 | covered: B-007 B-017 B-018 |
 | 非法状态转换 | covered: B-003 B-006 B-012 |
 | 兼容/迁移 | covered: B-013 B-014 B-015 B-020 |
 | 降级/回退 | covered: B-003 B-011 B-012 B-013 |
-| 证据与审计完整性 | covered: B-001 B-005 B-006 B-007 B-014 B-019 B-020 |
+| 证据与审计完整性 | covered: B-001 B-005 B-006 B-007 B-011 B-014 B-019 B-020 |
 | 取消/中断 | covered: B-016 B-018 |
 
 ## 发布说明

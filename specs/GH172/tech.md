@@ -63,6 +63,14 @@ issue 外，但其 multi-file skill/lock 实现明确依赖 GH-172。
 只是嵌套目录本身不是被哈希的分发资产。未声明 `files` 的现有条目
 仍只信任 `SKILL.md`，因此 B-015 保持兼容而不会扩大信任面。
 
+shared manifest 必须从入口与 `files[]` 的规范化相对路径确定性派生
+`structural_directories`：它恰好是每个声明文件的所有非空严格父路径前缀。例如
+`references/runtime.md` 只派生 `references/`；调用方不能直接声明或额外注入该集合。
+repo validator、installed doctor 与 installer 共用这一派生结果：structural entry 必须是
+skill root 内的真实目录、逐段 no-follow containment 检查通过，且其递归 namespace 最终只含
+声明 regular files 与更深 structural directories。必要父目录因此不会被误报为
+`undeclared`，但同级 stale directory、空的非必要目录、symlink 或特殊项仍 fail closed。
+
 顶层 completeness discovery 必须枚举 `skills/*/SKILL.md` 对应的所有直接子目录，
 且 `SKILL.md` 必须是普通文件；集合与 lock 的 skill 条目精确相等。不得继续使用
 `skills/specrail-*/SKILL.md` 前缀过滤，因为 `skills/implx` 已是受分发 skill。测试除
@@ -85,14 +93,19 @@ fail closed，而不是只检查已被 lock 点名的目录内部闭集。
 - 安装根存在时，每个文件返回 `match | drift | missing | unsafe | unstable`，
   结果包含 skill、相对文件、目标路径、expected/actual hash 和非敏感 reason；
 - 路径检查使用 `lstat` 与受控根边界，拒绝 skill 目录、父组件或文件符号链接；
-  读取必须用 no-follow 描述符（逐段 `openat(..., O_NOFOLLOW|O_DIRECTORY)` 打开目录
-  成分，再 `openat(..., O_NOFOLLOW)` 打开文件），哈希只对该描述符的内容计算，并用
-  同一 fd 的 `fstat` 做前后比较。仅靠读取前后的 `lstat` 不够：文件可能在两次 stat
-  之间被换成符号链接，从而在标记 `unstable` 之前就已经跟随并哈希了逃逸目标（违反
-  B-009 与 B-019）。fd 与 lstat 的 inode/device 不一致，或前后 fstat 的
+  读取必须用 no-follow 描述符：逐段
+  `openat(..., O_RDONLY|O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC)` 打开目录成分，最终文件用
+  `openat(..., O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC)` 打开。final open 后必须立即
+  `fstat`，只有 `S_ISREG` 才能开始哈希；FIFO、socket、device 或其它 special file 直接
+  `unsafe`/`unstable`，不得等待 writer 或读取内容。哈希只对该 fd 计算，并用同一 fd 的
+  前后 `fstat` 比较。仅靠读取前后的 `lstat` 不够：文件可能被换成 symlink，或换成 FIFO
+  令阻塞式 open 永远到不了 fstat。fd 与 lstat 的 inode/device 不一致，或前后 fstat 的
   inode/device/size/mtime 变化，返回 `unstable` 且不输出内容；
-- 只读取 lock 声明的普通文件；同时枚举每个受锁 skill 安装目录的条目名，出现未声明
-  文件或目录时该 skill 判为 `undeclared` 并使整体 `invalid`（Codex skill 可以按
+- 只读取 lock 声明的 regular files；同时递归枚举每个受锁 skill 安装目录的 namespace。
+  规范化路径若属于 shared manifest 派生的 `structural_directories`，仅在该项为 no-follow
+  containment 内的真实目录时跳过 undeclared 计数并继续枚举；任何声明文件或 structural
+  directory 之外的文件、目录或特殊项都使该 skill 判为 `undeclared` 并令整体 `invalid`
+  （Codex skill 可以按
   `SKILL.md` 里的相对路径加载资源，所以"入口匹配 + 残留旧 reference"仍可能把未校验
   指令喂进 queue preflight）。枚举必须先完成总数统计，再按 POSIX 相对路径的 UTF-8
   字节序排序。标准 human/JSON 字典只返回 `undeclared_total`、最多 50 项且序列化路径
@@ -108,7 +121,8 @@ fail closed，而不是只检查已被 lock 点名的目录内部闭集。
 整体状态规则：
 
 - 目标根不存在：`not_installed`；
-- 根存在且全部文件匹配：`match`；
+- 根存在、全部文件匹配且 namespace 除安全 structural directories 外无 undeclared 项：
+  `match`；
 - 根存在且出现其他状态（含 `undeclared`）：`invalid`。
 
 ### 3. 独立 doctor CLI
@@ -139,12 +153,22 @@ manifest 与 integrity library：
 2. 运行只读 pre-install inspect；
 3. dry-run 打印现状和安装计划，不写文件；目标不存在成功，目标存在但 drift/missing
    返回非零并给出 `--apply` 需要人工授权的说明；
-4. `--apply` 只有在用户显式传入时执行既有同步写入；pre-install drift 是待修复状态，
-   不阻止已授权 apply；
+4. `--apply` 只有在用户显式传入时执行同步写入；pre-install drift 是待修复状态，
+   不阻止已授权 apply。不得再用 `shutil.copytree(..., symlinks=False)` 或任何会在验证后
+   按路径重开并跟随 source symlink 的 whole-directory copy。installer 按 shared manifest
+   创建 staging skill tree 与派生 structural directories，并从已打开的 repo/skill directory
+   fd 逐段 no-follow 打开每个声明 source：final component 使用
+   `O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC`，立即 `fstat` 且确认 regular file 后，直接从
+   **同一 fd** 复制到 staging file 并同步计算/核对 lock hash，最后再次 `fstat`。source
+   symlink/special file、hash 不匹配或 pre/post snapshot 变化时删除 staging 并失败，不得读取
+   escape target，也不得替换现有 destination。所有 source 完整稳定后才按既有授权 apply
+   语义替换目标；复制对象只来自 manifest，不从未声明目录枚举推断；
 5. apply 后重新运行完整 inspect，只有整体 `match` 才成功。
 
-复制仍以 skill 目录为单位，保证未来引用/脚本随目录分发；post-check 只信 lock 清单。
-本 issue 不改变删除旧目标目录的既有 apply 语义，也不自动调用 apply。
+逻辑安装单位仍是整个 skill，但物理 copy 是 manifest-declared files + derived structural
+directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 skill 分发且 source race 不会
+读取/落盘逃逸内容；post-check 仍只信 shared manifest。本 issue 不扩大 apply 授权，也不自动
+调用 apply。
 
 ### 5. queue/install Skill 接线
 
@@ -185,14 +209,14 @@ multi-file skill；两者都依赖 GH-172，并必须在各自实现中把该 sk
 
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
-| B-001 B-006 B-007 B-020 | shared manifest + integrity result aggregation | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "all_files or mixed or ordering"` |
+| B-001 B-006 B-007 B-020 | shared manifest structural-parent derivation + integrity result aggregation | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "all_files or nested_parent or undeclared or mixed or ordering"` |
 | B-002 | `resolve_codex_skills_dir()` + CLI target reporting | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "target or codex_home or default"` |
 | B-003 B-012 | `not_installed` status + `--require-installed` caller policy | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "not_installed or require_installed"` |
 | B-004 B-005 | missing/drift result and exit status | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "missing or drift"` |
 | B-008 B-014 B-015 | `validate_skills_lock()` compatible multi-file contract + all top-level skill discovery | `python3 -m pytest -q tests/test_evaluate.py -k "skills_lock or unprefixed_skill"` |
-| B-009 | repository/install path containment and symlink rejection | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "escape or symlink or unsafe"` |
-| B-010 B-017 B-019 | read-only/idempotent inspection, bounded output and explicit artifact export | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "read_only or idempotent or output or undeclared_artifact"` |
-| B-011 | installer preflight, explicit apply and post-check | `python3 -m pytest -q tests/test_install_codex_skills.py` |
+| B-009 B-019 | repository/install containment + no-follow/nonblocking regular-file open | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "escape or symlink or fifo or special or unsafe or undeclared_artifact"` |
+| B-010 B-017 | read-only/idempotent inspection, bounded output and explicit artifact export | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "read_only or target_snapshot_no_write or idempotent or output or undeclared_artifact"` |
+| B-011 | installer preflight + manifest-only no-follow source copy + post-check | `python3 -m pytest -q tests/test_install_codex_skills.py -k "apply or source_race or symlink or special"` |
 | B-013 | ordinary workflow check remains repo-only | `python3 -m pytest -q tests/test_check_workflow.py -k installed_skill` |
 | B-016 | before/after stat snapshot consistency | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k unstable` |
 | B-018 | incomplete/error result cannot pass CLI | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "unreadable or interrupted or invalid"` |
@@ -204,7 +228,8 @@ skills-lock.json + repo skill files
   -> shared lock validator/manifest
   -> installed integrity library
        -> explicit target | CODEX_HOME/skills | ~/.codex/skills
-       -> stable lstat/read/lstat per locked file
+       -> derived structural parents + openat(no-follow, nonblocking)
+       -> immediate regular-file fstat + same-fd hash + final fstat
   -> status: match | not_installed | invalid
   -> doctor CLI / installer preflight / implx queue preflight
 ```
@@ -225,8 +250,10 @@ skills-lock.json + repo skill files
 
 ## 风险
 
-- Security: 安装目录可能含用户自建文件或符号链接。checker 只读取 lock 声明的普通文件，
-  拒绝符号链接/逃逸，不输出正文；apply 权限没有扩大。
+- Security: 安装/source 目录可能含用户自建文件、symlink、FIFO 或其它 special file。
+  checker 与 installer 只从 no-follow/nonblocking fd 读取 lock 声明且经 immediate fstat 确认的
+  regular files；structural directories 由 manifest 派生而非 caller 声明；拒绝逃逸且不输出
+  正文，apply 权限没有扩大。
 - Compatibility: v1 单文件条目继续合法；新增 `files[]` 是可选闭集扩展。依赖 installer
   dry-run 在已存在 drift 时仍返回 0 的脚本会看到非零，这是 issue 明确要求的 fail-closed
   收紧。
@@ -236,8 +263,10 @@ skills-lock.json + repo skill files
   与测试保证 checker 没有从 pack 中遗漏。
 - Diagnostics: 标准输出对攻击者制造的大目录仍受 50 项/8192 bytes 双上限约束；完整
   路径只进入显式 create-only artifact，queue 不创建该 artifact。
-- Race: 无法对任意外部目录获得事务快照；双 stat 检测可观察变化并 fail closed，不能保证
-  阻止恶意同内容替换。该 doctor 是完整性诊断，不是操作系统沙箱。
+- Race: 无法对任意外部目录获得事务快照；same-fd pre/post fstat + expected hash 检测可观察
+  变化并 fail closed。nonblocking final open 防 FIFO 卡死；installer 从同一已验证 source fd
+  写 staging，避免 validation/copy 间 symlink 跟随。不能保证阻止恶意同内容替换；该 doctor
+  是完整性诊断，不是操作系统沙箱。
 
 ## 测试计划
 
@@ -254,6 +283,14 @@ skills-lock.json + repo skill files
       python3 -m coverage report --include='checks/installed_skill_integrity.py'
       --fail-under=100`；前一个 report 强制新增 integrity/CLI 模块总覆盖率至少 80%，后一个
       在 `--branch` 数据上强制包含路径安全、快照和状态聚合决策的核心 library 达到 100%。
+- [ ] CLI-only coverage gate:
+      `python3 -m coverage erase &&
+      python3 -m coverage run --branch
+      --source=checks.installed_skill_integrity,tools.check_installed_codex_skills
+      -m pytest -q tests/test_installed_skill_integrity.py tests/test_check_workflow.py
+      -k "installed or required_files or undeclared_artifact" &&
+      python3 -m coverage report
+      --include='tools/check_installed_codex_skills.py' --fail-under=80`。
 - [ ] Installer tests: `python3 -m pytest -q tests/test_install_codex_skills.py`
 - [ ] Workflow integration: `python3 -m pytest -q tests/test_check_workflow.py`
 - [ ] Full regression: `python3 -m pytest -q`
@@ -263,8 +300,19 @@ skills-lock.json + repo skill files
 - [ ] Manual dry-run:
       `python3 tools/check_installed_codex_skills.py --repo . --target-dir <fixture>`;
       校验 match/drift/missing/not_installed 输出与退出码。
-- [ ] No-write verification: 对目标目录执行前后文件清单、mtime 和哈希快照，doctor 运行后
-      完全一致。
+- [ ] No-write verification:
+      `python3 -m pytest -q tests/test_installed_skill_integrity.py
+      -k "target_snapshot_no_write"`；fixture 对 doctor 前后目标的相对路径、类型、mode、mtime_ns
+      与 regular-file sha256 做闭合 snapshot 并要求完全一致。
+- [ ] Scope/manifest/file ceiling:
+      `sed -n '9p' specs/GH172/tech.md |
+      jq -e '(.paths|length)==17 and (.paths|unique|length)==17 and
+      ([.paths[]|select(startswith("specs/GH160/"))]|length)==0' &&
+      test -z "$(git diff --name-only "$(git merge-base HEAD origin/main)"..HEAD --
+      specs/GH160)" &&
+      for path in $(sed -n '9p' specs/GH172/tech.md |
+      jq -r '.paths[]|select(endswith(".py") or endswith("/SKILL.md"))');
+      do test "$(wc -l < "$path")" -lt 800 || exit 1; done`。
 
 ## 回滚方案
 
