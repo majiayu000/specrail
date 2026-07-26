@@ -28,7 +28,8 @@ token 消耗在同一队列上。
 ## Behavior Invariants
 
 1. B-001 当两个 worktree 共享同一 Git common dir 时，它们必须解析到同一 lease
-   位置和 repo identity。
+   位置和 repo identity；该 identity 不得依赖当前 branch upstream、remote 名称/URL
+   或 worktree 路径，运行期间修改 remote 配置也不得改变既有 owner 的 identity。
 2. B-002 当不存在 lease 时，多个并发 acquire 中最多一个 run 可以原子获得有效
    `run_id` 与单调递增 `fencing_token`；acquire 与其他 lease 修改必须共享同一
    repo-wide mutation mutex。
@@ -41,14 +42,19 @@ token 消耗在同一队列上。
    takeover 需要本轮显式人工授权与原因。
 6. B-006 当授权 takeover 成功时，新 fencing token 必须大于旧 token，并在 canonical
    common-dir audit 资产中持久保留旧/new run ID、旧/new token、旧/new lease digest、
-   actor/authorization marker 与原因；审计未 durable commit 时不得报告 takeover 成功。
+   actor/authorization marker 与原因；新 lease 必须绑定显式新 owner 且先处于
+   `checkpoint_bound: false`/null digest，审计未 durable commit 时不得报告 takeover
+   成功。新 owner 随后只能写入携带新 identity 的 v4 checkpoint 并立即 bind，bind 前
+   不得创建 lane、resume 或 remote write。
 7. B-007 当同一 run 跨 compaction 或新 session resume 时，只有 checkpoint 与
    lease 的 repo、run ID 和 fencing token 全部匹配，且 lease 中记录的
    checkpoint digest 与磁盘 checkpoint 完全一致，才可在 mutation mutex 内轮换
    owner marker 与 fencing token、重写 checkpoint identity 并重新绑定；旧 session
    的 token 必须立即失效。Goal 只提供连续性与预算上下文，不参与安全授权。
-8. B-008 当 lease JSON 缺失字段、损坏、部分写入、符号链接、权限错误或路径逃逸时，
-   inspect 必须返回 `corrupt/unsafe` 并 fail closed。
+8. B-008 当 lease、mutex 或 takeover audit 路径/JSON 缺失字段、损坏、部分写入、
+   符号链接、identity 不一致、权限错误或路径逃逸时，inspect 必须返回
+   `corrupt/unsafe` 并 fail closed；audit create/replace/prune/recovery 不得跟随
+   common dir 外的路径。
 9. B-009 lease expiry 必须绑定持久化的 boot identity 与同一 boot 内跨进程可比较的
    monotonic deadline；wall-clock 前跳/回拨、PID 被复用或进程不存在不得单独据此
    释放或接管 lease。boot identity 变化只将 lease 判为 `stale`，仍需显式 takeover；
@@ -61,8 +67,10 @@ token 消耗在同一队列上。
     磁盘状态重新读取并按 takeover journal 恢复或 fail closed。
 12. B-012 当普通 pack check 运行时，它只校验 schema/tool 资产，不 acquire、renew、
     release 或读取活动 repo 的 lease。
-13. B-013 当 lease 状态静态不变时，重复 inspect 的状态、摘要与退出码必须一致，且
-    输出不得包含 session 正文、secret、绝对 home 路径或 PID 细节。
+13. B-013 当 lease 状态静态不变时，queue-facing CLI 的闭合 JSON 状态、摘要与退出码
+    必须一致；inspect/acquire/renew/release/resume/takeover/recover 都不得要求 agent
+    解析 human text，且输出不得包含 session 正文、secret、authorization/reason 原文、
+    绝对 home 路径或 PID 细节。
 14. B-014 当文件系统不支持所需原子替换、父目录 fsync、跨进程 mutation mutex，
     或 repo/boot/monotonic identity 无法稳定解析时，系统必须报告 `unsupported`
     并阻断所有 lease-protected `implx` 模式（包括 `review` 与 `auto`），不得降级成
@@ -71,6 +79,8 @@ token 消耗在同一队列上。
 ## 验收标准
 
 - [ ] 跨两个 worktree 的并发测试证明最多一个 owner 获得 lease。
+- [ ] 两个 worktree 使用不同 branch upstream，且运行中新增、删除或改写 remote 后，
+      仍得到相同 repo identity，既有 owner 仍可 renew/release。
 - [ ] acquire/renew/release/resume/stale/takeover/损坏路径均有确定性测试。
 - [ ] 跨 session resume 原子轮换 fencing token/owner marker 并重新绑定 checkpoint，
       旧 session 即使读取最新 lease digest 也不能再 renew 或通过 boundary gate。
@@ -80,7 +90,10 @@ token 消耗在同一队列上。
 - [ ] renew/release/takeover 的 compare-and-replace 在 mutation mutex 内串行化，
       并发测试证明旧 token 不能覆盖 takeover 后的新 lease。
 - [ ] takeover audit 的 path、closed schema、prepared/committed 恢复顺序与 256 条
-      retention 上限均有测试；审计或父目录 fsync 失败不得返回成功。
+      retention 上限均有测试；audit directory/file symlink 或 identity swap、审计或父
+      目录 fsync 失败不得返回成功。
+- [ ] takeover durable commit 后得到新 owner/new token 的 unbound lease；只有新 owner
+      写入 v4 checkpoint 并立即 bind 后才允许 lane/resume/remote write。
 - [ ] 同 boot 的两个进程以 persisted monotonic deadline 得到同一 expiry 判定；boot
       变化只产生需授权的 stale，wall-clock 跳变不单独触发 takeover。
 - [ ] renew 的 TTL 必填且有硬上限；超过上限的等待必须先 checkpoint/handoff。
@@ -89,6 +102,9 @@ token 消耗在同一队列上。
       描述为第三个安全证据。
 - [ ] `unsupported` 在 plain review 与 auto 两种 lease-protected queue 中都阻断；
       无自动 takeover、无 kill、无 polling、无 GitHub mutex。
+- [ ] queue-facing CLI 的每个 operation 都有参数、closed JSON、敏感字段裁剪与稳定
+      state-to-exit-code 回归；通用长运行 checkpoint 模板保持非 lease v3，只有成功
+      acquire 的 implx queue 使用专用 v4 模板。
 - [ ] full tests 与跨 worktree forward test 全绿，diff 不含 GH-160。
 
 ## 边界情况清单
