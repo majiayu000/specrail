@@ -296,6 +296,15 @@ that reviewer.
 If threads is unavailable, record `fallback_mode: single_agent` and its reason,
 use the normal SpecRail flow, and report that no native threads launched.
 
+Spawn every lane — implementer, reviewer, audit, or merge — with a minimal
+context pack: the task statement, the exact diff or branch ref, the linked
+spec packet paths, and compact carry. Never fork the coordinator's
+conversation history into a lane (`fork_turns: all` or equivalent
+full-history forks are forbidden for every lane role). A lane that needs
+more context receives explicit file paths, not the parent transcript;
+forked history multiplies input-token cost per lane by the age of the
+session and accelerates coordinator compaction.
+
 Keep ownership boundaries explicit:
 
 - planner/reviewer lanes are read-only and use low effort when configurable

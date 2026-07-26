@@ -45,6 +45,9 @@ any task where all writable files overlap.
    - Map issues to existing PRs before opening new work.
    - Build a lane map with disjoint writable files.
 4. Execute lanes.
+   - Spawn every lane with a minimal context pack (task, diff or branch ref,
+     spec paths, compact carry) — never a fork of the coordinator's full
+     conversation history (`fork_turns: all` or equivalent), for any lane role.
    - Planners and reviewers are read-only.
    - Workers own explicit writable paths.
    - The coordinator owns shared verification and final synthesis.
