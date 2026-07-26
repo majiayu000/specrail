@@ -17,6 +17,8 @@ GH-160 与 GH-174 的安全拆分。
 - 提供只读、确定性的 installed-skill integrity doctor，逐项报告仓库声明与安装副本。
 - 区分未安装、完整匹配、内容漂移和文件缺失，避免任何静默降级。
 - 让 installer 与 queue preflight 消费同一份检测结果，而不是各自重新推断。
+- 让 queue preflight 同时绑定活动 session 实际已加载的 skill identity；安装目录匹配但
+  当前 session 仍加载旧入口时必须要求重启并阻断。
 - 让锁和 doctor 覆盖一个 skill 的全部受分发文件，为按需引用和脚本提供完整性保证。
 - 让 lock completeness 覆盖 `skills/` 下所有顶层分发 skill，包括 `implx` 等非
   `specrail-*` 目录。
@@ -53,7 +55,7 @@ GH-160 与 GH-174 的安全拆分。
    整体 `match`；单个入口文件匹配不能掩盖引用文件/脚本漂移或 stale undeclared content。
 7. B-007 当多个 skill 同时存在 `match`、`drift`、`missing` 与 `undeclared` 时，doctor
    必须按稳定顺序返回全部声明文件结果和整体失败，不得在首个错误处提前结束；未声明项
-   的标准输出必须使用有界摘要而不是无界路径列表。声明文件的严格父目录只有在它是
+   的标准输出与显式诊断 artifact 都必须使用有界摘要而不是无界路径列表。声明文件的严格父目录只有在它是
    containment 内的真实目录且恰好属于声明路径前缀时才是 structural entry；structural
    entry 不计为 `undeclared`，其它文件、目录或特殊项仍必须计入并阻断 `match`。
 8. B-008 当 lock 缺失、格式非法、哈希非法、声明重复、文件未纳入锁或锁中路径不存在时，
@@ -86,17 +88,20 @@ GH-160 与 GH-174 的安全拆分。
 16. B-016 当检查期间安装文件发生变化，导致同一项无法获得稳定快照时，doctor 必须报告
     不一致并失败，而不是把检查前路径与检查后哈希组合成 `match`。
 17. B-017 当重复运行 doctor 且 lock 与安装目录均未变化时，输出顺序、逐项状态、未声明
-    项总数/样本/省略数和退出码必须一致；先前失败或后续成功都不得修改被检查对象。
+    项 exact/truncated metadata、样本和退出码必须一致；先前失败或后续成功都不得修改被检查对象。
 18. B-018 当检查被取消、读取失败或依赖异常导致结果不完整时，调用方不得缓存或复用部分
     `match` 作为后续 queue 证据；恢复后必须重新完整检查。
 19. B-019 当读取已安装文件时，最终路径组件必须以 no-follow、nonblocking 方式打开，并在
     open 后立即对同一描述符执行首次 stat；只有确认为 regular file 后才能读取/哈希，随后
     再比较同一描述符的 stat。symlink、FIFO、socket/device 等特殊文件或任一 snapshot
     不一致必须 fail closed，不得先跟随/阻塞/读取后再事后判定不稳定。标准 human/JSON
-    诊断中的未声明项只允许输出 `undeclared_total`、`undeclared_omitted` 和按 UTF-8 字节序确定的有界
-    `undeclared_sample`：最多 50 项且合计最多 8192 UTF-8 bytes。只有调用方显式指定
-    create-only artifact 时才能写出完整、稳定排序的相对路径清单；不得覆盖既有 artifact，
-    queue preflight 不得启用该导出。任何输出均不得包含文件正文、凭据或环境变量值。
+    诊断中的未声明项只允许输出 `undeclared_total_exact`、`undeclared_total`、
+    `undeclared_observed`、`undeclared_omitted`、`traversal_truncated` 和按 raw path bytes
+    确定的有界 `undeclared_sample`：最多 50 项且 escaped ASCII 合计最多 8192 bytes。
+    truncated 时 total/omitted 为 null、sample 固定为空。只有调用方显式指定
+    create-only artifact 时才能写出相同有界、稳定排序的诊断清单与 truncation metadata；
+    artifact 不得触发额外递归或完整遍历，不得覆盖既有 artifact，queue preflight 不得启用
+    该导出。任何输出均不得包含文件正文、凭据或环境变量值。
 20. B-020 当 GH-160、GH-174 等后续变更使用多文件 skill 时，installer、doctor 与 lock
     validator 必须消费同一文件清单语义并迁移到 v2 lock；任一组件只处理入口文件都视为
     合同不完整。GH-160 与 GH-174 的 multi-file 实现都必须在 GH-172 合并后再开始。
@@ -113,6 +118,42 @@ GH-160 与 GH-174 的安全拆分。
     分发后若变成 `0644`，即使 bytes/hash 未变也必须报告 drift、post-check 失败并阻断 queue；
     缺失/越界 mode、setuid/setgid/sticky、group/world-write bits、umask 导致的偏差或检查期间
     mode 变化均 fail closed，不得按扩展名、shebang 或调用方式猜测执行权限。
+23. B-023 当 queue/`implx` 在活动 agent session 中启动时，preflight 必须同时取得
+    runtime-owned、调用方不可写的 loaded-skill evidence，绑定 current session identity、
+    当前执行所需入口的 resolved path 与实际已加载 bytes sha256；这些 identity 必须与当前
+    lock 和 installed doctor 的同一 manifest 完全一致。evidence 缺失/自报/过期、任一 loaded
+    entrypoint 漂移，或当前 session 在成功 `--apply` 前已经加载旧 bytes 时，必须在任何
+    lane/checkpoint/远端动作前以 `session_restart_required` 阻断；只有新 session 重新加载并
+    产生 fresh matching evidence 后才能继续，磁盘 `match` 不能替代活动 session identity。
+24. B-024 当显式写 `--undeclared-artifact` 时，CLI 必须从 stable filesystem anchor
+    逐段 no-follow 打开已存在的 artifact parent descriptor，证明它不在安装 target 内，
+    再以 dirfd-relative `O_CREAT|O_EXCL|O_NOFOLLOW` 创建最终 regular file；pathname
+    precheck、`resolve()` 或 final-name `O_EXCL` 不能单独授权写入。parent symlink/rebind、
+    containment 漂移或 post-create identity 复核失败必须 fail closed，并且安装 target
+    及替代 symlink 指向目录零写入。
+25. B-025 当授权 installer 替换已存在 destination 时，commit 必须使用单次
+    descriptor-relative atomic exchange，使 canonical destination 在进程终止或掉电边界始终
+    存在；不得使用 `destination → backup`、`staging → destination` 的两次 rename 窗口。
+    exchange 前必须 fsync staging 与 create-exclusive durable transaction record，exchange
+    后 fsync parent；若中断遗留 record/staging，doctor/queue 必须报告
+    `recovery_required`，且只有后续显式 `--apply` 可依据 old/new manifest identity
+    确定性 complete 或 rollback。缺少 exchange primitive、记录矛盾或无法恢复时 fail closed，
+    不得猜测删除。
+26. B-026 当 POSIX 安装目录含非 UTF-8 filename bytes 时，inspection 不得 decode 崩溃或
+    跳过该项；内部 identity 与排序必须使用 raw relative path bytes。human/JSON display 使用
+    固定 ASCII percent-escape（非 unreserved byte 均为大写 `%HH`），sample byte budget 按
+    escaped ASCII 长度计算；诊断 artifact 另带无 padding base64url raw path，保证 JSON
+    合法且 byte-preserving。
+27. B-027 当声明 source/installed file 的首次同 fd `fstat` 显示 `st_nlink != 1` 时，
+    validator/doctor/installer 必须在读取或哈希正文前标记 `unsafe_hardlink` 并 fail closed；
+    final `fstat` 也必须保持 `st_nlink == 1`。即使 hard link 指向的外部 inode bytes/hash/mode
+    完全匹配，也不得返回 `match` 或复制。
+28. B-028 当枚举 installed namespace 时，doctor 只进入 manifest 派生的 structural
+    directories，遇到 undeclared directory 将其作为一个 subtree root 报告且不递归。
+    每次 inspection 另有 repo-owned 固定全局 entry-visit cap；读取第 `cap+1` 项即停止遍历、
+    返回 `traversal_truncated=true`、`undeclared_total_exact=false` 与固定空 sample，并整体
+    `invalid`。未触发 cap 时才返回 exact total 与 raw-byte 稳定排序样本；显式 artifact
+    复用同一 traversal 结果，不能为了“完整清单”继续无界扫描。
 
 ## 验收标准
 
@@ -124,15 +165,24 @@ GH-160 与 GH-174 的安全拆分。
 - [ ] 默认 doctor 与 preflight 完全只读；installer 保持 dry-run 默认且从不自动调用
       `--apply`。显式 B-019 artifact 导出是唯一诊断写入例外，且只能 create-only。
 - [ ] queue/`implx` 在 runtime 安装不匹配时被阻断，普通 CI 不访问本机安装目录。
+- [ ] queue/`implx` 还必须验证 runtime-owned current-session loaded entrypoint identity；
+      `--apply` 后同一旧 session 即使磁盘 doctor 为 `match` 也返回
+      `session_restart_required`，新 session fresh matching evidence 才能继续。
 - [ ] 既有单文件 lock 保持兼容，多文件 skill 的 validator/installer/doctor 语义一致；
       installer 不使用会跟随 source race 的 whole-directory copy。
 - [ ] installer 的 target root/parent 在 preflight 与 staging/commit 间被替换为 symlink 或
       重新绑定时，事务 fail closed；所有 staging/backup/replace/rollback/cleanup 均为
       no-follow descriptor/dirfd-relative 操作，外部 sentinel 保持 byte-for-byte 不变。
+- [ ] 已存在 destination 使用 atomic exchange + durable recovery record；kill/power-loss
+      注入覆盖 exchange 前后，canonical destination 始终存在，后续显式 apply 能确定恢复。
 - [ ] v2 lock 对入口和每个分发文件显式声明 `0644 | 0755`；installer 不受 umask 影响地保留
       exact mode，doctor 对“hash 相同但 executable bit 丢失”返回 drift，queue/preflight 阻断。
-- [ ] 未声明项标准输出固定包含总数、省略数和不超过 50 项/8192 bytes 的稳定样本；
-      完整相对路径仅可写入显式、create-only artifact，queue 不产生该 artifact。
+- [ ] 未声明项标准输出固定包含 exact/truncated 状态和不超过 50 项/8192 bytes 的稳定样本；
+      非 UTF-8 names 以 raw bytes 排序并稳定转义；undeclared directory 不递归，global visit
+      cap 命中后固定 fail closed。显式 create-only artifact 复用同一有界 traversal，并通过
+      stable no-follow parent descriptor 创建，queue 不产生该 artifact。
+- [ ] declared source/installed hard link 在读取前被拒绝；外部 inode 即使 hash/mode 匹配也
+      不能产生 `match`。
 - [ ] 新增无 `specrail-*` 前缀的顶层 skill fixture 会因未入 lock 被拒绝，既有 `implx`
       明确属于 completeness discovery 集合。
 - [ ] GH-160 的功能文件、状态和行为不在本变更范围内，但其 multi-file lock 迁移明确
@@ -143,21 +193,22 @@ GH-160 与 GH-174 的安全拆分。
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
 | 空/缺失输入 | covered: B-003 B-004 B-008 B-014 |
-| 错误与失败路径 | covered: B-004 B-005 B-008 B-009 B-016 B-018 B-021 B-022 |
-| 授权/权限 | covered: B-010 B-011 B-012 B-021 B-022 |
-| 并发/竞态 | covered: B-011 B-016 B-017 B-019 B-021 B-022 |
-| 重试/幂等 | covered: B-007 B-017 B-018 |
-| 非法状态转换 | covered: B-003 B-006 B-012 |
-| 兼容/迁移 | covered: B-013 B-014 B-015 B-020 B-022 |
-| 降级/回退 | covered: B-003 B-011 B-012 B-013 |
-| 证据与审计完整性 | covered: B-001 B-005 B-006 B-007 B-011 B-014 B-019 B-020 B-021 B-022 |
-| 取消/中断 | covered: B-016 B-018 |
+| 错误与失败路径 | covered: B-004 B-005 B-008 B-009 B-016 B-018 B-021 B-022 B-023 B-024 B-025 B-026 B-027 B-028 |
+| 授权/权限 | covered: B-010 B-011 B-012 B-021 B-022 B-023 B-024 B-025 |
+| 并发/竞态 | covered: B-011 B-016 B-017 B-019 B-021 B-022 B-024 B-025 B-027 |
+| 重试/幂等 | covered: B-007 B-017 B-018 B-025 B-028 |
+| 非法状态转换 | covered: B-003 B-006 B-012 B-023 B-025 |
+| 兼容/迁移 | covered: B-013 B-014 B-015 B-020 B-022 B-023 B-026 |
+| 降级/回退 | covered: B-003 B-011 B-012 B-013 B-023 B-025 B-028 |
+| 证据与审计完整性 | covered: B-001 B-005 B-006 B-007 B-011 B-014 B-019 B-020 B-021 B-022 B-023 B-024 B-025 B-026 B-027 B-028 |
+| 取消/中断 | covered: B-016 B-018 B-025 B-028 |
 
 ## 发布说明
 
 该变更新增显式、只读的 runtime 安装完整性检查。普通仓库/CI 校验行为保持不变；queue
 与 installer 会在实际运行前披露安装状态。安装根存在但内容漂移或缺失时将从静默继续改为
 fail closed。维护者仍需显式运行带 `--apply` 的安装命令并重启需要重新加载 skill 的活动
-会话；doctor 本身不会写入或自动修复。v2 multi-file lock 还会固定每个文件的 `0644|0755`
+会话；queue 会以 runtime-owned loaded identity 确定性执行这项 restart 边界，doctor 本身不会
+自动修复。v2 multi-file lock 还会固定每个文件的 `0644|0755`
 mode；target pathname 在安装事务中发生 symlink/inode rebinding 时安装会安全失败，不能改写
-替代路径。
+替代路径。hard link、非 UTF-8 name、超出 traversal cap 和中断恢复记录都会显式 fail closed。

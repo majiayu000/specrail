@@ -11,7 +11,7 @@ GH-172
 
 ## Product Spec
 
-见 `specs/GH172/product.md`。本设计实现 B-001..B-022；GH-160 的功能行为仍排除在本
+见 `specs/GH172/product.md`。本设计实现 B-001..B-028；GH-160 的功能行为仍排除在本
 issue 外，但其 multi-file skill/lock 实现明确依赖 GH-172。
 
 ## Codebase Context
@@ -26,6 +26,7 @@ issue 外，但其 multi-file skill/lock 实现明确依赖 GH-172。
 | installer 测试 | `tests/test_install_codex_skills.py:18-48`, `tests/test_install_codex_skills.py:69-106` | fixture 只生成单文件 v1 lock，覆盖 dry-run、apply 与 source-target 拒绝。 | 保留全部既有用例并增加多文件、pre/post doctor、漂移/缺失和无写入测试。 |
 | agent 安装入口 | `skills/specrail-install/SKILL.md:18-51` | doctor 路径只运行 installer dry-run 与 workflow check；安装后文字要求人工核对 `SKILL.md` 哈希。 | 改为调用确定性 installed doctor，继续保留 `--apply` 人工授权。 |
 | queue 入口 | `skills/implx/SKILL.md:17-29`, `skills/specrail-implement-queue/SKILL.md:11-38` | preflight 读取配置和 GitHub 队列，但不验证实际加载的安装 skill 与 lock 一致。 | 在派生 lane、写 checkpoint 或远端动作前运行 `--require-installed` doctor；失败时 fail closed。 |
+| 活动 session | `AGENT_USAGE.md:80-81` | 文档只提示安装后“可能需要”重启；没有 runtime-owned evidence 绑定当前 session 实际已加载的入口 bytes，磁盘 match 可与 stale loaded instructions 并存。 | queue 必须比较 current-session loaded-entrypoint identity 与同一 lock manifest；host evidence 缺失或 apply 后仍是旧 session 时确定性阻断。 |
 | lock 回归 | `tests/test_evaluate.py:140-191` | 直接构造 v1 单文件 lock 验证 `validate_skills_lock()` 的通过与哈希失配。 | 扩充为可选多文件清单、集合闭合和路径安全回归，证明 v1 单文件兼容。 |
 
 ## 设计方案
@@ -113,34 +114,52 @@ fail closed，而不是只检查已被 lock 点名的目录内部闭集。
   `openat(..., O_RDONLY|O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC)` 打开目录成分，最终文件用
   `openat(..., O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC)` 打开。final open 后必须立即
   `fstat`，只有 `S_ISREG` 才能开始哈希；FIFO、socket、device 或其它 special file 直接
-  `unsafe`/`unstable`，不得等待 writer 或读取内容。哈希只对该 fd 计算，并用同一 fd 的
+  `unsafe`/`unstable`，不得等待 writer 或读取内容；首次 `fstat` 还必须要求
+  `st_nlink == 1`，否则在读取前返回 `unsafe_hardlink`。哈希只对该 fd 计算，并用同一 fd 的
   前后 `fstat` 比较，snapshot identity 包含 inode/device/type/size/mtime_ns 与
-  `stat.S_IMODE(st_mode)`。仅靠读取前后的 `lstat` 不够：文件可能被换成 symlink，或换成 FIFO
+  `stat.S_IMODE(st_mode)`/`st_nlink`，final `st_nlink` 也必须保持 1。仅靠读取前后的
+  `lstat` 不够：文件可能被换成 symlink，或换成 FIFO
   令阻塞式 open 永远到不了 fstat。fd 与 lstat 的 inode/device 不一致，或前后 fstat 的
   inode/device/size/mtime 变化，返回 `unstable` 且不输出内容；
-- 只读取 lock 声明的 regular files；同时递归枚举每个受锁 skill 安装目录的 namespace。
+- 只读取 lock 声明且 single-link 的 regular files；同时有界枚举每个受锁 skill 安装目录的 namespace。
   规范化路径若属于 shared manifest 派生的 `structural_directories`，仅在该项为 no-follow
   containment 内的真实目录时跳过 undeclared 计数并继续枚举；任何声明文件或 structural
   directory 之外的文件、目录或特殊项都使该 skill 判为 `undeclared` 并令整体 `invalid`
   （Codex skill 可以按
   `SKILL.md` 里的相对路径加载资源，所以"入口匹配 + 残留旧 reference"仍可能把未校验
-  指令喂进 queue preflight）。枚举必须先完成总数统计，再按 POSIX 相对路径的 UTF-8
-  字节序排序。标准 human/JSON 字典只返回 `undeclared_total`、最多 50 项且序列化路径
-  合计最多 8192 UTF-8 bytes 的 `undeclared_sample`，以及
-  `undeclared_omitted = undeclared_total - len(undeclared_sample)`；达到任一上限就停止
-  向样本追加，但仍完成总数统计。不得读取或输出这些文件的正文；
+  指令喂进 queue preflight）。枚举只进入 manifest 派生的 structural directories；遇到
+  undeclared directory 把其 raw-byte relative path 作为一个 subtree root 后立即停止向下，
+  不统计其 descendants。library 固定 `MAX_NAMESPACE_VISITS = 4096`，caller/CLI/env 不能提高；
+  读取第 4097 项即停止整个 traversal，并返回
+  `traversal_truncated=true`、`undeclared_total_exact=false`、
+  `undeclared_total=null`、`undeclared_observed=4097`、
+  `undeclared_omitted=null` 与固定空 `undeclared_sample`，整体 `invalid`。未命中 cap 时
+  `undeclared_total_exact=true`、total/omitted 为 exact integer，并按 POSIX raw relative
+  path bytes 排序。内部 traversal 一律使用 bytes path；human/JSON 的 path display 对每个
+  component 仅保留 ASCII unreserved `[A-Za-z0-9._-]`，其它 byte 用大写 `%HH`，`/` 只作为
+  component separator。sample 最多 50 项且 escaped ASCII 合计最多 8192 bytes；非 UTF-8
+  name 因此不会 decode 失败或产生非法 JSON。不得读取或输出未声明文件正文；
 - 返回结构化 Python 结果与稳定 JSON 字典，library 不调用 `sys.exit()`、不写文件。
   library 的标准序列化结果不得携带无界完整路径数组。需要排障时，CLI 仅在调用方显式
-  传入 `--undeclared-artifact <new-file>` 后，把完整稳定排序的相对路径及总数写入权限
-  `0600` 的新 JSON artifact；目标已存在、无法安全创建或位于安装目标内时 fail closed，
-  不覆盖文件。queue/`implx` 不得传该参数，因此 runtime preflight 始终只消费有界摘要。
+  传入 `--undeclared-artifact <new-file>` 后，才把**同一次有界 traversal** 的
+  exact/truncated metadata、escaped display 与每项无 padding base64url raw path 写入权限
+  `0600` 的新 JSON artifact；它不得为追求“完整清单”继续递归/扫描。CLI 从 stable
+  filesystem root/cwd anchor 逐段以 `openat(O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)` 打开已经存在的
+  parent，验证其 descriptor ancestry 不在稳定 target-root descriptor 内，最后只以该 parent
+  dirfd 上的 `O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC` 创建 regular file。写前/写后都
+  rewalk pathname 并比较 parent inode chain；parent symlink/rebind、目标已存在、无法证明
+  containment 或 post-create identity/mode 不一致时 fail closed，并只经所持 artifact-parent
+  fd 清理新文件。`resolve()`、pathname precheck 或 final-name exclusive create 不能独立授权。
+  queue/`implx` 不得传该参数，因此 runtime preflight 始终只消费有界摘要。
 
 整体状态规则：
 
 - 目标根不存在：`not_installed`；
 - 根存在、全部文件 hash 与 v2 exact mode 匹配，且 namespace 除安全 structural directories 外无 undeclared 项：
   `match`；
-- 根存在且出现其他状态（含 `undeclared`）：`invalid`。
+- 根存在且出现其他状态（含 `undeclared`、`unsafe_hardlink`、`traversal_truncated` 或
+  durable installer transaction record）：`invalid`；transaction record 另给
+  `recovery_required=true`，不得由 doctor 自动修改。
 
 ### 3. 独立 doctor CLI
 
@@ -150,13 +169,14 @@ fail closed，而不是只检查已被 lock 点名的目录内部闭集。
 - `--target-dir`：显式覆盖安装根；
 - `--json`：输出机器可读结果；
 - `--require-installed`：把 `not_installed` 从显式 skipped 变为非零阻断，供 queue 使用。
-- `--undeclared-artifact <new-file>`：显式导出完整未声明相对路径清单；仅 create-only，
-  不得位于安装目标内，默认与 queue 路径均不启用。
+- `--undeclared-artifact <new-file>`：显式导出同一次 bounded traversal 的稳定诊断；
+  stable no-follow parent dirfd-relative create-only，不得位于安装目标内，默认与 queue
+  路径均不启用。
 
 默认退出码：`match=0`、`not_installed=0`、`invalid=1`、lock/运行错误 `=1`。
 带 `--require-installed` 时只有 `match=0`。人类文本与 JSON 都按 skill path 排序，
-未声明项只输出上述总数/有界样本/省略数，不输出正文或环境变量内容。显式 artifact
-只包含相对路径与计数。
+未声明项只输出上述 exact/truncated metadata、有界样本与 raw-byte-safe display，不输出正文
+或环境变量内容。显式 artifact 也不能扩大 traversal work。
 
 `checks/check_workflow.py` 只把新 library/CLI 加入 `REQUIRED_FILES` 并继续执行仓库
 lock 校验；它不调用 doctor，CI 因此不依赖本机安装状态。
@@ -179,17 +199,36 @@ manifest 与 integrity library：
    `(st_dev, st_ino)`，最终持有 target root fd。`Path.resolve()`、`exists()`、pathname
    `mkdir/rmtree/replace` 只能用于非安全展示，不参与写入或 containment 判定。source/target
    重叠检查也以已打开 descriptor 的 inode ancestry 为权威；
-6. installer 在 target root fd 下以不可预测名称、create-exclusive 建立 staging，并生成
-   尚不存在的不可预测 backup component，
-   只用 dirfd-relative `mkdirat/openat/unlinkat/renameat`（Python 等价 API 必须显式传
-   `dir_fd`/`src_dir_fd`/`dst_dir_fd`）创建 skill tree、替换 destination、回滚与清理。
-   commit 必须在 destination 已存在时先用 `renameat2(RENAME_NOREPLACE)` 或等价的原子
-   no-replace dirfd API 把它移到该 backup component，再把 staging 原子 rename 到
-   destination；递归 cleanup 每一层都从已打开 directory fd
-   no-follow 枚举并用 `unlinkat`/`rmdir`，不得退回 pathname `rmtree`。
+6. installer 在 target root fd 下以不可预测名称、create-exclusive 建立 staging，并为每个
+   skill 使用固定、collision-safe 的 transaction-record basename
+   `.specrail-install-txn-<sha256(skill-name)>.json`。record 必须 create-exclusive、`0600`、
+   closed JSON，绑定 transaction id、destination/staging 名、old/new manifest identity 与
+   `prepared` phase；写入后依次 fsync staging files/directories、record fd 与 target-root fd。
+   record 已存在即返回 `recovery_required`，不得覆盖。destination 不存在时只允许单次
+   `renameat2(RENAME_NOREPLACE)` commit；destination 已存在时只允许同一 target-root dirfd
+   上的单次 `renameat2(RENAME_EXCHANGE)`（或语义完全等价、保证 canonical name 始终存在的
+   原子 exchange）交换 staging 与 destination，禁止
+   `destination → backup → staging → destination` 两次 rename。缺少 exchange primitive
+   时已存在 destination 的 apply 明确 unsupported/fail closed，不能退回有缺口的算法。
+   exchange 后立即 fsync target-root fd；此时 destination 是新 tree，staging 名指向 old tree。
+   递归 cleanup 每一层都从已打开 directory fd no-follow 枚举并用 `unlinkat`/`rmdir`，不得
+   退回 pathname `rmtree`。
+
+   每次 installer/doctor preflight 都从 target-root fd 检查上述 fixed record。doctor/dry-run/
+   queue 只报告并阻断；只有新的显式 `--apply` 可恢复：逐段 no-follow 打开 record 指定的
+   destination/staging，以 record 的 old/new manifest identities 对两棵 tree 分类。若
+   destination=old 且 staging=new，说明 exchange 未发生，安全删除 staging/record并保持 old；
+   若 destination=new 且 staging=old，说明 exchange 已发生，完成 post-check 后清理 old/
+   record。若 staging 已不存在，则只在 destination 完整匹配 record 的 new identity 时判定
+   old cleanup 已完成并删除 record，或完整匹配 old identity 时判定 transaction 未生效/已
+   rollback 并删除 record；其它缺失、重复、矛盾或任一对象不安全时保留现场并 fail closed，
+   不得猜测删除或交换。恢复的 cleanup、exchange rollback、record 删除与每个阶段的 fsync 都只用
+   stable descriptor chain。由此任意 kill/power-loss 点 canonical destination 都存在，且
+   下次显式 apply 能确定恢复。
    commit 前后都从 stable anchor no-follow 重走 target pathname，并要求每一级 inode 与持有
    descriptor chain 一致；root/parent 被换成 symlink、rename/rebind、任一 component/type
-   漂移或 rewalk 失败时，必须通过原 target-root fd 清理 staging/恢复 backup 后 fail closed。
+   漂移或 rewalk 失败时，必须通过原 target-root fd 清理未交换 staging，或按 durable record
+   与 old/new identity 执行 atomic exchange rollback 后 fail closed。
    替代 symlink 指向的 external sentinel 以及任何 target-root 外路径必须保持零写入/零删除；
 7. installer 按 shared manifest 创建 staging skill tree 与派生 structural directories，并从
    已打开的 repo/skill directory fd 逐段 no-follow 打开每个声明 source：final component 使用
@@ -197,13 +236,16 @@ manifest 与 integrity library：
    **同一 source fd** 复制到由 staging-dir fd create-exclusive 打开的 destination fd 并同步
    计算/核对 lock hash。v2 file 随后在同一 destination fd 上 `fchmod` 为声明的
    `0644|0755`、`fsync`、`fstat` 并校验 exact mode；文件创建时的 umask 不得改变最终 mode。
-   source final `fstat` 还须确认 mode 未改变。source symlink/special file、hash/mode 不匹配
-   或 pre/post snapshot 变化时通过 target-root fd 清理 staging 并失败，不得读取 escape
+   source initial `fstat` 还必须在读取前验证 `st_nlink == 1`，final `fstat` 继续为 1 且
+   mode 未改变。source hard link/symlink/special file、hash/mode 不匹配
+   或 pre/post snapshot 变化时通过 target-root fd 清理 staging/record 并失败，不得读取 escape
    target，也不得替换现有 destination。所有 source 完整稳定后才进入 descriptor-relative
    commit；复制对象只来自 manifest，不从未声明目录枚举推断；
-8. apply 后沿所持 target-root fd 重新运行完整 inspect，再完成 anchor-to-path identity rewalk；
+8. apply/exchange 后沿所持 target-root fd 重新运行完整 inspect，再完成 anchor-to-path identity rewalk；
    只有整体 `match`、所有 v2 mode 精确、pathname 仍绑定同一 descriptor chain 才成功。失败时
-   用 dirfd-relative backup 回滚；rollback/cleanup 失败必须显式报错，不能把部分安装表述为成功。
+   在 transaction record 保持 durable 的前提下用第二次 atomic exchange 回滚；rollback/cleanup
+   失败必须保留 record 并显式报错，不能把部分安装表述为成功。成功后先清理 exchange 留下的
+   old tree 并 fsync target root，最后 unlink record 再 fsync；中断时按 step 6 恢复。
 
 逻辑安装单位仍是整个 skill，但物理 copy 是 manifest-declared files + derived structural
 directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 skill 分发且 source race 不会
@@ -220,6 +262,20 @@ directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 
   lock、源包或返回非 `match` 时停止自动 queue，不能把失败降级为 warning。
 - `specrail-implement-queue` 重复声明同一 precondition，保证直接调用时也 fail closed。
   它消费 compact JSON 摘要，不把全部文件哈希正文反复注入父上下文。
+- 磁盘 doctor 之外，queue preflight 必须消费 host/runtime 在 skill load 时捕获、调用方
+  不可写的 closed `loaded_skill_evidence`：`session_instance_id`、`captured_at`、
+  `lock_manifest_sha256`，以及按 skill/path 排序的
+  `loaded_entries[{skill,resolved_path,sha256}]`。required entries 至少包含当前实际执行的
+  `implx`、router 与 queue entrypoint；resolved path 必须位于 doctor 选中的 installed target，
+  每个 loaded sha256 与同一 lock manifest 一致，evidence 的 session identity 必须等于 current
+  host session。CLI flag、environment、checkpoint、PR body、agent 自述或磁盘 mtime 都不能
+  构造/覆盖该 evidence。host 不提供可信 evidence、字段缺失、session/manifest/path/hash 漂移
+  时返回 `session_restart_required` 并在任何 lane/checkpoint/远端动作前停止。
+- 成功 `--apply` 只证明 disk post-check；它不得更新 current session 的 loaded evidence。
+  因而已加载旧 bytes 的同一 session 必然继续阻断，必须由用户/host 启动新 session，重新加载
+  entrypoints 并产生 fresh matching evidence。host/runtime evidence provider 是自动 queue
+  availability 的外部 prerequisite；未部署时可以继续普通 doctor/install，但不能把 queue
+  静默降级为“磁盘 match 即可”。
 
 仅靠"更新后的 installed skill 会自己调用 doctor"是不够的：stale 安装副本里根本没有
 这段指令，第一次 drain 仍会静默通过。因此 bootstrap 必须来自 installed queue skill
@@ -232,10 +288,13 @@ directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 
    skill 执行）要求在任何 queue/implx 委派之前先运行
    `tools/check_installed_codex_skills.py --require-installed`；未 `match` 时不得
    委派给 installed queue skill。路由器这一层不依赖用户已安装副本的新旧。
+3. **活动 session 闭锁**：上述源侧 bootstrap 在委派前还验证 runtime-owned
+   `loaded_skill_evidence`；这一步绑定当前 agent 已加载 bytes，而不是重新读取磁盘后自证。
+   `--apply` 后必须新建 session，直到 fresh evidence 与 lock/doctor 同一 manifest 匹配。
 
-如果消费者只有安装后的 `SKILL.md` 而没有可定位的 SpecRail pack/checker，本 issue 的
-queue preflight 会明确阻断；把 runtime gate/checker 本身作为全局可执行依赖分发属于后续
-独立 issue，不在 GH-172 偷偷引入。
+如果消费者只有安装后的 `SKILL.md`，没有可定位的 SpecRail pack/checker，或 host 不提供可信
+current-session loaded identity，本 issue 的 queue preflight 会明确阻断；把 runtime
+gate/checker/provider 本身作为全局可执行依赖分发属于后续独立 issue，不在 GH-172 偷偷引入。
 
 ### 6. 文档与 lock 收口
 
@@ -261,6 +320,12 @@ multi-file skill；两者都依赖 GH-172，并必须在各自实现中把该 sk
 | B-013 | ordinary workflow check remains repo-only | `python3 -m pytest -q tests/test_check_workflow.py -k installed_skill` |
 | B-016 | before/after stat snapshot consistency | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k unstable` |
 | B-018 | incomplete/error result cannot pass CLI | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "unreadable or interrupted or invalid"` |
+| B-023 | AGENTS/router/implx/queue current-session loaded identity preflight + external host evidence prerequisite | `python3 -m pytest -q tests/test_check_workflow.py -k "loaded_skill or session_restart"`；manual negative: disk match + stale loaded sha → `session_restart_required` before lane/checkpoint |
+| B-024 | doctor CLI stable no-follow artifact-parent descriptor transaction | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "artifact_parent or undeclared_artifact"` |
+| B-025 | installer durable transaction record + atomic exchange/recovery | `python3 -m pytest -q tests/test_install_codex_skills.py -k "exchange or recovery or kill or power_loss"` |
+| B-026 | raw-byte namespace identity/order + percent/base64url JSON display | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "non_utf8 or raw_bytes"` |
+| B-027 | initial/final same-fd `st_nlink == 1` enforcement | `python3 -m pytest -q tests/test_installed_skill_integrity.py tests/test_install_codex_skills.py -k hardlink` |
+| B-028 | structural-only traversal + fixed global visit cap/truncation | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "undeclared_directory or traversal_cap or truncated"` |
 
 ## 数据流
 
@@ -270,14 +335,19 @@ skills-lock.json(path + hash + v2 normalized mode) + repo skill files
   -> installed integrity library
        -> explicit target | CODEX_HOME/skills | ~/.codex/skills
        -> derived structural parents + openat(no-follow, nonblocking)
-       -> immediate regular-file fstat + same-fd hash/mode + final fstat
+       -> immediate regular-file + nlink=1 fstat + same-fd hash/mode + final fstat
+       -> raw-byte namespace + structural-only descent + fixed visit cap
   -> status: match | not_installed | invalid
-  -> doctor CLI / installer preflight / implx queue preflight
+  -> doctor CLI / installer preflight
+
+runtime-owned current-session loaded entrypoint identity
+  + installed doctor match on the same lock manifest
+  -> implx/queue preflight | session_restart_required
 
 explicit --apply authorization
   -> stable anchor -> no-follow target descriptor chain
   -> dirfd-relative staging + same-fd copy/fchmod
-  -> dirfd-relative backup/replace/rollback/cleanup
+  -> durable txn record + atomic exchange/recovery/cleanup
   -> anchor-to-path inode rewalk + installed inspect
 ```
 
@@ -299,28 +369,41 @@ explicit --apply authorization
   chain 和 dirfd-relative transaction 作为写入 authority。
 - v2 仍只锁 hash、让 copy/umask 决定权限：拒绝。同字节文件失去 executable bit 会令
   分发脚本不可执行，而 hash-only doctor 会静默误判 match。
+- 磁盘 doctor `match` 后继续复用当前 session：拒绝。active session 可能已把旧入口加载到
+  context；没有 runtime-owned loaded identity 时只能阻断并要求新 session。
+- 以两次 atomic rename 模拟替换：拒绝。两个 syscall 之间 crash 会让 canonical destination
+  缺失；existing destination 必须使用 exchange 和 durable recovery record。
+- 为 exact undeclared count/artifact 递归扫描所有 descendants：拒绝。攻击者可制造无界 tree；
+  undeclared directory 作为 subtree root，global cap 命中即稳定 truncated invalid。
 
 ## 风险
 
 - Security: 安装/source 目录可能含用户自建文件、symlink、FIFO 或其它 special file。
   checker 与 installer 只从 no-follow/nonblocking fd 读取 lock 声明且经 immediate fstat 确认的
-  regular files；structural directories 由 manifest 派生而非 caller 声明；拒绝逃逸且不输出
-  正文，apply 权限没有扩大。
+  single-link regular files；structural directories 由 manifest 派生而非 caller 声明；
+  artifact parent 也使用 stable no-follow descriptor transaction；拒绝 symlink/hardlink
+  逃逸且不输出正文，apply 权限没有扩大。
 - Compatibility: v1 单文件条目继续合法；v2 `files[]` 要求显式 `0644|0755` mode。依赖 installer
   dry-run 在已存在 drift 时仍返回 0 的脚本会看到非零，这是 issue 明确要求的 fail-closed
   收紧。
-- Performance: 文件数与锁定资产线性相关；当前 14 个入口文件，未来引用仍是小型文本，
-  单次本地哈希成本可忽略。queue 只保留汇总，不加载正文。
+- Performance: 声明文件哈希与锁定资产线性相关；undeclared namespace 只进入有限 structural
+  directories、遇到未声明目录不递归，并由 4096-entry global cap 硬限制。queue 只保留汇总，
+  不加载正文。
 - Maintenance: 三个消费者共享 library 和 manifest；`check_workflow` 通过 required-file
   与测试保证 checker 没有从 pack 中遗漏。
-- Diagnostics: 标准输出对攻击者制造的大目录仍受 50 项/8192 bytes 双上限约束；完整
-  路径只进入显式 create-only artifact，queue 不创建该 artifact。
+- Diagnostics: 标准输出和显式 artifact 都受 4096 visits、50 项/8192 bytes 上限；非 UTF-8
+  path 使用 raw-byte identity、percent display/base64url artifact。artifact 经 stable parent fd
+  create-only，queue 不创建该 artifact。
 - Race: source same-fd pre/post fstat + expected hash/mode 检测可观察变化并 fail closed；
   nonblocking final open 防 FIFO 卡死。target 写入从 stable anchor 建立并保持 no-follow
   descriptor chain，所有 staging/replace/rollback/cleanup 都相对所持 fd，commit 前后重走
   pathname 验证 inode binding，因此 parent/root swap 只能令事务失败，不能把写入重定向到
-  外部路径。不能保证阻止恶意同内容、同 mode 的 source 替换；该 doctor 是完整性诊断，
-  不是操作系统沙箱。
+  外部路径。atomic exchange 保持 canonical destination，durable record 令后续显式 apply
+  能区分 exchange 前后状态。不能保证阻止恶意同内容、同 mode 的 source 替换；该 doctor 是
+  完整性诊断，不是操作系统沙箱。
+- Runtime prerequisite: repo doctor 不能观察活动 agent context；host/runtime 必须提供
+  current-session loaded-entrypoint evidence。缺该能力时 queue 明确 unavailable，而不是退回
+  磁盘-only success。
 
 ## 测试计划
 
@@ -347,10 +430,19 @@ explicit --apply authorization
       --include='tools/check_installed_codex_skills.py' --fail-under=80`。
 - [ ] Installer tests: `python3 -m pytest -q tests/test_install_codex_skills.py
       -k "dry_run or apply or source_race or target_parent_swap or target_root_swap or
-      symlink or fifo or special or post_check or mode or umask"`；target swap fixtures
+      symlink or fifo or special or hardlink or exchange or recovery or kill or power_loss or
+      post_check or mode or umask"`；target swap fixtures
       在 preflight 与 staging/commit 间替换 parent/root，并证明 external sentinel 的
       path/type/mode/mtime_ns/hash 均不变；mode fixtures 证明 `0755` 在非零 umask 下仍精确
       安装，且安装副本降为 `0644` 后即使 hash 相同也由 doctor/post-check 判 drift。
+- [ ] Session binding: `python3 -m pytest -q tests/test_check_workflow.py
+      -k "loaded_skill or session_restart"`；正例要求 runtime-owned current-session entrypoint
+      hashes 与 doctor/lock 同一 manifest，负例覆盖 evidence 缺失、自报、旧 session、apply
+      后未 restart、path/hash/session mismatch，且都在 lane/checkpoint/remote write 前阻断。
+- [ ] Namespace/artifact safety: `python3 -m pytest -q
+      tests/test_installed_skill_integrity.py -k "non_utf8 or raw_bytes or hardlink or
+      undeclared_directory or traversal_cap or truncated or artifact_parent"`；证明 cap 命中后
+      sample 固定为空且无 descendant traversal，artifact parent swap 不会写入 target。
 - [ ] Workflow integration: `python3 -m pytest -q tests/test_check_workflow.py`
 - [ ] Full regression: `python3 -m pytest -q`
 - [ ] Pack/spec checks:
