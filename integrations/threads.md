@@ -222,6 +222,13 @@ For re-review after fixes, resume or message the existing reviewer lane. If it
 cannot resume, dispatch the next bounded `diff_only` lane with compact carry;
 never replay full history. See `skills/specrail-review-pr/SKILL.md`.
 
+One reviewer lane per PR is the default; do not stack mechanical-audit,
+cross-review, adversarial, and final-re-review lanes on one PR unless the item
+is `heavy` tier, a human asked for it, or a recorded lane failure forces a
+retry. An artifact formatting/metadata defect is repaired by regenerating the
+artifact from the existing review output — it does not open a new review
+round or re-collect evidence for an unchanged head.
+
 ## Fallback
 
 If no threads skill or native subagent capability is available, the agent should

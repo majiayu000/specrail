@@ -334,6 +334,22 @@ Bounded review contract (`manifest.version: 2`,
 
 ## Reviewer Lane Execution
 
+One reviewer lane per PR is the default. A single independent read-only
+reviewer/merge-reviewer lane satisfies the review requirement for `fastlane`
+and `standard` tiers; do not stack additional lanes (mechanical audit,
+cross-review, adversarial round, final read-only re-review) on the same PR.
+Multiple distinct review lanes are justified only for `heavy` tier items,
+an explicit human request, or a recorded lane failure that forces a retry
+lane. Each extra lane multiplies wait time and token cost without adding a
+required evidence class.
+
+Artifact-defect repair is not review: when a review artifact fails schema or
+manifest validation but the underlying review output exists, regenerate the
+artifact from that output and re-run `checks/review_json_gate.py` only. A
+formatting/metadata defect in the artifact does not open a new review round,
+does not re-run tests, and does not re-collect GitHub evidence for an
+unchanged head.
+
 Give the reviewer only the exact diff, linked spec packet, and compact carry, never
 coordinator history. Resume/message it first; otherwise dispatch the next bounded
 `diff_only` lane. One bounded wait plus one stop request precedes `zero_output`.
