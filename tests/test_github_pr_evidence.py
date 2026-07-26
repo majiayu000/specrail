@@ -62,6 +62,8 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
             "actor": "user",
             "source": "chat",
             "summary": "merge approved",
+            "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+            "authorized_at": "2026-07-16T00:05:00Z",
         },
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
@@ -161,7 +163,12 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec(
     evidence = build_evidence(
         payload,
         threads_payload(),
-        {"actor": "user", "source": "chat"},
+        {
+            "actor": "user",
+            "source": "chat",
+            "head_sha": checkout_head,
+            "authorized_at": "2026-07-16T00:05:00Z",
+        },
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
         resolver_roles=reviewer_resolver_roles(),
@@ -286,7 +293,12 @@ def test_build_evidence_records_other_closing_issues_without_reclassifying_expec
     evidence = build_evidence(
         payload,
         threads_payload(),
-        {"actor": "user", "source": "chat"},
+        {
+            "actor": "user",
+            "source": "chat",
+            "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+            "authorized_at": "2026-07-16T00:05:00Z",
+        },
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
         resolver_roles=reviewer_resolver_roles(),
@@ -380,6 +392,8 @@ def test_build_evidence_maps_resolver_role_from_lane_roster() -> None:
         {
             "actor": "user",
             "source": "chat",
+            "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+            "authorized_at": "2026-07-16T00:05:00Z",
         },
         review_source="independent_lane",
         review_evidence=clean_review_evidence(),
@@ -562,6 +576,8 @@ def test_build_evidence_can_record_merge_dispatch_ordering() -> None:
         {
             "actor": "user",
             "source": "chat",
+            "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+            "authorized_at": "2026-07-16T00:05:00Z",
         },
         "2026-07-04T00:00:10Z",
         "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
@@ -574,19 +590,26 @@ def test_build_evidence_can_record_merge_dispatch_ordering() -> None:
     assert evidence["merge_head_sha"] == "e36d97517d8d0b27faca1abe5e5c63f9f88684d9"
 
 
-def test_authorization_flags_must_include_actor_and_source() -> None:
-    assert build_human_authorization(None, None, None) is None
-    assert build_human_authorization("user", "chat", "approved") == {
+def test_authorization_flags_must_include_actor_source_head_and_time() -> None:
+    assert build_human_authorization(None, None, None, None, None) is None
+    assert build_human_authorization(
+        "user", "chat", "approved", "e" * 40, "2026-07-16T00:05:00Z"
+    ) == {
         "actor": "user",
         "source": "chat",
+        "head_sha": "e" * 40,
+        "authorized_at": "2026-07-16T00:05:00Z",
         "summary": "approved",
     }
 
     with pytest.raises(EvidenceError):
-        build_human_authorization("user", None, None)
+        build_human_authorization("user", None, None, None, None)
 
     with pytest.raises(EvidenceError):
-        build_human_authorization(None, None, "approved")
+        build_human_authorization(None, None, "approved", None, None)
+
+    with pytest.raises(EvidenceError):
+        build_human_authorization("user", "chat", "approved", None, None)
 
 
 def _round_cap_authorization() -> dict[str, object]:

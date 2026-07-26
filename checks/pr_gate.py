@@ -311,13 +311,22 @@ def _authorization_item(
     if not isinstance(authorization, dict):
         return [], ["human_authorization"], reasons
     missing = []
-    for key in ["actor", "source"]:
+    for key in ["actor", "source", "head_sha", "authorized_at"]:
         if not _non_empty_string(authorization.get(key)):
             missing.append(f"human_authorization.{key}")
     if missing:
         return [], missing, reasons
+    if authorization["head_sha"] != evidence.get("head_sha"):
+        reasons.append(
+            "human_authorization.head_sha must match the current head_sha; "
+            "re-collect authorization after the head changes"
+        )
+        return [], [], reasons
     return (
-        [f"human authorization from {authorization['actor']} via {authorization['source']}"],
+        [
+            f"human authorization from {authorization['actor']} via "
+            f"{authorization['source']} at head {authorization['head_sha']}"
+        ],
         [],
         reasons,
     )

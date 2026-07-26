@@ -39,6 +39,16 @@ def test_milestone_checkpoint_fixtures_are_allowed(name: str) -> None:
     }
 
 
+def test_checkpoint_rejects_whitespace_only_resume() -> None:
+    payload = checkpoint()
+    payload["resume"] = "  \t "
+
+    result = evaluate_checkpoint(payload)
+
+    assert result["decision"] == "blocked"
+    assert any("non-whitespace" in error for error in result["errors"])
+
+
 def test_checkpoint_rejects_duplicate_work_across_lists() -> None:
     payload = checkpoint()
     payload["blocked"] = [

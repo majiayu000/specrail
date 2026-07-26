@@ -391,10 +391,25 @@ def test_review_json_gate_allows_round_three_full_with_human_request() -> None:
     assert result["decision"] == "allowed", result["reasons"]
 
 
-def test_review_json_gate_allows_round_three_diff_only_with_checklist() -> None:
+def test_review_json_gate_blocks_legacy_round_three_without_escalation() -> None:
     result = evaluate_review_gate(
         load_review("review-round3-diff-only-checklist.json"), load_diff()
     )
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "round_cap_escalation.authorization_id" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_review_json_gate_allows_legacy_round_three_with_escalation() -> None:
+    review = load_review("review-round3-diff-only-checklist.json")
+    review["round_cap_escalation"] = {
+        "authorization_id": "RCA-489-3",
+        "unresolved_findings": [],
+    }
+    result = evaluate_review_gate(review, load_diff())
 
     assert result["decision"] == "allowed", result["reasons"]
 

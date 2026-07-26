@@ -20,7 +20,7 @@
     {
       "name": "specrail-implement-queue",
       "path": "skills/specrail-implement-queue/SKILL.md",
-      "computedHash": "sha256:f9c4a7cc111f9925c88b2bbea7c3ef5111336016cb110fe1ed439da52a4669c6"
+      "computedHash": "sha256:33073a95f0c818b0bb3589a2c035df11d98fd8d893d64e733121be5bd16eedca"
     },
     {
       "name": "specrail-implement",
@@ -40,7 +40,7 @@
     {
       "name": "specrail-pr-gate",
       "path": "skills/specrail-pr-gate/SKILL.md",
-      "computedHash": "sha256:dd9409951a728ea5f9b64e3b75430ee4b989c86d13790f036ac8b8b18ab378e4"
+      "computedHash": "sha256:0a7c0a5f1d58f37104240f2943421d947da2770db9aaeb2a1345a77de980ab83"
     },
     {
       "name": "specrail-release-note",

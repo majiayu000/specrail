@@ -116,6 +116,10 @@ def spec_revision_evidence(
             "default_base_sha": base,
             "head_sha": head,
             "gate_query_head_sha": head,
+            "human_authorization": {
+                **evidence["human_authorization"],
+                "head_sha": head,
+            },
             "changed_files_count": 1,
             "changed_files_sha256": hashlib.sha256(
                 json.dumps(changed_paths, separators=(",", ":")).encode("utf-8")

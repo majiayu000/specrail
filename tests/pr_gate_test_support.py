@@ -185,6 +185,7 @@ def sensitive_evidence(tmp_path: Path) -> tuple[dict[str, object], Path, object]
     evidence["linked_issue"] = issue
     evidence["head_sha"] = checkout_head
     evidence["gate_query_head_sha"] = checkout_head
+    evidence["human_authorization"]["head_sha"] = checkout_head
     evidence["review_evidence"]["head_sha"] = checkout_head
     evidence["review_evidence"]["artifacts"][0]["head_sha"] = checkout_head
     review_dir = repo / "artifacts" / "reviews"

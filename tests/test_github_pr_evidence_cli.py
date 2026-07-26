@@ -70,6 +70,10 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
             "chat",
             "--authorization-summary",
             "merge approved",
+            "--authorization-head-sha",
+            "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+            "--authorization-at",
+            "2026-07-16T00:05:00Z",
             "--review-source",
             "independent_lane",
             "--review-manifest",
@@ -91,6 +95,8 @@ def test_cli_uses_fake_gh_without_network(tmp_path: Path, monkeypatch: pytest.Mo
     assert evidence["human_authorization"] == {
         "actor": "user",
         "source": "chat",
+        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "authorized_at": "2026-07-16T00:05:00Z",
         "summary": "merge approved",
     }
     assert evidence["gate_query_head_sha"] == evidence["head_sha"]

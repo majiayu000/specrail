@@ -655,12 +655,46 @@ def test_pr_gate_tier_metadata_with_human_authorization_allowed() -> None:
     evidence["human_authorization"] = {
         "actor": "maintainer",
         "source": "current conversation",
+        "head_sha": evidence["head_sha"],
+        "authorized_at": "2026-07-16T00:05:00Z",
     }
 
     result = evaluate_pr_gate(evidence)
 
     assert result["decision"] == "allowed"
     assert any("human authorization from" in item for item in result["satisfied"])
+
+
+def test_pr_gate_human_authorization_requires_head_and_time_binding() -> None:
+    evidence = _tier_evidence()
+    evidence["human_authorization"] = {
+        "actor": "maintainer",
+        "source": "current conversation",
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] != "allowed"
+    assert "human_authorization.head_sha" in result["missing"]
+    assert "human_authorization.authorized_at" in result["missing"]
+
+
+def test_pr_gate_human_authorization_head_mismatch_blocks() -> None:
+    evidence = _tier_evidence()
+    evidence["human_authorization"] = {
+        "actor": "maintainer",
+        "source": "current conversation",
+        "head_sha": "0000000000000000000000000000000000000000",
+        "authorized_at": "2026-07-16T00:05:00Z",
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] != "allowed"
+    assert any(
+        "human_authorization.head_sha must match" in reason
+        for reason in result["reasons"]
+    )
 
 
 def _stacked_declaration() -> dict[str, object]:

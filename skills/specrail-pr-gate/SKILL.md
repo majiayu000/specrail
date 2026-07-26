@@ -38,8 +38,10 @@ python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
    completion timestamp, gate-query head SHA, CI/check rollup, review decision,
    review source, lane failures, review-thread resolution, merge state, and the
    per-PR human merge authorization
-   (`human_authorization.actor`/`source`). Risk tiers select verification
-   depth only and never satisfy this authorization item.
+   (`human_authorization.actor`/`source`/`head_sha`/`authorized_at`, with
+   `head_sha` matching the current head — re-collect it after any repair that
+   changes the head). Risk tiers select verification depth only and never
+   satisfy this authorization item.
 
    For enforcement-sensitive evidence, also confirm the route-specific approval
    contract. `sensitive_route: approved_spec` requires `approved_spec` evidence.

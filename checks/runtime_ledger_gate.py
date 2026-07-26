@@ -71,6 +71,8 @@ def evaluate_checkpoint(data: dict[str, Any], **_: Any) -> dict[str, Any]:
         errors.append("complete milestone requires completed_at")
     if milestone_state != "complete" and completed_at is not None:
         errors.append(f"{milestone_state} milestone requires completed_at null")
+    if not data["resume"].strip():
+        errors.append("resume must contain a non-whitespace action")
 
     return {
         "decision": "blocked" if errors else "allowed",

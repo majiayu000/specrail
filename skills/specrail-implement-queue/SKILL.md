@@ -165,6 +165,11 @@ Rules:
   heavier profile supports it.
 - The tier selects verification depth only. In `auth_mode: review`, every tier
   still requires explicit per-PR human merge authorization.
+- Fastlane merges pass a lightweight authorization gate before merging:
+  repository-required CI green at the exact head, one independent exact-head
+  review at that head, clean merge state, and the per-PR human authorization
+  (in `auth_mode: review`) naming the PR and current head. Record all four in
+  the PR evidence; a handoff assertion alone never satisfies this gate.
 
 ## Queue Planning
 
@@ -231,7 +236,11 @@ If `auth_mode` is not provided by the calling skill, default to
 `auth_mode: review`. Never promote a run to auto mode from persisted repository
 configuration; auto requires the explicit current-message invocation above.
 
-For broad queues, use milestone phases rather than lane-sized tranches. If the calling skill is
+For broad queues, use milestone phases rather than lane-sized tranches. Each
+milestone still names its bounded tranche: the explicit issue/PR list selected
+at milestone start, recorded in the checkpoint scope. New remote items observed
+mid-milestone go to `remaining_queue` for a later milestone; the named tranche
+never silently expands. If the calling skill is
 `implx`, or the user otherwise asks to finish actionable issues/PRs, set
 `queue_mode: full_queue_drain` unless the prompt explicitly limits scope to one
 issue, one PR, the current tranche, plan-only, status-only, or review-only work.
@@ -441,6 +450,8 @@ For long queues, create or update the optional local resume cursor only at:
 - completion of all initial PR reviews
 - completion of the single repair/re-review phase
 - closure, handoff, or a hard context stop
+- a context compaction boundary: write the cursor before compaction, and run
+  `checks/runtime_ledger_gate.py` on it before continuing in the next context
 
 Use `templates/tranche_checkpoint.md` as the shape and validate concrete JSON
 checkpoints with:
@@ -501,11 +512,12 @@ For `standard` and `heavy` GitHub PRs, current evidence must include:
 - `pr_tier`, changed-line/path evidence, and merge authorization for the
   selected `auth_mode`
 
-When a milestone checkpoint is present, it must not mark a `standard` or
-`heavy` PR item `complete`, `merged`, `merge_ready`, or `ready_to_merge` unless
-`checks/runtime_ledger_gate.py` accepts it. Fastlane readiness remains remote
-truth and is summarized at the next milestone; do not create a checkpoint only
-to duplicate that state.
+A milestone checkpoint carries no readiness semantics: `completed` entries are
+structural references (`kind` + `number`) only, and a structurally valid cursor
+is never merge-readiness evidence for any tier. Readiness and merge state live
+only in PR-gate evidence and remote truth, and are re-verified from their
+authorities at merge time; do not create a checkpoint only to duplicate that
+state.
 
 ### Merge Authorization
 
@@ -570,8 +582,10 @@ must never report an outcome without remote confirmation:
 
 - In `auth_mode: auto`, merge only on complete current evidence; evidence gaps
   mean skip and report, not ask.
-- In `auth_mode: review`, do not merge without current PR-gate evidence and
-  explicit per-PR human authorization in the current conversation.
+- In `auth_mode: review`, do not merge a `standard` or `heavy` PR without
+  current PR-gate evidence, nor any PR without explicit per-PR human
+  authorization in the current conversation. A `fastlane` PR merges on its
+  lightweight authorization gate (PR Tier Lanes rules) instead of `pr_gate`.
 - Do not dispatch review-thread/pr_gate queries and the merge command in the
   same parallel tool batch or parallel lane; the gate query must complete first.
 - Reviewer-lane thread resolution and self-review recovery must follow Reviewer

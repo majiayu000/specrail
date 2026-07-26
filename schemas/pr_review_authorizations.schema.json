@@ -7,7 +7,7 @@
   "properties": {
     "human_authorization": {
       "type": "object",
-      "required": ["actor", "source"],
+      "required": ["actor", "source", "head_sha", "authorized_at"],
       "additionalProperties": true,
       "properties": {
         "actor": {
@@ -15,6 +15,14 @@
           "minLength": 1
         },
         "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head_sha": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authorized_at": {
           "type": "string",
           "minLength": 1
         },

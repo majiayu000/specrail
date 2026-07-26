@@ -19,7 +19,10 @@
     "review_completed_at": "2026-07-03T23:58:00Z",
     "human_final_review_required": true,
     "lane_roster": [
-      {"lane_id": "self-review-recovery", "producer_identity": "reviewer-1"}
+      {
+        "lane_id": "self-review-recovery",
+        "producer_identity": "reviewer-1"
+      }
     ],
     "artifacts": [
       {
@@ -41,11 +44,12 @@
         "comments": []
       }
     ],
-    "current_artifact_ids": ["pr718-head1-self-review"],
+    "current_artifact_ids": [
+      "pr718-head1-self-review"
+    ],
     "errors": [],
     "blocking_reasons": []
   },
-
   "lane_failures": [],
   "review_source": "self_review",
   "review_execution": "local",
@@ -54,7 +58,9 @@
   "human_authorization": {
     "actor": "maintainer",
     "source": "chat",
-    "summary": "merge approved"
+    "summary": "merge approved",
+    "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+    "authorized_at": "2026-07-16T00:05:00Z"
   },
   "is_draft": false,
   "linked_issue": 716,

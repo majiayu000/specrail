@@ -161,6 +161,10 @@ def _live_route_case(
         "default_base_sha": base,
         "head_sha": head,
         "gate_query_head_sha": head,
+        "human_authorization": {
+            **evidence["human_authorization"],
+            "head_sha": head,
+        },
         "linked_issue": 97,
         "changed_files_count": 1,
         "changed_files_sha256": hashlib.sha256(

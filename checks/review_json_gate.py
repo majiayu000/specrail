@@ -22,6 +22,7 @@ from rejection_items import (
 )
 from github_evidence_common import EvidenceError
 from review_content_binding import load_review_content_binding
+from review_round_semantics import legacy_round_cap_reason
 from review_result_semantics import (
     REVIEW_VERDICTS,
     validate_review_artifact,
@@ -300,6 +301,12 @@ def _validate_review_round(
                 f"cap of {FULL_REVIEW_ROUND_CAP}; use resumed/diff_only or record "
                 "human_full_review_request"
             )
+    elif not bounded and review_round > FULL_REVIEW_ROUND_CAP:
+        reason = legacy_round_cap_reason(review, FULL_REVIEW_ROUND_CAP)
+        if reason is None:
+            satisfied.append(f"legacy round {review_round} escalation authorized")
+        else:
+            reasons.append(reason)
 
     if review_mode in {"resumed", "diff_only"}:
         if review_round < 2:

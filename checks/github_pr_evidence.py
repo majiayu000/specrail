@@ -630,6 +630,8 @@ def main() -> int:
     parser.add_argument("--authorization-actor", help="Human authorizing merge")
     parser.add_argument("--authorization-source", help="Where authorization was recorded")
     parser.add_argument("--authorization-summary", help="Short authorization summary")
+    parser.add_argument("--authorization-head-sha", help="Head SHA the human authorization covers")
+    parser.add_argument("--authorization-at", help="When the authorization was given (after the relevant review)")
     parser.add_argument(
         "--review-source",
         choices=sorted(REVIEW_SOURCES),
@@ -683,6 +685,8 @@ def main() -> int:
             args.authorization_actor,
             args.authorization_source,
             args.authorization_summary,
+            args.authorization_head_sha,
+            args.authorization_at,
         )
         self_review_authorization = build_self_review_authorization(
             args.self_review_authorization_actor,
