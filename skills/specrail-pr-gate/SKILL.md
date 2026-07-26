@@ -12,14 +12,14 @@ Use this skill before saying a PR is merge-ready.
 1. Collect current PR evidence. Prefer the read-only adapter when available:
 
 ```sh
-python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --review-source independent_lane --json > <evidence.json>
+python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --review-source independent_lane --review-manifest <manifest.json> --json > <evidence.json>
 ```
 
 For a partial slice with a standalone `Refs #<issue-number>` directive, pass
 the expected issue explicitly:
 
 ```sh
-python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --issue <issue-number> --review-source independent_lane --json > <evidence.json>
+python3 checks/github_pr_evidence.py --github-repo <owner/repo> --pr <pr-number> --issue <issue-number> --review-source independent_lane --review-manifest <manifest.json> --json > <evidence.json>
 ```
 
 The expected issue must exist in the same repository and remain open. Other
