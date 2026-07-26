@@ -113,7 +113,7 @@ reservation/proof，并返回 closed `issue_progress_decision_receipt`：
 ```text
 provider_id, trust_root_id, receipt_id, evaluation_id, reservation_id,
 repo_id, issue, generation, ledger_digest, result_digest,
-decision, finalized_at, signature
+decision, finalized_at, expires_at, signature
 ```
 
 queue 只接受 schema-valid、签名有效且与**同一 result bytes**匹配的 receipt；裸
@@ -122,9 +122,15 @@ evaluation result 只是 candidate，不能开 lane。queue 将 matching receipt
 `generation + ledger_digest + result_digest` 重验 current record，并以
 `(repo_id, issue, receipt_id)` create-only 消费 receipt。只有 ledger 原子追加
 `attempt_started`、anchor generation commit 与 receipt consumption 三者可恢复地共同完成
-后才 dispatch lane。proof 签发后或 finalize 后 generation 前移、writer 竞态、重复
-challenge、过期/取消/重放 reservation、receipt 重放、旧 attestation、缺少 fresh proof、
-finalize/append-start CAS 失败或 receipt/result digest 不一致统一返回
+后才 dispatch lane。provider 为 receipt 维护不由调用方编辑的
+`pending | consumed | cancelled | expired` 状态：pending 期间普通 writer 仍被阻断；
+未过期 receipt 可以按同一 receipt/transaction ID 幂等 retry 或 `recover`；若没有 prepared
+transaction 且 receipt 已过期或调用方明确放弃，受保护 runtime 只能调用
+`cancel-receipt` 原子写入 cancelled/expired tombstone、解除普通 writer 阻断，并让当前
+action 保持 blocked。已经 consumed 的 receipt 重试只可返回同一已提交
+`attempt_started`，不得创建第二个 attempt。proof 签发后或 finalize 后 generation 前移、
+writer 竞态、重复 challenge、过期/取消/重放 reservation、receipt 重放、旧 attestation、
+缺少 fresh proof、finalize/append-start CAS 失败或 receipt/result digest 不一致统一返回
 `anchor_freshness_invalid`。reservation 到期恢复只能标记取消并阻断本次 action，不得把
 candidate result 转成成功。因此 check/use 窗口被 provider reservation、finalize CAS 与
 append-start receipt consumption 覆盖，而不只是被 nonce 防重放。相同完整绑定输入进入
@@ -272,8 +278,10 @@ event 和 anchor attestation；helper 重算 canonical digest，拒绝旧事件�
 writer 命令必须返回 CAS conflict；`finalize-evaluation` 后仅允许携带 matching signed
 receipt 的 `append-start` 进入 transaction。它必须重验 current generation/ledger/result
 digest、create-only 消费 receipt，并把 `attempt_started` append、anchor commit 与 receipt
-consumption 纳入同一恢复协议；显式到期取消只允许本次 action 失败后重新 evaluation。
-其命令输出有界、错误非零且不静默降级。
+consumption 纳入同一恢复协议。`recover` 必须对 prepared append-start 幂等完成或回滚；
+无 prepared transaction 的 pending receipt 仅可在有效期内重试 append-start，过期或放弃
+则由 `cancel-receipt` 留下 tombstone 后恢复普通 writer，且只允许本次 action 失败后重新
+evaluation。其命令输出有界、错误非零且不静默降级。
 
 `open-scope` 还必须加载 closed `issue_scope_authorization`，其语义固定为一次
 `decision: open_scope_once`：
@@ -438,7 +446,7 @@ ownership。`gh191-dependencies-open/order-invalid/ready.json` 分别覆盖负�
 | B-018 | exact human rescope/unpark authorization | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_attempt_writer.py -k "scope_authorization or unpark or replay"` |
 | B-019 | trusted evidence issuer/adapter provenance | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_attempt_collector.py tests/test_issue_progress_gate.py -k "issuer or adapter or provenance or pagination or signature"` |
 | B-020 | serial upstream merge/rebase gate | `python3 -m pytest -q tests/test_repository_dependency_preflight.py -k "open or order or rebase or ready"` |
-| B-021 | provider reservation + decision finalize CAS + append-start receipt consumption | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "reservation or finalize or append_start or generation_race or receipt"`，含 finalize→append-start generation 前移与 receipt replay 负例 |
+| B-021 | provider reservation + decision finalize CAS + append-start receipt consumption/recovery | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "reservation or finalize or append_start or generation_race or receipt or expiry or recover"`，含 finalize→append-start generation 前移、crash/abandon/expiry 与 receipt replay 负例 |
 | B-022 | complete closed shared evaluation output | `python3 -m pytest -q tests/test_issue_progress_gate.py -k "evaluation_result or exact_keys or actions"`，验证 allowed/blocked 两个 evaluation fixtures |
 | B-023 | trusted runtime tranche history | `python3 -m pytest -q tests/test_runtime_issue_tranche_history_evidence.py -k "archive or tracked or complete or incomplete or conflict"`，含 complete/incomplete fixtures |
 | B-024 | per-commit issue-reference provenance | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_progress_gate.py -k "commit_reference or predicate or prefix or derivation"`，含 mixed-reference fixture |
