@@ -27,7 +27,10 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
 
 1. B-001 当某 issue 开始一次实现 round 时，必须先追加不可变 `attempt_started`
    事件，记录唯一 attempt ID、issue、run、tranche、before head、work fingerprint
-   与目标 acceptance/task IDs；开始事件持久化失败时不得进入该 round。
+   与目标 acceptance/task IDs。受保护 runtime 必须在 breaker evaluation 前构造该事件
+   的 closed canonical candidate，并让其 digest 贯穿 proof、reservation、evaluation、
+   receipt 与最终 append；开始事件或同事务 durable dispatch record 持久化失败时不得
+   进入该 round。
 2. B-002 当 round 结束或中断时，必须为同一 attempt 追加且只追加一个不可变
    `attempt_finished` 或 `attempt_interrupted` 事件，记录 after head、
    verification/review/coverage evidence 与 outcome；不得补写、覆盖或删除开始事件，
@@ -77,6 +80,9 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
 17. B-017 每次公开 breaker 评估必须先以受保护 runtime 生成的单次 challenge，从
     anchor provider 获取绑定 `repo_id`、issue、evaluation ID、challenge、当前
     generation/event count/tail/ledger digest 与可信有效期的签名 current-state proof；
+    proof 必须绑定同一事务返回的独立 evaluation reservation ID 与受保护 runtime 预先
+    构造的 exact `attempt_started` candidate digest；公开 gate loader 必须把 proof 与
+    reservation 的 canonical bytes 作为成对必需输入并在评估前验证，
     只提供历史 committed attestation、旧 proof、已消费 challenge 或调用方自报
     “latest”时必须 fail closed，旧 ledger + 旧 attestation 不得一起回放为当前历史。
 18. B-018 `open-scope` 只能消费一次由可信 adapter 验证为 maintainer 的人工
@@ -88,23 +94,43 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
     或 `as_of` 的 evidence snapshot 必须带 allowlisted issuer/adapter 身份、版本与
     adapter-run provenance，绑定 repo/issue/head、完整查询/分页状态、canonical payload
     digest，并由配置的 trust root 验证；调用方 JSON、自报 adapter、未知 issuer、签名
-    无效或不完整 collection 必须 fail closed。
+    无效或不完整 collection 必须 fail closed。`attempt_started` candidate 只能由受保护
+    runtime adapter 从当前 queue/run/fencing 输入构造并签名其 provenance；调用方替换
+    candidate 字段或 bytes 必须 fail closed。
 20. B-020 GH-191 实现只能在 fresh GitHub truth 证明 GH-172/PR #186、GH-174/PR #192、
     GH-189/PR #193 已按 `GH-172 → GH-174 → GH-189` 串行合入目标 base，且 GH-191 已
     逐步 rebase 后开始；任一依赖仍 open、未合并、head/base 漂移或跳序都必须阻断，
     不得把“有 PR”或条件性 handoff 当作“已合并”。
 21. B-021 当 provider 为一次 breaker evaluation 签发 current-state proof 时，必须原子
-    建立绑定该 evaluation、generation 与 ledger digest 的短期独占 reservation；在
-    offline result 生成后，受保护 runtime 必须以同一 reservation 对 provider current
-    generation 执行 compare-and-finalize，并返回绑定 result digest 的签名 decision
-    receipt。只有 receipt 成功的 result 才可开 lane；签发后 generation 前移、reservation
-    过期/取消/重放、writer 与 evaluation 竞态或 finalize CAS 失败都必须阻断。
+    建立绑定该 evaluation、generation、ledger digest 与 exact `attempt_started`
+    candidate digest 的短期独占 reservation；公开 loader 必须把该 reservation 的
+    canonical bytes 与 proof 一起强制传入 evaluator，finalize 必须消费同一份 bytes 的
+    digest。在 offline result 生成后，受保护 runtime 必须以同一 reservation 对 provider
+    current generation 执行 compare-and-finalize，并返回绑定 result、reservation 与
+    candidate digest 的签名 decision receipt。只有 result 的 `decision == allowed`、
+    `allowed_actions` 精确包含 `open_issue_lane` 且 `blocked_actions` 不含该 action 时，
+    receipt 才能把 `authorized_action` 设为 `open_issue_lane`；其他 result 只可获得
+    `authorized_action: null` 的审计 receipt，不能进入 `append-start`。
+    `append-start` 必须重新规范化实际事件 bytes、比对 candidate digest，并在同一 provider
+    transaction 中 create-only 消费 receipt、追加 `attempt_started`、提交 anchor，同时
+    create-only 写入绑定稳定 `lane_dispatch_id` 的 durable dispatch outbox record。
+    queue 不能凭 append 返回值直接 dispatch；只有受保护 dispatcher 能幂等消费该 outbox，
+    下游以同一 `lane_dispatch_id` create-only 接受一次。response 丢失、重试或 recovery
+    必须复用同一 attempt/outbox/dispatch ID，不能创建或 dispatch 第二条 lane。只有这条
+    原子链成功的 result 才可开 lane。receipt 必须有可信时间源签名绑定的有效期；finalize
+    后中断时，
+    未过期 receipt 只可幂等 retry/recover 同一 `append-start`，过期或明确放弃时只能
+    原子 cancel/expire receipt、恢复普通 writer 并阻断当前 action，不得把 candidate
+    转成成功。签发后 generation 前移、reservation/receipt 过期或重放、writer 与
+    evaluation 竞态、candidate 替换、action predicate 不满足、finalize/append-start CAS
+    失败或 proof/reservation/result/receipt 任一 cross-binding 不匹配都必须阻断。
 22. B-022 当 `issue_progress_gate.py` 返回 evaluation result 时，输出必须是
     `schemas/evaluation_result.schema.json` 的完整闭合投影：包含 `decision`、`route`、
     `mode`、`current_state`、`issue`、`pr`、`reasons`、`satisfied`、`missing`、
     `required_artifacts`、`human_gates`、`allowed_actions`、`blocked_actions` 与
     `verification_commands`，且不得以 `reason_ids` 代替 `reasons`；任一 decision 分支
-    缺字段、额外字段或动作集合与 decision 矛盾时必须被调用方拒绝。
+    缺字段、额外字段或动作集合与 decision 矛盾时必须被调用方拒绝。finalizer 必须从这
+    组 closed action fields 计算 `authorized_action`，不得接受调用方另传 action。
 23. B-023 当 baseline/migration 覆盖启用前的 tranche history 时，必须使用受信 runtime
     history adapter 从受保护 checkpoint archive 与可验证的 tracked checkpoint history
     生成 closed、签名且完整性有界的 evidence；每条 tranche 必须绑定 source path/blob
@@ -118,9 +144,13 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
     错 issue/SHA、predicate 漂移或 provenance digest 不匹配的 commit 不得被猜测计数，
     而应使 history fail closed。
 25. B-025 current-state proof、evaluation reservation 与 decision receipt 必须分别受
-    closed schema 和 pack ownership 校验；proof/receipt 缺少 repo/issue/evaluation、
-    generation、ledger/result digest、有效期、provider/trust-root 或签名字段，出现未知
-    字段，或 schema 未在 pack validator 注册时，公开 gate 必须失败。
+    独立 closed schema 和 pack ownership 校验；三者缺少各自必需的
+    repo/issue/evaluation、generation、ledger/result digest、有效期、
+    provider/trust-root 或签名字段，出现未知字段，cross-binding 不一致，或任一 schema
+    未在 pack validator 注册时，公开 gate 必须失败。reservation 的 canonical bytes 是
+    公开 gate loader、evaluator 与 finalizer 的强制输入；proof/reservation 必须共享
+    binding ID 与 candidate digest，receipt 必须绑定实际 reservation digest、candidate
+    digest 和由 result 派生的 `authorized_action`。
 26. B-026 GH-191 的 PR 编号、串行依赖与 planned-path overlap 必须只存在于本仓库显式
     dependency overlay，由 read-only repository preflight helper 以 fresh GitHub evidence
     评估；通用 `check_workflow.py` 与 consumer 安装包不得硬编码、查询或阻断
@@ -139,7 +169,15 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
 - [ ] `as_of` 边界测试证明相同输入跨墙钟重跑结果不变。
 - [ ] old ledger + old committed attestation/proof 回放、错/已消费 challenge、过期 proof、
       proof 签发后 provider generation 前移、reservation 过期/重放与 finalize CAS 失败均
-      阻断；fresh proof + reservation + decision receipt 正例通过。
+      阻断；finalize 后到 `append-start` 前 generation 前移、receipt 重放或消费失败同样
+      阻断；finalize 后 crash/abandon/expiry 的 retry/recover/cancel 状态机不会永久阻塞
+      writer，也不会放行当前 action；fresh proof + reservation + 未过期 decision receipt
+      被 `append-start` 原子消费并落下 `attempt_started` 与唯一 durable dispatch outbox
+      的正例通过；append 成功响应丢失后的 retry/recover 复用同一 attempt/outbox/
+      `lane_dispatch_id`，下游只创建一条 lane。
+- [ ] proof/reservation/candidate 任一缺失或 cross-binding 不符、调用方替换
+      `attempt_started` 字段、non-allowed result 或 action 集合矛盾均不能获得可执行 receipt、
+      追加 start 或创建 dispatch outbox。
 - [ ] allowed/blocked evaluation fixtures 都完整匹配共享 `evaluation_result`，使用
       `reasons`，缺字段、额外字段、`reason_ids` 替代或动作矛盾均被拒绝。
 - [ ] 迁移从可信 checkpoint archive/tracked history 恢复完整 tranche；缺段、浅历史、
