@@ -58,6 +58,10 @@ any task where all writable files overlap.
    - Validate the spec packet when a spec changed.
    - Preserve human-facing locale rules.
 6. Run threads closure audit when GitHub queue or PR state changed.
+   - Run it once per tranche, at tranche end, covering every PR and issue the
+     tranche touched in one batch — not as a full re-check after each
+     individual merge. A mid-tranche re-check is justified only when the
+     agent's own action produced an unexpected merge-state outcome.
    - Re-check PR heads, CI, review threads, merge state, and issue closure.
    - Separate remote truth from local worktree state.
 
@@ -65,7 +69,11 @@ For GitHub PR merge work, native thread dispatch is mandatory when native
 subagents are available. A PR must have at least one independent read-only
 `reviewer` or `merge_reviewer` native lane before merge readiness can be
 reported. The coordinator lane is not a native reviewer, even when it performs
-the final synthesis.
+the final synthesis. Exception: a `fastlane`-tier, non-enforcement-sensitive
+PR may use coordinator self-review under `basis: fastlane_policy` per
+`skills/specrail-implement-queue/SKILL.md`; this is also the resolution of the
+"do not use threads for a small single-file change" rule above — small
+fastlane work neither requires nor justifies native lanes.
 
 ## Handoff Contract
 

@@ -152,8 +152,11 @@ Rules:
   check is the enforcing authority — never self-declare `fastlane`
   against it.
 - When in doubt between two tiers, pick the heavier one.
-- Tiering never weakens CI, reviewer-lane, review-thread, or pr_gate
-  evidence requirements.
+- Tiering never weakens CI, review-thread, or pr_gate evidence requirements.
+  The reviewer-lane requirement has exactly one tier-scoped substitution:
+  `fastlane` items may satisfy review via coordinator self-review under
+  `basis: fastlane_policy` (see Orchestration); the review artifact and all
+  other evidence classes stay mandatory.
 - The tier also decides the `auth_mode: review` merge authorization path
   (see Merge Authorization): `fastlane`/`standard` may qualify for
   `standard_auto`, `heavy` keeps per-PR human authorization, and the
@@ -293,6 +296,16 @@ PR merge work needs a real read-only `reviewer`/`merge_reviewer` thread with
 `agent_id_or_thread_id`, wait/close evidence, and output; the coordinator is not
 that reviewer.
 
+Fastlane exception: a `fastlane`-tier, non-enforcement-sensitive PR with valid
+`pr_tier_evidence` does not require a native reviewer thread. The coordinator
+may perform the review itself, recording `review_source: self_review`, a local
+review artifact, and `self_review_authorization` with
+`basis: fastlane_policy` (plus scope and conversation marker); no
+`lane_failures[]` precondition applies to this basis. For a tranche whose PR
+work is entirely fastlane, record `spawn_requirement: not_required` with
+`no_spawn_reason: fastlane_policy`. Any doubt about the tier means the PR is
+not fastlane; `standard` and `heavy` keep the native reviewer requirement.
+
 If threads is unavailable, record `fallback_mode: single_agent` and its reason,
 use the normal SpecRail flow, and report that no native threads launched.
 
@@ -369,6 +382,15 @@ a different local lane or authorized local `self_review` recording actor, source
 quoted scope, and marker; generic authorization cannot substitute.
 Only two distinct recorded lane failures let `implx auto` authorize scoped
 self-review; one requires retry, review mode has no exception, and gates enforce it.
+The `basis: fastlane_policy` self-review path (fastlane tier only, see
+Orchestration) is separate from this failure-recovery path and needs no
+recorded lane failures.
+
+In `auth_mode: review`, a fastlane self-review item cannot qualify for
+`standard_auto` (no independent party): it keeps per-PR human merge
+authorization. In `auth_mode: auto`, the standing merge authorization covers
+it once all evidence is green. Choose per PR: spawn one reviewer lane to
+unlock `standard_auto`, or self-review and leave the merge to the human.
 
 ## Context Budget
 
@@ -580,14 +602,19 @@ Test layering, to avoid re-paying a full-suite wait on every fix round:
 
 ## Runtime Checkpoint
 
-For long queues, create or update an optional local runtime checkpoint before:
+For long queues, create or update an optional local runtime checkpoint at
+three required points:
 
-- spawning writable lanes
-- pushing or opening PRs
-- waiting on CI or long local tests
-- requesting merge review
-- compacting, handing off, or closing the parent thread
-- selecting the next tranche in a full-queue drain loop
+- tranche start, before the first writable action (spawning writable lanes,
+  pushing, or opening PRs)
+- before claiming merge readiness for a PR (the ledger-gate evaluation point)
+- tranche end: compacting, handing off, closing the parent thread, or
+  selecting the next tranche in a full-queue drain loop
+
+Between these points, update the checkpoint only when material state changed
+(a new PR, a lane failure, a budget event) — not as a per-step ritual. The
+checkpoint mirrors GitHub truth for handoff; every extra write is copy work
+that GitHub already stores.
 
 Use `templates/tranche_checkpoint.md` as the shape and validate concrete JSON
 checkpoints with:
