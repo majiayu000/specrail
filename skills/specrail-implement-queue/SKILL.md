@@ -540,7 +540,18 @@ Test layering, to avoid re-paying a full-suite wait on every fix round:
 
 - During iteration, run only the focused tests for the touched behavior.
 - Run the full suite plus clippy plus deterministic checks once, immediately
-  before claiming PR-ready — not after each individual fix.
+  before claiming PR-ready — not after each individual fix. This is the one
+  local full-suite run the `max_full_test_runs_per_head` budget dimension
+  counts; record its `full_test_head_sha`.
+- A review-fix commit that moves the PR head does NOT restart the local
+  full-suite obligation. For the new head, run the focused tests for the fix,
+  then let the PR's CI rollup provide the full-suite evidence — a green CI
+  rollup on the new head IS current full-coverage evidence for that head.
+  Re-run the local full suite only when CI does not cover the full suite for
+  this repository, or when the fix touched build/test configuration itself.
+- Exact-head evidence discipline applies to the evidence record (which head
+  a result belongs to), not to re-execution: never re-run an expensive check
+  on a new head when a gate-visible CI artifact already covers it.
 
 ## Runtime Checkpoint
 
@@ -622,7 +633,9 @@ For each issue slice:
 
 Before readiness, run focused tests, repository deterministic checks, and
 `python3 checks/check_workflow.py --repo .`; when specs changed also use
-`--spec-dir specs/GH<issue>`. Compare the diff with the linked specs via
+`--spec-dir specs/GH<issue>`. Apply the Waiting Discipline test layering:
+one local full-suite run per PR bound to the merge-candidate head; review-fix
+heads rely on focused tests plus the CI rollup, not a fresh local full suite. Compare the diff with the linked specs via
 `skills/specrail-check-impl-against-spec/SKILL.md`, then use
 `skills/specrail-pr-gate/SKILL.md` before reporting merge readiness.
 
