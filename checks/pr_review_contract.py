@@ -14,6 +14,10 @@ from review_result_semantics import (
     evaluate_review_evidence,
     load_review_manifest,
 )
+from runtime_tier_authorization import (
+    FASTLANE_SELF_REVIEW_BASIS,
+    fastlane_tier_evidence_errors,
+)
 
 
 ACTIVE_CHANGE_REQUESTS = {"CHANGES_REQUESTED"}
@@ -428,8 +432,13 @@ def _self_review_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], 
     satisfied: list[str] = ["review_source: self_review"]
     missing: list[str] = []
     reasons: list[str] = []
+    authorization = evidence.get("self_review_authorization")
+    fastlane_policy = (
+        isinstance(authorization, dict)
+        and authorization.get("basis") == FASTLANE_SELF_REVIEW_BASIS
+    )
     failures = evidence.get("lane_failures")
-    if not isinstance(failures, list) or not failures:
+    if not isinstance(failures, list) or (not failures and not fastlane_policy):
         reasons.append("self_review requires recorded lane_failures")
     else:
         for index, failure in enumerate(failures, start=1):
@@ -439,7 +448,6 @@ def _self_review_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], 
                 reasons.append(f"lane_failures[{index}].pr must match pr")
             if failure.get("head_sha") != evidence.get("head_sha"):
                 reasons.append(f"lane_failures[{index}].head_sha must match head_sha")
-    authorization = evidence.get("self_review_authorization")
     if not isinstance(authorization, dict):
         return satisfied, ["self_review_authorization"], [
             *reasons,
@@ -448,6 +456,23 @@ def _self_review_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], 
     for key in ["actor", "source", "scope"]:
         if not _nonempty(authorization.get(key)):
             missing.append(f"self_review_authorization.{key}")
+    if fastlane_policy:
+        if not _nonempty(authorization.get("conversation_marker")):
+            missing.append("self_review_authorization.conversation_marker")
+        if evidence.get("pr_tier") != "fastlane":
+            reasons.append("fastlane_policy requires pr_tier fastlane")
+        if evidence.get("enforcement_sensitive") is not False:
+            reasons.append(
+                "fastlane_policy self-review requires enforcement_sensitive false"
+            )
+        reasons.extend(
+            fastlane_tier_evidence_errors(
+                evidence.get("pr_tier_evidence"),
+                expected_head_sha=evidence.get("head_sha"),
+            )
+        )
+        if not reasons and not missing:
+            satisfied.append("fastlane_policy current-head tier evidence validated")
     scope = authorization.get("scope")
     if _nonempty(scope) and (
         not _scope_binds_pr(scope, evidence.get("pr"))

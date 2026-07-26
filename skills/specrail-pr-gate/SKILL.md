@@ -85,8 +85,8 @@ Required evidence:
 - `gate_query_completed_at`: when the current gate query finished.
 - `gate_query_head_sha`: the head SHA observed by that gate query.
 - `review_source`: `independent_lane` for a real reviewer/merge-reviewer lane,
-  or `self_review` when a lane failure was reported and self-review was
-  explicitly authorized.
+  or `self_review` after an authorized lane failure or under the closed
+  `fastlane_policy` path.
 - `review_execution`: `local` for the primary exact-head reviewer artifact.
   `hosted` reviews, including GitHub `@codex review`, are supplemental only and
   cannot satisfy the primary review gate.
@@ -95,9 +95,12 @@ Required evidence:
   dispatch.
 
 If `review_source` is `self_review`, evidence must include
-`self_review_authorization` with actor, source, and scope from the current
-conversation after the lane failure was reported. General queue-drain or merge
-authorization does not satisfy this self-review exception.
+`self_review_authorization` with actor, source, and scope. Lane-failure recovery
+requires the current conversation after the failure. `basis: fastlane_policy`
+instead requires a conversation marker plus adapter-derived current-head tier
+evidence (at most 50 lines, no protected paths, explicit
+`enforcement_sensitive: false`); runtime copies the allowed PR-gate fields
+exactly. General queue-drain or merge authorization satisfies neither path.
 
 GitHub exposes `resolvedBy` for review threads, but not the SpecRail lane role.
 When resolved threads exist, pass lane-roster evidence through

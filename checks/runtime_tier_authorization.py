@@ -11,6 +11,8 @@ Every ambiguity fails closed to the heavy/critical side.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 
@@ -18,6 +20,8 @@ from typing import Any
 TIER_POLICY_SOURCE = "tier_policy_gh143"
 # Audit anchor for self_review_authorization.basis; do not rename it.
 FASTLANE_SELF_REVIEW_BASIS = "fastlane_policy"
+FASTLANE_MAX_CHANGED_LINES = 50
+FASTLANE_TIER_EVIDENCE_SOURCE = "github_changed_files"
 PR_TIERS = {"fastlane", "standard", "heavy"}
 STANDARD_AUTO_TIERS = {"fastlane", "standard"}
 AUTHORIZATION_TIERS = {"standard_auto", "heavy_manual"}
@@ -44,6 +48,97 @@ def _valid_pr_tier_evidence(value: Any) -> bool:
     )
 
 
+def _fastlane_protected_path(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/").lower()
+    if normalized.startswith("/") or any(
+        part in {".", ".."} for part in normalized.split("/")
+    ):
+        return True
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    parts = [part for part in normalized.split("/") if part]
+    if normalized.startswith(
+        (
+            ".github/workflows/",
+            "checks/",
+            "migrations/",
+            "schemas/",
+        )
+    ):
+        return True
+    protected_parts = {
+        "api",
+        "auth",
+        "authentication",
+        "authorization",
+        "gate",
+        "gates",
+        "migration",
+        "migrations",
+        "schema",
+        "schemas",
+        "security",
+    }
+    return any(part in protected_parts for part in parts)
+
+
+def fastlane_tier_evidence_errors(
+    value: Any,
+    *,
+    expected_head_sha: Any = None,
+) -> list[str]:
+    """Validate exact-head, adapter-derived evidence for fastlane self-review."""
+
+    if not _valid_pr_tier_evidence(value):
+        return [
+            "fastlane_policy requires pr_tier_evidence with changed_lines and "
+            "touched_paths"
+        ]
+    assert isinstance(value, dict)
+    errors: list[str] = []
+    changed_lines = value["changed_lines"]
+    if changed_lines > FASTLANE_MAX_CHANGED_LINES:
+        errors.append(
+            f"fastlane_policy changed_lines must be at most "
+            f"{FASTLANE_MAX_CHANGED_LINES}; got {changed_lines}"
+        )
+    touched_paths = value["touched_paths"]
+    assert isinstance(touched_paths, list)
+    normalized_paths = sorted(str(path).strip() for path in touched_paths)
+    if touched_paths != normalized_paths or len(set(normalized_paths)) != len(
+        normalized_paths
+    ):
+        errors.append(
+            "fastlane_policy touched_paths must be the complete sorted unique snapshot"
+        )
+    protected = [path for path in normalized_paths if _fastlane_protected_path(path)]
+    if protected:
+        errors.append(
+            "fastlane_policy cannot cover protected path(s): "
+            + ", ".join(protected)
+        )
+    if value.get("source") != FASTLANE_TIER_EVIDENCE_SOURCE:
+        errors.append(
+            "fastlane_policy pr_tier_evidence.source must be "
+            f"{FASTLANE_TIER_EVIDENCE_SOURCE}"
+        )
+    evidence_head = value.get("head_sha")
+    if not _nonempty_string(evidence_head):
+        errors.append("fastlane_policy pr_tier_evidence.head_sha is required")
+    elif _nonempty_string(expected_head_sha) and evidence_head != expected_head_sha:
+        errors.append(
+            "fastlane_policy pr_tier_evidence.head_sha must match current head_sha"
+        )
+    expected_digest = hashlib.sha256(
+        json.dumps(normalized_paths, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if value.get("paths_sha256") != expected_digest:
+        errors.append(
+            "fastlane_policy pr_tier_evidence.paths_sha256 must bind touched_paths"
+        )
+    return errors
+
+
 def _validate_fastlane_self_review(
     raw_item: dict[str, Any],
     authorization: dict[str, Any],
@@ -61,16 +156,18 @@ def _validate_fastlane_self_review(
             f"{label}: self_review_authorization.basis {FASTLANE_SELF_REVIEW_BASIS} "
             "requires pr_tier fastlane"
         )
-    if raw_item.get("enforcement_sensitive") is True:
-        errors.append(
-            f"{label}: enforcement-sensitive item cannot use "
-            f"{FASTLANE_SELF_REVIEW_BASIS} self-review"
-        )
-    if not _valid_pr_tier_evidence(raw_item.get("pr_tier_evidence")):
+    if raw_item.get("enforcement_sensitive") is not False:
         errors.append(
             f"{label}: {FASTLANE_SELF_REVIEW_BASIS} self-review requires "
-            "pr_tier_evidence with changed_lines and touched_paths"
+            "enforcement_sensitive false"
         )
+    errors.extend(
+        f"{label}: {error}"
+        for error in fastlane_tier_evidence_errors(
+            raw_item.get("pr_tier_evidence"),
+            expected_head_sha=raw_item.get("head_sha"),
+        )
+    )
     for key in ["scope", "conversation_marker"]:
         if not _nonempty_string(authorization.get(key)):
             errors.append(f"{label}: self_review_authorization.{key} is required")

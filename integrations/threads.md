@@ -70,10 +70,12 @@ subagents are available. A PR must have at least one independent read-only
 `reviewer` or `merge_reviewer` native lane before merge readiness can be
 reported. The coordinator lane is not a native reviewer, even when it performs
 the final synthesis. Exception: a `fastlane`-tier, non-enforcement-sensitive
-PR may use coordinator self-review under `basis: fastlane_policy` per
-`skills/specrail-implement-queue/SKILL.md`; this is also the resolution of the
-"do not use threads for a small single-file change" rule above — small
-fastlane work neither requires nor justifies native lanes.
+PR may use coordinator self-review only when current-head GitHub tier evidence
+passes `basis: fastlane_policy` per
+`skills/specrail-implement-queue/SKILL.md`; this resolves the "do not use
+threads for a small single-file change" rule without trusting checkpoint
+self-declaration. The exact-head local artifact/manifest and all other gates
+remain mandatory.
 
 ## Handoff Contract
 

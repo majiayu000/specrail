@@ -154,10 +154,10 @@ verification gates themselves stay identical for every tier.
 
 Rules:
 
-- Record `pr_tier` with its evidence (changed-line count, touched paths) on
-  the checkpoint item. Where the repository ships a CI tier check, that
-  check is the enforcing authority — never self-declare `fastlane`
-  against it.
+- Record `pr_tier` with current-head adapter evidence: changed-line count,
+  complete touched paths, `source: github_changed_files`, head SHA, and path
+  digest. Runtime copies the allowed PR-gate tier fields exactly; checkpoint
+  self-declaration is never evidence.
 - When in doubt between two tiers, pick the heavier one.
 - Tiering never weakens CI, review-thread, or pr_gate evidence requirements.
   The reviewer-lane requirement has exactly one tier-scoped substitution:
@@ -304,15 +304,13 @@ PR merge work needs a real read-only `reviewer`/`merge_reviewer` thread with
 `agent_id_or_thread_id`, wait/close evidence, and output; the coordinator is not
 that reviewer.
 
-Fastlane exception: a `fastlane`-tier, non-enforcement-sensitive PR with valid
-`pr_tier_evidence` does not require a native reviewer thread. The coordinator
-may perform the review itself, recording `review_source: self_review`, a local
-review artifact, and `self_review_authorization` with
-`basis: fastlane_policy` (plus scope and conversation marker); no
-`lane_failures[]` precondition applies to this basis. For a tranche whose PR
-work is entirely fastlane, record `spawn_requirement: not_required` with
-`no_spawn_reason: fastlane_policy`. Any doubt about the tier means the PR is
-not fastlane; `standard` and `heavy` keep the native reviewer requirement.
+Fastlane exception: only exact-head GitHub evidence proving at most 50 changed
+lines, no protected paths, and `enforcement_sensitive: false` may use
+`basis: fastlane_policy`. The coordinator records `review_source: self_review`,
+a schema-valid exact-head local artifact/manifest, scope, and conversation
+marker; `lane_failures[]` is not required, but every other PR-gate class is.
+Runtime must copy the allowed PR-gate tier/sensitivity evidence exactly.
+Otherwise the PR is not fastlane and keeps the native reviewer requirement.
 
 If threads is unavailable, record `fallback_mode: single_agent` and its reason,
 use the normal SpecRail flow, and report that no native threads launched.

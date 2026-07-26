@@ -494,10 +494,9 @@ def evaluate_pr_gate(
     reasons.extend(review_reasons)
     items.extend(review_items)
 
-    has_sensitive_evidence = any(
+    has_sensitive_evidence = evidence.get("enforcement_sensitive") is True or any(
         key in evidence
         for key in [
-            "enforcement_sensitive",
             "sensitive_classification",
             "approved_spec",
             "sensitive_route",
@@ -623,6 +622,8 @@ def evaluate_pr_gate(
         "issue_reference": evidence.get("issue_reference"),
         "head_sha": evidence.get("head_sha"),
         "review_source": evidence.get("review_source"),
+        "pr_tier": evidence.get("pr_tier"),
+        "pr_tier_evidence": evidence.get("pr_tier_evidence"),
         "gate_query_completed_at": evidence.get("gate_query_completed_at"),
         "gate_query_head_sha": evidence.get("gate_query_head_sha"),
         "content_binding_version": evidence.get("content_binding_version"),

@@ -216,9 +216,10 @@ For GitHub issue or PR queues, reviewer lanes, merge gates, and closure audit
 make native thread dispatch required whenever native subagent capability is
 available. Record `thread_dispatch_gate` before implementation, review, or
 merge work. A coordinator self-review is not a native thread and does not
-satisfy merge review, except for `fastlane`-tier PRs under the
-`basis: fastlane_policy` self-review path defined in
-`skills/specrail-implement-queue/SKILL.md`.
+satisfy merge review, except for PRs whose current-head GitHub evidence passes
+the closed `basis: fastlane_policy` self-review path in
+`skills/specrail-implement-queue/SKILL.md`; checkpoint self-declaration is not
+tier evidence.
 
 Primary reviewer evidence must be produced by a local reviewer execution and
 record `review_execution: local` on the exact-head terminal artifact. A local
