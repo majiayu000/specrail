@@ -124,11 +124,12 @@ fail closed，而不是只检查已被 lock 点名的目录内部闭集。
   `fstat`，只有 `S_ISREG` 才能开始哈希；FIFO、socket、device 或其它 special file 直接
   `unsafe`/`unstable`，不得等待 writer 或读取内容；首次 `fstat` 还必须要求
   `st_nlink == 1`，否则在读取前返回 `unsafe_hardlink`。哈希只对该 fd 计算，并用同一 fd 的
-  前后 `fstat` 比较，snapshot identity 包含 inode/device/type/size/mtime_ns 与
+  前后 `fstat` 比较，snapshot identity 包含 inode/device/type/size/mtime_ns/ctime_ns 与
   `stat.S_IMODE(st_mode)`/`st_nlink`，final `st_nlink` 也必须保持 1。仅靠读取前后的
   `lstat` 不够：文件可能被换成 symlink，或换成 FIFO
   令阻塞式 open 永远到不了 fstat。fd 与 lstat 的 inode/device 不一致，或前后 fstat 的
-  inode/device/size/mtime 变化，返回 `unstable` 且不输出内容；
+  inode/device/size/mtime/ctime 变化，返回 `unstable` 且不输出内容；同尺寸原位改写后
+  恢复 mtime 仍会改变 POSIX ctime，必须稳定拒绝；
 - shared manifest loader 在对 source 做相同的 no-follow、single-link、pre/post snapshot
   校验时记录 `expected_size`，并固定
   `MAX_LOCKED_FILE_BYTES = 8 * 1024 * 1024`；该 cap 属于 repo contract，CLI flag、environment
@@ -181,6 +182,15 @@ fail closed，而不是只检查已被 lock 点名的目录内部闭集。
 - 根存在且出现其他状态（含 `undeclared`、`unsafe_hardlink`、`traversal_truncated` 或
   durable installer transaction record）：`invalid`；transaction record 另给
   `recovery_required=true`，不得由 doctor 自动修改。
+
+唯一窄例外是 installer 在同一 apply 进程内、exchange 后运行的 post-check：installer
+构造不可序列化 `ActiveInstallTransaction` capability，持有 target-root fd 与安全打开的
+record fd，并绑定其 `(st_dev, st_ino, ctime_ns)`、transaction ID、canonical destination、
+new manifest digest。library 的 internal-only inspect 入口只在 capability 与当前 held
+descriptor/record bytes 全匹配时，把这一条 record 视为 authenticated structural entry；
+它仍验证 new destination 的完整 namespace/hash/mode。额外 record、fd/path/inode/ctime/
+transaction/manifest 任一不符仍 `recovery_required`。public library、doctor CLI、JSON、
+queue/agent 无参数可构造或反序列化该 capability，故外部检查相同现场继续 fail closed。
 
 ### 3. 独立 doctor CLI
 
@@ -289,7 +299,10 @@ manifest 与 integrity library：
    descriptor-relative
    commit；复制对象只来自 manifest，不从未声明目录枚举推断；
 8. apply/exchange 后沿所持 target-root fd 重新运行完整 inspect，再完成 anchor-to-path identity rewalk；
-   只有整体 `match`、所有 v2 mode 精确、pathname 仍绑定同一 descriptor chain 才成功。失败时
+   该 internal post-check 必须传入上节定义的 `ActiveInstallTransaction` capability，仅将
+   exact held transaction record 作为 authenticated structural entry；public doctor/queue
+   在相同现场仍返回 `recovery_required`。只有 new destination 整体 `match`、所有 v2 mode
+   精确、pathname 仍绑定同一 descriptor chain 才成功。失败时
    在 transaction record 保持 durable 的前提下用第二次 atomic exchange 回滚；rollback/cleanup
    失败必须保留 record 并显式报错，不能把部分安装表述为成功。成功后先清理 exchange 留下的
    old tree 并 fsync target root，最后 unlink record 再 fsync；中断时按 step 6 恢复。
@@ -341,6 +354,18 @@ directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 
   checkpoint、PR body、agent 自述或磁盘 mtime 都不能构造/覆盖该 evidence。host 不提供可信
   evidence、字段缺失、role/origin 重复或越界、session/manifest/path/hash 漂移时返回
   `session_restart_required` 并在任何 lane/checkpoint/远端动作前停止。
+- `checks/installed_skill_integrity.py::validate_loaded_skill_evidence()` 与
+  `tools/check_installed_codex_skills.py --loaded-skill-evidence-gate` 提供 deterministic
+  gate：同时消费 runtime provider
+  交付的 closed evidence envelope、provider-attested current session/route、shared lock
+  manifest 与 doctor 的完整 closed JSON（含 target identity/status），逐项执行 required
+  role set、origin/path/hash/session/freshness/manifest/doctor cross-binding。任一输入
+  missing/malformed/stale/route-inconsistent 都返回 closed
+  `decision: blocked, reason_id: session_restart_required`；只有全部精确匹配才返回
+  `decision: allowed, allowed_actions: [open_queue_lane]`。CLI 不接受 caller 覆盖
+  session/route/role/path/hash，也不从 checkpoint/env/PR body 补字段；provider transport
+  与 trust root 属外部 prerequisite。implx/queue 只能消费 gate verdict，不能重新解释 raw
+  evidence；raw envelope 不进入父上下文。
 - 成功 `--apply` 只证明 disk post-check；它不得更新 current session 的 loaded evidence。
   因而已加载旧 bytes 的同一 session 必然继续阻断，必须由用户/host 启动新 session，重新加载
   entrypoints 并产生 fresh matching evidence。host/runtime evidence provider 是自动 queue
@@ -390,11 +415,11 @@ multi-file skill；两者都依赖 GH-172，并必须在各自实现中把该 sk
 | B-010 B-017 | read-only/idempotent inspection, bounded output and explicit artifact export | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "read_only or target_snapshot_no_write or idempotent or output or undeclared_artifact"` |
 | B-011 B-021 B-022 | descriptor-anchored installer transaction + manifest-only same-fd copy/mode + post-check | `python3 -m pytest -q tests/test_install_codex_skills.py -k "apply or source_race or target_parent_swap or target_root_swap or symlink or special or mode or umask"` |
 | B-013 | ordinary workflow check remains repo-only | `python3 -m pytest -q tests/test_check_workflow.py -k installed_skill` |
-| B-016 | before/after stat snapshot consistency | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k unstable` |
+| B-016 | before/after stat snapshot consistency including file ctime | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "unstable or restored_mtime"` |
 | B-018 | incomplete/error result cannot pass CLI | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "unreadable or interrupted or invalid"` |
-| B-023 | AGENTS/router/implx/queue current-session loaded identity preflight + external host evidence prerequisite | `python3 -m pytest -q tests/test_check_workflow.py -k "loaded_skill or session_restart"`；manual negative: disk match + stale loaded sha → `session_restart_required` before lane/checkpoint |
+| B-023 | deterministic loaded-evidence gate + AGENTS/router/implx/queue current-session preflight | `python3 -m pytest -q tests/test_installed_skill_integrity.py tests/test_check_workflow.py -k "loaded_skill or session_restart or route or origin"`；disk match + stale loaded sha → blocked before lane/checkpoint |
 | B-024 | doctor CLI stable no-follow artifact-parent descriptor transaction | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "artifact_parent or undeclared_artifact"` |
-| B-025 | installer durable transaction record + atomic exchange/recovery | `python3 -m pytest -q tests/test_install_codex_skills.py -k "exchange or recovery or kill or power_loss"` |
+| B-025 | installer durable transaction record + atomic exchange/recovery + internal post-check capability | `python3 -m pytest -q tests/test_install_codex_skills.py -k "exchange or recovery or post_check_capability or external_recovery_required or kill or power_loss"` |
 | B-026 | raw-byte namespace identity/order + percent/base64url JSON display | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "non_utf8 or raw_bytes"` |
 | B-027 | initial/final same-fd `st_nlink == 1` enforcement | `python3 -m pytest -q tests/test_installed_skill_integrity.py tests/test_install_codex_skills.py -k hardlink` |
 | B-028 | structural-only traversal + fixed global visit cap/truncation | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "undeclared_directory or traversal_cap or truncated"` |

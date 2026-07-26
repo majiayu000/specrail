@@ -96,7 +96,9 @@ GH-160 与 GH-174 的安全拆分。
 19. B-019 当读取已安装文件时，最终路径组件必须以 no-follow、nonblocking 方式打开，并在
     open 后立即对同一描述符执行首次 stat；只有确认为 regular file 后才能读取/哈希，随后
     再比较同一描述符的 stat。symlink、FIFO、socket/device 等特殊文件或任一 snapshot
-    不一致必须 fail closed，不得先跟随/阻塞/读取后再事后判定不稳定。标准 human/JSON
+    不一致必须 fail closed，不得先跟随/阻塞/读取后再事后判定不稳定。declared-file
+    同 fd initial/final identity 必须包含 `ctime_ns`；同尺寸原位改写即使恢复原 mtime
+    也必须因 ctime 变化判 `unstable`。标准 human/JSON
     诊断中的未声明项只允许输出 `undeclared_total_exact`、`undeclared_total`、
     `undeclared_observed`、`undeclared_omitted`、`traversal_truncated` 和按 raw path bytes
     确定的有界 `undeclared_sample`：最多 50 项且 escaped ASCII 合计最多 8192 bytes。
@@ -127,6 +129,9 @@ GH-160 与 GH-174 的安全拆分。
     entrypoint 漂移，或当前 session 在成功 `--apply` 前已经加载旧 bytes 时，必须在任何
     lane/checkpoint/远端动作前以 `session_restart_required` 阻断；只有新 session 重新加载并
     产生 fresh matching evidence 后才能继续，磁盘 `match` 不能替代活动 session identity。
+    这些 predicate 必须由独立确定性 loaded-evidence gate 消费 runtime-owned envelope、
+    current route/session、lock manifest 与完整 doctor result 后统一判定；queue 只接受其
+    closed `allowed` verdict，Skill prose 不得自行解释 evidence 或遗漏比较。
 24. B-024 当显式写 `--undeclared-artifact` 时，CLI 必须从 stable filesystem anchor
     逐段 no-follow 打开已存在的 artifact parent descriptor，证明它不在安装 target 内，
     再以 dirfd-relative `O_CREAT|O_EXCL|O_NOFOLLOW` 创建最终 regular file；pathname
@@ -140,7 +145,11 @@ GH-160 与 GH-174 的安全拆分。
     后 fsync parent；若中断遗留 record/staging，doctor/queue 必须报告
     `recovery_required`，且只有后续显式 `--apply` 可依据 old/new manifest identity
     确定性 complete 或 rollback。缺少 exchange primitive、记录矛盾或无法恢复时 fail closed，
-    不得猜测删除。
+    不得猜测删除。installer 自己的 post-check 仅可使用进程内不可序列化 capability，
+    精确绑定当前 held target-root/transaction-record fd identity、transaction ID、
+    destination 与 new manifest，暂时把这一条仍 held 的 record 视为本次 inspect 的
+    authenticated structural entry；capability 不匹配、额外 record 或其它调用方均继续
+    返回 `recovery_required`。外部 doctor、dry-run 与 queue 永远不能构造该豁免。
 26. B-026 当 POSIX 安装目录含非 UTF-8 filename bytes 时，inspection 不得 decode 崩溃或
     跳过该项；内部 identity 与排序必须使用 raw relative path bytes。human/JSON display 使用
     固定 ASCII percent-escape（非 unreserved byte 均为大写 `%HH`），sample byte budget 按
@@ -197,6 +206,9 @@ GH-160 与 GH-174 的安全拆分。
       `session_restart_required`，新 session fresh matching evidence 才能继续；源侧 router
       以 `source_checkout` 绑定 repo manifest，installed entrypoints 以 `installed_target`
       绑定 doctor target，不能互相冒充或被同一 installed-path 规则误拒。
+- [ ] 独立 loaded-evidence gate 对 missing/malformed/stale envelope、错 route/session/
+      role/origin/path/hash/manifest/doctor target 全部 fail closed；queue 只消费 gate verdict，
+      不在 Skill 中重复实现 predicate。
 - [ ] 既有单文件 lock 保持兼容，多文件 skill 的 validator/installer/doctor 语义一致；
       installer 不使用会跟随 source race 的 whole-directory copy。
 - [ ] installer 的 target root/parent 在 preflight 与 staging/commit 间被替换为 symlink 或
@@ -204,6 +216,8 @@ GH-160 与 GH-174 的安全拆分。
       no-follow descriptor/dirfd-relative 操作，外部 sentinel 保持 byte-for-byte 不变。
 - [ ] 已存在 destination 使用 atomic exchange + durable recovery record；kill/power-loss
       注入覆盖 exchange 前后，canonical destination 始终存在，后续显式 apply 能确定恢复。
+      installer internal post-check 持 exact transaction capability 时可验证 new destination
+      并继续清理；相同现场由外部 doctor/queue 检查仍为 `recovery_required`。
 - [ ] v2 lock 对入口和每个分发文件显式声明 `0644 | 0755`；installer 不受 umask 影响地保留
       exact mode，doctor 对“hash 相同但 executable bit 丢失”返回 drift，queue/preflight 阻断。
 - [ ] 未声明项标准输出固定包含 exact/truncated 状态和不超过 50 项/8192 bytes 的稳定样本；
@@ -214,7 +228,8 @@ GH-160 与 GH-174 的安全拆分。
       不能产生 `match`。
 - [ ] structural directory 在枚举后被 rename/rebind/原位修改时整体 `unstable`；declared
       file 检查不能切换到 replacement tree。size mismatch/超限与持续 append fixture 都在固定
-      byte budget 内结束，未安全哈希时 actual hash 明确为 `null`。
+      byte budget 内结束；同尺寸原位改写并恢复 mtime 仍因 `ctime_ns` 变化失败，未安全哈希时
+      actual hash 明确为 `null`。
 - [ ] forged recovery record 的 `destination="../outside"`、含 separator 的 staging、错误
       skill basename 或非规范 transaction basename 全部在任何 recovery open/cleanup 前被拒绝，
       outside sentinel 保持 byte-for-byte 不变。
