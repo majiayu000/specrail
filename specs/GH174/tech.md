@@ -11,7 +11,7 @@ GH-174
 
 ## Product Spec
 
-见 `specs/GH174/product.md`。本设计实现 B-001..B-018，并以 GH-172 合并为实现前置。
+见 `specs/GH174/product.md`。本设计实现 B-001..B-021，并以 GH-172 合并为实现前置。
 
 ## Codebase Context
 
@@ -41,6 +41,7 @@ GH-174
     {"phase": "startup_planning", "references": ["references/planning-and-runtime.md"]},
     {"phase": "runtime_handoff", "references": ["references/planning-and-runtime.md", "references/evidence-and-recovery.md"]},
     {"phase": "review_merge", "references": ["references/review-and-merge.md"]},
+    {"phase": "post_merge_closure", "references": ["references/evidence-and-recovery.md"]},
     {"phase": "retry_recovery", "references": ["references/evidence-and-recovery.md"]}
   ]
 }
@@ -51,7 +52,7 @@ B-008 要求的"重复 phase 声明必须被拒绝并报告"就无法实现（�
 `startup_planning` 会隐形并悄悄改变路由）。数组形态让重复 `phase` 值可被确定性检出；
 实现禁止改回对象形态，也不得依赖 pair-preserving parser 之外的隐式行为。
 
-允许同一引用服务多个 phase，但**每个 phase 内**路径必须唯一、稳定排序；跨 phase 重复
+允许同一引用服务多个 phase，但**每个 phase 内**路径必须唯一、稳定排序；跨五个 phase 重复
 同一路径是上述 canonical manifest 的合法复用，validator 不得用全局 path uniqueness
 拒绝。主文件对每个 phase 明确“何时加载”和“在首个什么动作前加载”。implx 只加载 queue
 主入口，queue 再按当前 phase 路由；禁止 implx 预读全部引用。
@@ -85,8 +86,9 @@ GH-160 自己的 manifest 里同时更新 phase manifest、lock 与闭集检查�
 - `review-and-merge.md`：bounded review artifact、reviewer failure、CI/PR gate、
   graded reconfirmation 与 safe merge 的详细步骤。
 - `evidence-and-recovery.md`：post-startup artifact 命名/摘要、验证层次、handoff、
-  closure audit、rejection persistence 与 retry evidence；它不得成为 startup firewall
-  唯一规范来源。
+  closure audit、rejection persistence 与 retry evidence；`post_merge_closure` 必须在远端
+  merge 确认后、首项 closure-audit 动作前加载它，正常成功路径不依赖 handoff/retry 才可达；
+  它不得成为 startup firewall 唯一规范来源。
 
 引用不含 frontmatter，不声明其他引用，不出现 `../` 或绝对路径。每个引用第一条非空行
 必须逐字声明 `Reference only; the main SKILL.md contract wins`，并列出自己服务的 phase ID。
@@ -164,10 +166,17 @@ dependency binding。client 读取所有 attested realpath 的实际 bytes 重�
 后才推导
 `execution_origin = repo_copy | installed_copy`：
 
-- entrypoint 精确等于 canonical repo layout
-  `<source_repository_root>/skills/specrail-implement-queue/SKILL.md` 时才是 `repo_copy`；
-- entrypoint 位于 resolver 证明的 runtime-owned installed root、且 installed bundle/source-lock
-  binding 与同一 source repository manifest 相等时才是 `installed_copy`；
+- `repo_copy` 的 canonical path 按 attested `skill_id` 从闭集映射：
+  `implx → <source_repository_root>/skills/implx/SKILL.md`，
+  `specrail-implement-queue →
+  <source_repository_root>/skills/specrail-implement-queue/SKILL.md`。direct queue 的
+  loaded entrypoint 必须匹配后者；`implx` outer 的 loaded implx 与 delegated queue 必须分别
+  匹配两条路径，且两者同属一个 canonical source root、一个 canonical bundle root 与同一
+  `source_lock_manifest_sha256`/dependency chain。只匹配 queue、未知 `skill_id`、混用
+  root/lock 或缺失任一层都不得判为 `repo_copy`；
+- `installed_copy` 时，每个 attested entrypoint 都必须位于 resolver 证明的同一
+  runtime-owned installed root，且 installed bundle/source-lock binding 与同一 source
+  repository manifest 相等；
 - 同时匹配、均不匹配、symlink/path escape、bytes/root/manifest 漂移或字段缺失均 fail closed。
 
 resolver/peer/verifier 不可用时 queue 明确 unavailable，不得回退到 caller-selected repo/path。
@@ -203,7 +212,23 @@ raw `gh ... --log`、full-suite output、session JSONL 或 broad generated-tree 
 `evidence-and-recovery.md` 不影响 firewall enforcement。phase exact-isolation 仍保持
 startup=planning，不能为取得 firewall 而预读 recovery reference。
 
-### 4. 机械等价与尺寸门禁
+### 4. phase 加载时的 bytes 闭锁与 closure 路由
+
+startup preflight 在 invocation 内固定经验证的 canonical source/installed root、
+`source_lock_manifest_sha256`，以及完整引用闭集的 `{relative_path, sha256}` expected set；
+后续 phase 不得以“startup 已通过”或当前磁盘上的新 lock 重新授权不同内容。每个 phase 在
+首个动作前，对该 phase 的 mapped references 逐个重新执行 realpath containment、普通文件/
+non-symlink、pinned source-lock 和 bytes digest 校验；loader 读取一次 bytes、计算 digest，并把
+**同一份已校验 bytes buffer**交给 parser/agent，禁止校验后重新打开路径，避免 check/use
+窗口。任一引用在 startup 后被替换、修改、删除，或 lock/root 漂移，当前 phase 都在内容生效
+前 fail closed；要接受新版本必须开始新的 invocation 并取得新的 fresh binding。
+
+远端确认 merge 成功后，queue 必须进入 `post_merge_closure`，先按上述规则加载
+`evidence-and-recovery.md`，再执行 closure audit、issue closure decision、branch/worktree
+收口或选择下一 tranche。该 phase 是正常成功路径的一部分，不以
+`runtime_handoff`/`retry_recovery` 是否发生为条件；merge 未确认时不得提前进入。
+
+### 5. 机械等价与尺寸门禁
 
 拆分前先建立 section inventory 和关键 marker fixture。移动每段时保留语义 ID，
 测试对比拆分后主文件+引用的合同 inventory，禁止丢失或重复。新增尺寸校验直接按 UTF-8
@@ -225,17 +250,23 @@ manifest API 实现并最后刷新 queue/implx hash。
 | B-016 | post-merge observation boundary | 人工复核报告不作为结构 PR gate |
 | B-017 | loader-owned current-entrypoint resolver + bootstrap client + implx/direct queue preflight | `python3 -m pytest -q tests/test_skill_reference_graph.py tests/test_install_codex_skills.py -k "loaded_entrypoint or attestation or repo_copy or installed_copy or stale or spoof"` |
 | B-018 | main output-firewall contract inventory + startup planning behavior | `python3 -m pytest -q tests/test_skill_reference_graph.py tests/test_check_workflow.py -k "output_firewall or startup_planning or large_output"` |
+| B-019 | invocation-pinned reference descriptor + load-time verified bytes buffer | `python3 -m pytest -q tests/test_skill_reference_graph.py -k "phase_load or post_startup_drift or verified_bytes"` |
+| B-020 | `post_merge_closure` phase route + closure-audit forward-use | `python3 -m pytest -q tests/test_skill_reference_graph.py -k "post_merge_closure or closure_audit or isolation"` |
+| B-021 | per-skill canonical repo path + implx/queue common chain validation | `python3 -m pytest -q tests/test_skill_reference_graph.py tests/test_install_codex_skills.py -k "canonical_skill_path or delegated_entrypoint or repo_copy"` |
 
 ## 数据流
 
 ```text
 runtime skill loader → fresh authenticated loaded-entrypoint attestation
           ↓
-origin/path/bytes/source binding → graph + conditional installed doctor
+per-skill origin/path/bytes/source binding → graph + conditional installed doctor
           ↓
-main SKILL output firewall → phase manifest → current phase → selected one-hop references
+main SKILL output firewall → phase manifest → current phase
+          ↓                                  ↓
+pinned root/lock/digests ───────→ load-time verification → same verified bytes
           └──────→ reference graph validator ← normalized GH-172 lock manifest
 installed files  → GH-172 doctor ────────────┘
+remote merge confirmed → post_merge_closure → closure-audit procedure
 ```
 
 所有 pack checks 只读仓库；安装写入仍由显式 `--apply` 控制。
@@ -254,21 +285,30 @@ installed files  → GH-172 doctor ────────────┘
 - Compatibility: 实现等待 GH-172；旧 installer/lock 不能安全分发引用。
 - Availability: host loaded-entrypoint resolver 是 queue startup prerequisite；不可用时在任何
   remote read 前 fail closed，不得回退到 caller-selected metadata。
+- Integrity: startup 后 reference/lock/root 漂移必须在 phase load 时失败；loader 只消费刚刚
+  校验的同一 bytes buffer，不允许 verify 后 reopen。
 - Performance: phase 路由减少默认注入，但当前阶段首次读取会增加一次小文件读取。
 - Maintenance: critical marker inventory、phase enum 与 main output firewall 需测试，避免后续
-  规则只写进引用；startup planning reference 只承载操作细节。
+  规则只写进引用；startup planning reference 只承载操作细节；新增正常
+  `post_merge_closure` 路由不得被 handoff/retry 条件替代。
 
 ## 测试计划
 
 - [ ] Unit: 尺寸、manifest、phase 内重复/跨 phase 合法复用、required-header 窄豁免、
       normative-block weakening、闭集、循环、路径、冲突、loader attestation
-      spoof/stale/path/digest/root 漂移与稳定错误。
+      spoof/stale/path/digest/root 漂移、per-skill canonical repo path、phase load-time
+      post-startup drift 与稳定错误。
 - [ ] Integration: workflow + GH-172 lock/installer/doctor 多文件 fixture。
 - [ ] Regression: 全量 pytest、all-specs、depth audit、diff/hash/line/byte checks。
 - [ ] Forward-use: 临时安装目录加载 startup_planning、runtime_handoff、review_merge、
-  retry_recovery 四条 phase 路径（`runtime_handoff` 同时需要 planning 与 evidence 两个
-  引用），并逐 phase 断言 exact isolation：startup 仅 planning、runtime_handoff 恰为
-  planning+evidence、review 仅 review、recovery 仅 evidence。
+  post_merge_closure、retry_recovery 五条 phase 路径（`runtime_handoff` 同时需要 planning
+  与 evidence 两个引用），并逐 phase 断言 exact isolation：startup 仅 planning、
+  runtime_handoff 恰为 planning+evidence、review 仅 review、post-merge closure 仅
+  evidence、recovery 仅 evidence；正常 merge success fixture 不经过 handoff/retry 仍加载
+  closure-audit reference。
+- [ ] Drift regression: startup 后、phase 首次加载前分别替换 repo/installed reference bytes、
+      path、symlink 与 source lock，均在 phase action 前拒绝；未漂移时 parser 只接收同一次
+      read 得到的 verified bytes。
 - [ ] Startup firewall: main-only bootstrap 与 startup-planning 正例在任何 remote query 前
       激活 artifact-first；大 GitHub listing/diagnostic 的 raw output 不进入 parent，
       recovery reference 未加载也保持 enforceable。
