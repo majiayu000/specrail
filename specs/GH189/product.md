@@ -14,7 +14,8 @@ token 消耗在同一队列上。
 ## 目标
 
 - 为同一 Git common dir 下的所有 worktree 提供唯一 active-run lease。
-- 在 lane、checkpoint 与远端写入前用 fencing token 阻止旧/并发 owner。
+- 在 lane、checkpoint 与发起远端写入前用 fencing token 阻止旧/并发 owner，并在
+  同步远端调用期间用持久 operation guard 阻断 takeover。
 - 支持同一 run 跨 compaction/session 的显式 resume，以及可审计 stale takeover。
 - 保持检查有界、无 polling、无进程终止和无隐式远端动作。
 
@@ -22,7 +23,11 @@ token 消耗在同一队列上。
 
 - 不实现跨机器/网络文件系统的强一致分布式锁。
 - 不 kill、暂停或关闭其他 Codex 进程，不用 GitHub label 充当 mutex。
+- 不声称本地 fencing token 能撤回或取消已被 GitHub 接收的请求；远端结果不确定时
+  fail closed，不能以本地 lease turnover 伪装成 provider-side fencing。
 - 不替代 GitHub truth、runtime checkpoint、Goal 或 SpecRail gate。
+- 不防御同一 OS principal 协调回滚整个 Git common dir 的全部 lease/counter/audit
+  资产；单一 counter 路径替换、symlink、非普通文件或与 canonical witness 的回退必须检测。
 - 不处理 GH-160。
 
 ## Behavior Invariants
@@ -39,10 +44,12 @@ token 消耗在同一队列上。
    fencing token、当前 lease digest 与不超过实现上限的 TTL；任一不匹配或 TTL
    越界均不得更新。
 5. B-005 当 lease 到期时，它必须进入 `stale` 而不是自动变成 `free`；不同 run
-   takeover 需要本轮显式人工授权与原因。
+   takeover 需要本轮显式人工授权与原因，且 deterministic core 不得把同一请求者
+   自报的 actor/marker/reason 当作授权证据。
 6. B-006 当授权 takeover 成功时，新 fencing token 必须大于旧 token，并在 canonical
    common-dir audit 资产中持久保留旧/new run ID、旧/new token、旧/new lease digest、
-   actor/authorization marker 与原因；新 lease 必须绑定显式新 owner 且先处于
+   independently verified authorization ID/digest、授权 actor 与 reason digest；新 lease
+   必须绑定显式新 owner 且先处于
    `checkpoint_bound: false`/null digest，审计未 durable commit 时不得报告 takeover
    成功。新 owner 随后只能写入携带新 identity 的 v4 checkpoint 并立即 bind，bind 前
    不得创建 lane、resume 或 remote write。
@@ -75,6 +82,36 @@ token 消耗在同一队列上。
     或 repo/boot/monotonic identity 无法稳定解析时，系统必须报告 `unsupported`
     并阻断所有 lease-protected `implx` 模式（包括 `review` 与 `auto`），不得降级成
     无锁继续；仅纯只读 inspect/pack check 可继续。
+15. B-015 当 owner 准备发起 push/comment/label/PR mutation 等远端写入时，必须先在
+    mutation mutex 内验证当前 lease 并持久写入绑定 repo/run/token/operation ID 的
+    `remote_operation` guard；guard 清除前，即使 lease TTL 已过期也不得 takeover、
+    resume、release 或启动另一远端写入。只有同步调用返回 provider 的确定终态后原
+    owner 才能 compare-and-clear；timeout、transport interruption、进程消失或结果不确定
+    必须保持 `remote_operation_unknown` 并 fail closed，本 issue 不提供强制清除或本地
+    takeover escape hatch。
+16. B-016 当请求 stale takeover 时，CLI 只可接受 opaque `authorization_ref`，deterministic
+    core 必须据此调用由 host 配置、调用者不能替换或注入输入文件的独立 human-gate
+    evidence adapter；adapter 返回 closed authorization artifact 与 maintainer role map。
+    授权必须精确绑定
+    authorization ID、repo ID、旧 lease digest/run/token、新 run/owner、reason digest、
+    decision=`takeover_once`、actor/source 和短时有效期。core 必须独立重载/复核 role、
+    exact binding 与 freshness，并在 canonical common dir 内 durable 标记该 ID 已消费；
+    缺失、adapter 不可用、请求者自报/自带 artifact 或 role map、actor 非 maintainer、
+    错绑、过期、重复消费或 auto/merge 授权替代均 fail closed。
+17. B-017 当 acquire/resume/takeover 分配 fencing token 时，counter parent 与 counter
+    必须从 canonical common-dir descriptor 逐段 no-follow 打开，counter 必须是 closed
+    schema regular file 且 lstat/fstat identity 稳定；symlink、非普通文件、竞态替换或
+    counter 小于 canonical lease/audit witness 的已用 token 均 `unsafe/corrupt`。takeover
+    必须先 durable 增加 counter，再计算新 lease digest/写 prepared audit；之后任一步失败
+    时该 token 永久 skipped、不得回收复用，token gap 是合法 burned evidence 而非成功。
+18. B-018 当 queue-facing CLI 输出 closed envelope 时，base keys 必须始终出现并使用
+    明确 nullable 表示：`operation` 仅在无法解析 subcommand 时为 null；`repo_id` 在参数
+    错误或 identity 尚未/无法解析时为 null；`lease_digest` 在 `free`、未安全读取 lease、
+    参数/schema 错误或 identity unsupported 时为 null。不得伪造 sentinel string；每种
+    null/non-null 组合、unknown field、argument/schema error 都必须有稳定 state/reason/exit。
+19. B-019 当不 acquire canonical lease 的普通长运行使用通用 tranche checkpoint template
+    时，必须继续得到当前实际的非 lease-aware `checkpoint_version: 2`；v1–v3 历史
+    checkpoint 仍可离线校验，但只有成功 acquire 的 implx queue 才选择专用 v4 template。
 
 ## 验收标准
 
@@ -103,26 +140,37 @@ token 消耗在同一队列上。
 - [ ] `unsupported` 在 plain review 与 auto 两种 lease-protected queue 中都阻断；
       无自动 takeover、无 kill、无 polling、无 GitHub mutex。
 - [ ] queue-facing CLI 的每个 operation 都有参数、closed JSON、敏感字段裁剪与稳定
-      state-to-exit-code 回归；通用长运行 checkpoint 模板保持非 lease v3，只有成功
+      state-to-exit-code 回归；`free`/`unsupported`/argument error 的 identity/digest
+      nullability 有闭集用例；通用长运行 checkpoint 模板保持实际的非 lease v2，只有成功
       acquire 的 implx queue 使用专用 v4 模板。
+- [ ] counter 与 parent 的 dirfd/no-follow/type/identity、counter rollback witness 与
+      “先 durable 分配 token、再 prepared audit”有 barrier/crash 回归；后续失败只留下
+      永不复用的 skipped token。
+- [ ] takeover 缺独立 role-mapped authorization、错 stale digest/new owner、过期、复用
+      authorization ID、以 auto/merge authorization 替代时均阻断；exact `takeover_once`
+      只消费一次。
+- [ ] 每个远端写入先 durable begin guard、确定响应后 compare-and-clear；stalled/timeout
+      调用留下 `remote_operation_unknown` 并使 stale takeover 阻断，测试不声称 GitHub
+      provider 会解释本地 fencing token。
 - [ ] full tests 与跨 worktree forward test 全绿，diff 不含 GH-160。
 
 ## 边界情况清单
 
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
-| 空/缺失输入 | covered: B-002 B-008 |
-| 错误与失败路径 | covered: B-003 B-004 B-008 B-011 B-014 |
-| 授权/权限 | covered: B-005 B-006 B-010 |
-| 并发/竞态 | covered: B-001 B-002 B-004 B-010 B-011 B-014 |
-| 重试/幂等 | covered: B-004 B-007 B-010 B-013 |
-| 非法状态转换 | covered: B-003 B-005 B-006 B-007 B-010 |
-| 兼容/迁移 | covered: B-001 B-012 B-014 |
-| 降级/回退 | covered: B-008 B-009 B-014 |
-| 证据与审计完整性 | covered: B-004 B-006 B-007 B-013 |
-| 取消/中断 | covered: B-010 B-011 |
+| 空/缺失输入 | covered: B-002 B-008 B-018 |
+| 错误与失败路径 | covered: B-003 B-004 B-008 B-011 B-014 B-015 B-017 B-018 |
+| 授权/权限 | covered: B-005 B-006 B-010 B-015 B-016 |
+| 并发/竞态 | covered: B-001 B-002 B-004 B-010 B-011 B-014 B-015 B-017 |
+| 重试/幂等 | covered: B-004 B-007 B-010 B-013 B-016 B-017 |
+| 非法状态转换 | covered: B-003 B-005 B-006 B-007 B-010 B-015 B-016 B-017 |
+| 兼容/迁移 | covered: B-001 B-012 B-014 B-019 |
+| 降级/回退 | covered: B-008 B-009 B-014 B-015 B-017 B-018 |
+| 证据与审计完整性 | covered: B-004 B-006 B-007 B-013 B-016 B-017 B-018 |
+| 取消/中断 | covered: B-010 B-011 B-015 B-017 |
 
 ## 发布说明
 
 启用后，同一 Git 仓库默认只允许一个 active implx run。发现 stale lease 时只报告
-takeover 所需证据，必须由用户明确授权；现有单会话流程不改变。
+takeover 所需证据，必须由独立、一次性、exact-bound 的人工授权放行；远端调用结果不确定时
+会保留 operation guard 并阻断 takeover。现有普通长运行模板继续输出非 lease v2。
