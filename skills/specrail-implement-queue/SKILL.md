@@ -46,9 +46,16 @@ draining the rest of the queue.
 
 ## Spec Coverage Gate
 
-Before planning implementation work, classify every open issue and linked PR:
-use only the canonical `spec_status` values defined by
-`checks/specrail_lib.py` as `SPEC_STATUSES`.
+Before planning implementation work, classify issues by spec coverage using
+only the canonical `spec_status` values defined by `checks/specrail_lib.py`
+as `SPEC_STATUSES`. The classification scope follows the queue mode:
+
+- `full_queue_drain`: classify every open issue and linked PR — the drain
+  needs the whole map.
+- `bounded_tranche`: classify only the target issue(s) and their linked PRs.
+  Do not spend startup reads classifying the rest of the repository for a
+  scoped tranche; that cost is O(open issues) and buys nothing the tranche
+  uses.
 
 - `complete`: `product.md`, `tech.md`, and `tasks.md` all exist for the issue,
   and `product.md` does not declare `status: legacy` in its Linked Issue
