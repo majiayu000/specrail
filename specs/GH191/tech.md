@@ -54,7 +54,10 @@ commit_evidence = sha, parent_shas[], work_fingerprint,
                   durable_progress_evidence[]
 ```
 
-开始 round 前，writer 必须先落盘唯一 `attempt_started`；round 结束或中断时为同一
+受保护 runtime 在 evaluation 前从当前 queue/run/fencing 输入构造 closed canonical
+`attempt_started_candidate`；`attempt_started_candidate_digest` 是其规范化 JSON 的
+sha256，并由 runtime adapter provenance 签名。开始 round 前，writer 必须精确落盘该
+candidate 对应的唯一 `attempt_started`；round 结束或中断时为同一
 `attempt_id` 追加且只追加一个 terminal event。terminal 不修改 start，重复 start、
 重复 terminal、terminal-before-start、字段跨 run/head/tranche 串线或没有 terminal 的
 陈旧 attempt 都 fail closed。显式 rescope 追加 `scope_opened`，breaker 只统计当前
@@ -81,17 +84,20 @@ provider 返回由配置的 trust root 可验证的 committed attestation；它�
 两份相互绑定的 canonical signed evidence：
 
 ```text
-current_state_proof = provider_id, trust_root_id, proof_id,
+current_state_proof = provider_id, trust_root_id, proof_id, binding_id,
                       evaluation_id, challenge_id, challenge_digest,
                       repo_id, issue, generation, event_count,
                       tail_event_digest, ledger_digest, transaction_id,
                       reservation_id, reservation_token_digest,
+                      attempt_started_candidate_digest,
                       state = evaluation_reserved,
                       issued_at, expires_at, signature
 
 evaluation_reservation = provider_id, trust_root_id, reservation_id,
-                         evaluation_id, challenge_id, repo_id, issue,
+                         binding_id, proof_id, evaluation_id, challenge_id,
+                         repo_id, issue,
                          generation, ledger_digest, reservation_token_digest,
+                         attempt_started_candidate_digest,
                          state = active, issued_at, expires_at, signature
 ```
 
@@ -101,36 +107,57 @@ ID、记录 reservation，并在 reservation 存活期间拒绝任何 writer pre
 同一 issue 同时只能有一个 evaluation reservation。受保护 adapter 验证
 provider/trust root、proof 签名、challenge 归属与可信 time source 给出的 `as_of`
 位于有效期内，并把同一次读取的规范化 proof bytes 交给 offline evaluator；CLI 不接受
-agent 任意指定 issuer、challenge、reservation 或“latest”布尔。offline evaluator 再
+agent 任意指定 issuer、challenge、reservation 或“latest”布尔。公开 loader 必须校验
+proof 与 reservation 各自 closed schema、签名、有效期、共享 binding/proof/reservation
+IDs、generation/ledger/candidate digest，并把两份 exact canonical bytes 及受保护 adapter
+签名的 candidate provenance 一起传给 offline evaluator；任一输入缺失都不得调用 gate。
+offline evaluator 再
 校验 proof 的 repo/issue/evaluation、generation 与三个 digest/count 精确等于 ledger
-和 committed attestation，并生成下节定义的完整 `evaluation_result`。
+和 committed attestation，重算 candidate digest，并生成下节定义的完整
+`evaluation_result`。
 
 result 生成后，受保护 runtime 必须调用 provider `finalize-evaluation`，以
 `reservation_id + reservation_token + generation + ledger_digest +
+sha256(canonical reservation bytes) + attempt_started_candidate_digest +
 sha256(canonical evaluation_result)` 做 compare-and-finalize。成功时 provider 原子消费
-reservation/proof，并返回 closed `issue_progress_decision_receipt`：
+同一 reservation/proof。finalizer 只从 closed result 计算 action：仅当
+`decision == allowed`、`allowed_actions` 精确包含 `open_issue_lane` 且
+`blocked_actions` 不含它时设 `authorized_action = open_issue_lane`，否则设为 `null`。
+provider 返回 closed `issue_progress_decision_receipt`：
 
 ```text
 provider_id, trust_root_id, receipt_id, evaluation_id, reservation_id,
-repo_id, issue, generation, ledger_digest, result_digest,
-decision, finalized_at, expires_at, signature
+binding_id, repo_id, issue, generation, ledger_digest, reservation_digest,
+result_digest, attempt_started_candidate_digest, decision, authorized_action,
+finalized_at, expires_at, signature
 ```
 
 queue 只接受 schema-valid、签名有效且与**同一 result bytes**匹配的 receipt；裸
-evaluation result 只是 candidate，不能开 lane。queue 将 matching receipt 交给唯一 writer
+evaluation result 只是 candidate，不能开 lane；`authorized_action != open_issue_lane`
+的审计 receipt 也不能进入 `append-start`。queue 将 matching receipt、实际 canonical
+candidate bytes 交给唯一 writer
 的 `append-start`；provider 必须在同一 prepare/CAS transaction 中对 receipt 的
-`generation + ledger_digest + result_digest` 重验 current record，并以
+`generation + ledger_digest + reservation_digest + result_digest +
+attempt_started_candidate_digest + authorized_action` 重验 current record，重新规范化
+candidate 并比对 digest，再以
 `(repo_id, issue, receipt_id)` create-only 消费 receipt。只有 ledger 原子追加
-`attempt_started`、anchor generation commit 与 receipt consumption 三者可恢复地共同完成
-后才 dispatch lane。provider 为 receipt 维护不由调用方编辑的
+`attempt_started`、anchor generation commit、receipt consumption 与
+`(repo_id, issue, attempt_id)` create-only durable dispatch outbox record 四者可恢复地
+共同完成，才产生稳定 `lane_dispatch_id`。append 返回的
+`created_new | recovered_existing | already_committed` 只是提交状态，不直接授权调用方
+dispatch；受保护 dispatcher 幂等消费 outbox，下游 lane registry 以
+`lane_dispatch_id` create-only 接受。响应丢失或 recovery 只能继续同一 outbox，不得
+重建 attempt 或二次 enqueue。provider 为 receipt 维护不由调用方编辑的
 `pending | consumed | cancelled | expired` 状态：pending 期间普通 writer 仍被阻断；
 未过期 receipt 可以按同一 receipt/transaction ID 幂等 retry 或 `recover`；若没有 prepared
 transaction 且 receipt 已过期或调用方明确放弃，受保护 runtime 只能调用
 `cancel-receipt` 原子写入 cancelled/expired tombstone、解除普通 writer 阻断，并让当前
 action 保持 blocked。已经 consumed 的 receipt 重试只可返回同一已提交
-`attempt_started`，不得创建第二个 attempt。proof 签发后或 finalize 后 generation 前移、
+`attempt_started` 与 outbox，不得创建第二个 attempt/dispatch。proof 签发后或 finalize
+后 generation 前移、
 writer 竞态、重复 challenge、过期/取消/重放 reservation、receipt 重放、旧 attestation、
-缺少 fresh proof、finalize/append-start CAS 失败或 receipt/result digest 不一致统一返回
+缺少成对 proof/reservation/candidate、candidate 替换、action predicate 不满足、
+finalize/append-start CAS 失败或任一 cross-binding 不一致统一返回
 `anchor_freshness_invalid`。reservation 到期恢复只能标记取消并阻断本次 action，不得把
 candidate result 转成成功。因此 check/use 窗口被 provider reservation、finalize CAS 与
 append-start receipt consumption 覆盖，而不只是被 nonce 防重放。相同完整绑定输入进入
@@ -143,7 +170,8 @@ offline evaluator 时仍保持纯函数；freshness 与权威 decision receipt �
 receipt；三者 `additionalProperties:false`，签名 bytes 通过 ID/digest 精确 cross-bind，
 并与 anchor/evidence/ledger/scope-authorization/tranche-history/dependency-overlay schemas
 一起加入 `SPEC_SCHEMA_FILES` 及 exact ownership test。proof/reservation/receipt 不得继续
-作为 anchor schema 内未封闭的任意字典。
+作为 anchor schema 内未封闭的任意字典。loader/gate/finalizer 对 reservation 不得使用
+可选参数、默认值或只传 reservation ID；必须验证并传递原始 canonical bytes 的 digest。
 
 复制在 ledger 内、工作树文件或 agent 可编辑 checkpoint 的 anchor/proof 字段都不可信。
 anchor 缺失、回退、pending、签名无效或不匹配一律 `blocked`，从而检测内部链无法发现的
@@ -276,9 +304,13 @@ event 和 anchor attestation；helper 重算 canonical digest，拒绝旧事件�
 重复 ID/terminal/commit SHA、非法状态转换和 CAS 冲突。queue Skill 只能调用该 helper，
 不能拼装或直接写 JSON。provider 存在 active evaluation reservation 时，所有普通 ledger
 writer 命令必须返回 CAS conflict；`finalize-evaluation` 后仅允许携带 matching signed
-receipt 的 `append-start` 进入 transaction。它必须重验 current generation/ledger/result
-digest、create-only 消费 receipt，并把 `attempt_started` append、anchor commit 与 receipt
-consumption 纳入同一恢复协议。`recover` 必须对 prepared append-start 幂等完成或回滚；
+receipt、exact proof/reservation/result 与 canonical candidate bytes 的 `append-start`
+进入 transaction。它必须重验 current generation/ledger/reservation/result/candidate
+digest 与 action predicate、create-only 消费 receipt，并把 `attempt_started` append、
+anchor commit、receipt consumption 与唯一 durable dispatch outbox 纳入同一恢复协议。
+queue 不能依据 append outcome 直接 dispatch；受保护 dispatcher 以稳定
+`lane_dispatch_id` 幂等消费 outbox，下游 lane registry create-only 接受。`recover` 必须
+对 prepared append-start 幂等完成或回滚，响应丢失不得产生第二个 attempt/outbox/lane；
 无 prepared transaction 的 pending receipt 仅可在有效期内重试 append-start，过期或放弃
 则由 `cancel-receipt` 留下 tombstone 后恢复普通 writer，且只允许本次 action 失败后重新
 evaluation。其命令输出有界、错误非零且不静默降级。
@@ -442,27 +474,28 @@ ownership。`gh191-dependencies-open/order-invalid/ready.json` 分别覆盖负�
 | B-013 | external anchor continuity | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k anchor` |
 | B-014 | deterministic writer/CAS/recovery | `python3 -m pytest -q tests/test_issue_attempt_writer.py -k "append or cas or recover"` |
 | B-015 | baseline/migration/history loss | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "baseline or migration or history_loss"` |
-| B-017 | nonce-bound provider current-state proof | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "freshness or challenge or replay or generation"` |
+| B-017 | nonce-bound provider current-state proof + mandatory reservation/candidate binding | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "freshness or challenge or replay or generation or reservation or candidate"` |
 | B-018 | exact human rescope/unpark authorization | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_attempt_writer.py -k "scope_authorization or unpark or replay"` |
-| B-019 | trusted evidence issuer/adapter provenance | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_attempt_collector.py tests/test_issue_progress_gate.py -k "issuer or adapter or provenance or pagination or signature"` |
+| B-019 | trusted evidence and attempt-candidate adapter provenance | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_attempt_collector.py tests/test_issue_progress_gate.py -k "issuer or adapter or provenance or pagination or signature or candidate"` |
 | B-020 | serial upstream merge/rebase gate | `python3 -m pytest -q tests/test_repository_dependency_preflight.py -k "open or order or rebase or ready"` |
-| B-021 | provider reservation + decision finalize CAS + append-start receipt consumption/recovery | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "reservation or finalize or append_start or generation_race or receipt or expiry or recover"`，含 finalize→append-start generation 前移、crash/abandon/expiry 与 receipt replay 负例 |
-| B-022 | complete closed shared evaluation output | `python3 -m pytest -q tests/test_issue_progress_gate.py -k "evaluation_result or exact_keys or actions"`，验证 allowed/blocked 两个 evaluation fixtures |
+| B-021 | provider reservation + action-bound finalize + append-start/outbox exactly-once recovery | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "reservation or finalize or append_start or generation_race or receipt or expiry or recover or dispatch or outbox"`，含 finalize→append-start generation 前移、response loss、crash/abandon/expiry 与 receipt replay 负例 |
+| B-022 | complete closed shared evaluation output and derived action predicate | `python3 -m pytest -q tests/test_issue_progress_gate.py -k "evaluation_result or exact_keys or actions or authorized_action"`，验证 allowed/blocked 两个 evaluation fixtures |
 | B-023 | trusted runtime tranche history | `python3 -m pytest -q tests/test_runtime_issue_tranche_history_evidence.py -k "archive or tracked or complete or incomplete or conflict"`，含 complete/incomplete fixtures |
 | B-024 | per-commit issue-reference provenance | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_progress_gate.py -k "commit_reference or predicate or prefix or derivation"`，含 mixed-reference fixture |
-| B-025 | independent closed proof/reservation/receipt schemas, cross-binding and ownership | `python3 -m pytest -q tests/test_pack_asset_validation.py tests/test_issue_progress_gate.py -k "current_state_proof or evaluation_reservation or decision_receipt or schema or ownership"` |
+| B-025 | mandatory independent proof/reservation/receipt schemas, candidate/action cross-binding and ownership | `python3 -m pytest -q tests/test_pack_asset_validation.py tests/test_issue_progress_gate.py -k "current_state_proof or evaluation_reservation or decision_receipt or schema or ownership or cross_binding"` |
 | B-026 | repo overlay isolation and fresh dependency helper | `python3 -m pytest -q tests/test_repository_dependency_preflight.py tests/test_check_workflow.py -k "overlay or generic or consumer or dependency"`，验证 open/order-invalid/ready fixtures |
 
 ## 数据流
 
 ```text
 fresh GitHub/API → trusted signed adapter envelope → bounded collector candidate
-protected challenge ↔ trusted anchor provider → reserved current-state proof
+protected attempt candidate + challenge ↔ trusted anchor provider → proof + mandatory reservation
 trusted runtime archive/git history → signed tranche-history envelope
 candidate + one-time scope auth → deterministic writer ↔ provider CAS
-ledger + attestation + reserved proof + trusted snapshots → offline evaluation_result candidate
-candidate digest + reservation → provider finalize CAS → signed decision receipt
-receipt → writer append-start CAS + receipt consumption + attempt_started commit → lane dispatch
+ledger + attestation + proof + reservation bytes + candidate + trusted snapshots → evaluation_result
+result + reservation/candidate digests → provider finalize CAS → action-bound signed receipt
+receipt + exact candidate → append-start transaction → attempt + anchor + consumption + durable outbox
+durable outbox → protected idempotent dispatcher → create-only lane_dispatch_id
 ```
 
 ## 备选方案
@@ -475,6 +508,8 @@ receipt → writer append-start CAS + receipt consumption + attempt_started comm
 - 只验证历史 committed attestation：旧 ledger 与旧 attestation 可一起回放，拒绝。
 - 只在 proof 签发时读 current generation：签发后 writer 可前移 generation，存在
   TOCTOU，拒绝；必须 reservation + finalize CAS。
+- 让 queue 根据 append 返回值直接 dispatch：响应丢失后无法区分已提交与未 dispatch，
+  会丢 lane 或重复 lane，拒绝；dispatch 必须由同事务 durable outbox 驱动。
 - 信任 snapshot 自报 `as_of`/collector 或仅校验 payload digest：不能证明来源，拒绝。
 - 只读当前 checkpoint 或 caller history list：无法证明旧 tranche coverage 完整，拒绝。
 - 让通用 `check_workflow.py` 硬编码本仓库 PR：会污染 consumer pack，拒绝；使用显式
@@ -498,10 +533,11 @@ receipt → writer append-start CAS + receipt consumption + attempt_started comm
 ## 测试计划
 
 - [ ] Unit: event schema、start/terminal、anchor、writer CAS/recovery、baseline/migration、
-      current proof/reservation/finalize receipt、challenge replay、完整 evaluation output、
+      mandatory proof/reservation/candidate、action-bound finalize receipt、challenge replay、
+      append response loss 与 exactly-once durable outbox、完整 evaluation output、
       scope authorization consumption、trusted GitHub/runtime-history provenance、逐 commit
       issue-reference derivation、`as_of`、fingerprint、progress、commit 阈值与错误聚合。
-- [ ] Integration: queue pre-lane 只调用 writer、run lease binding、rescope epoch、
+- [ ] Integration: queue pre-lane 只调用 writer/受保护 outbox dispatcher、run lease binding、rescope epoch、
       provider pending/history-loss/current-generation fail closed、trusted adapter 与
       repo overlay 驱动的 `GH172 → GH174 → GH189 → GH191` merge/rebase gate；consumer
       普通 workflow check 不读取 overlay 或 GitHub。
