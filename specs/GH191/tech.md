@@ -6,7 +6,7 @@ GH-191
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":191,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/github_issue_attempt_evidence.py","checks/issue_attempt_collector.py","checks/issue_attempt_writer.py","checks/pack_asset_validation.py","checks/issue_progress_gate.py","checks/runtime_issue_tranche_history_evidence.py","examples/fixtures/gh191-dependencies-open.json","examples/fixtures/gh191-dependencies-order-invalid.json","examples/fixtures/gh191-dependencies-ready.json","examples/fixtures/issue-attempt-commit-reference-mixed.json","examples/fixtures/issue-attempt-proof-generation-race.json","examples/fixtures/issue-attempt-tranche-history-complete.json","examples/fixtures/issue-attempt-tranche-history-incomplete.json","examples/fixtures/issue-progress-evaluation-allowed.json","examples/fixtures/issue-progress-evaluation-blocked.json","overlays/specrail/gh191-implementation-dependencies.json","schemas/issue_attempt_anchor.schema.json","schemas/issue_attempt_current_state_proof.schema.json","schemas/issue_attempt_evidence.schema.json","schemas/issue_attempt_ledger.schema.json","schemas/issue_progress_decision_receipt.schema.json","schemas/issue_scope_authorization.schema.json","schemas/issue_tranche_history_evidence.schema.json","schemas/repository_dependency_overlay.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/issue_attempt_anchor.json","templates/issue_attempt_ledger.json","tests/test_check_workflow.py","tests/test_github_issue_attempt_evidence.py","tests/test_issue_attempt_collector.py","tests/test_issue_attempt_writer.py","tests/test_pack_asset_validation.py","tests/test_issue_progress_gate.py","tests/test_repository_dependency_preflight.py","tests/test_runtime_issue_tranche_history_evidence.py","tools/repository_dependency_preflight.py"],"spec_refs":["specs/GH191/product.md","specs/GH191/tech.md","specs/GH191/tasks.md"]}
+{"version":1,"issue":191,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/github_issue_attempt_evidence.py","checks/issue_attempt_collector.py","checks/issue_attempt_writer.py","checks/pack_asset_validation.py","checks/issue_progress_gate.py","checks/runtime_issue_tranche_history_evidence.py","examples/fixtures/gh191-dependencies-open.json","examples/fixtures/gh191-dependencies-order-invalid.json","examples/fixtures/gh191-dependencies-ready.json","examples/fixtures/issue-attempt-commit-reference-mixed.json","examples/fixtures/issue-attempt-proof-generation-race.json","examples/fixtures/issue-attempt-tranche-history-complete.json","examples/fixtures/issue-attempt-tranche-history-incomplete.json","examples/fixtures/issue-progress-evaluation-allowed.json","examples/fixtures/issue-progress-evaluation-blocked.json","overlays/specrail/gh191-implementation-dependencies.json","schemas/issue_attempt_anchor.schema.json","schemas/issue_attempt_current_state_proof.schema.json","schemas/issue_attempt_evidence.schema.json","schemas/issue_attempt_ledger.schema.json","schemas/issue_evaluation_reservation.schema.json","schemas/issue_progress_decision_receipt.schema.json","schemas/issue_scope_authorization.schema.json","schemas/issue_tranche_history_evidence.schema.json","schemas/repository_dependency_overlay.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/issue_attempt_anchor.json","templates/issue_attempt_ledger.json","tests/test_check_workflow.py","tests/test_github_issue_attempt_evidence.py","tests/test_issue_attempt_collector.py","tests/test_issue_attempt_writer.py","tests/test_pack_asset_validation.py","tests/test_issue_progress_gate.py","tests/test_repository_dependency_preflight.py","tests/test_runtime_issue_tranche_history_evidence.py","tools/repository_dependency_preflight.py"],"spec_refs":["specs/GH191/product.md","specs/GH191/tech.md","specs/GH191/tasks.md"]}
 -->
 
 ## Product Spec
@@ -27,7 +27,7 @@ GH-191
 | commit issue reference | `checks/github_duplicate_evidence.py:94-105`、`tests/test_github_duplicate_evidence.py:50-55` | 已有稳定 `references_issue_text()` 谓词并覆盖数字前缀碰撞。 | attempt adapter 复用同一谓词派生逐 SHA provenance。 |
 | runtime checkpoint source | `schemas/runtime_checkpoint.schema.json:6-67`、`checks/runtime_ledger_gate.py:473-538` | schema/gate 验证单个 checkpoint；没有跨 tranche 的可信 history adapter 或 closed evidence。 | migration 需独立 adapter 聚合 archive/tracked history。 |
 | workflow | `checks/check_workflow.py:485-512` | 无 attempt schema/gate asset 检查。 | 新资产加入 pack required/check。 |
-| pack schema ownership | `checks/pack_asset_validation.py:14-34`、`tests/test_pack_asset_validation.py:13-32` | `SPEC_SCHEMA_FILES` 与 exact ownership test 决定哪些 closed schema 属于 pack。 | current proof、receipt、tranche history 与 dependency overlay schema 必须显式注册。 |
+| pack schema ownership | `checks/pack_asset_validation.py:14-34`、`tests/test_pack_asset_validation.py:13-32` | `SPEC_SCHEMA_FILES` 与 exact ownership test 决定哪些 closed schema 属于 pack。 | current proof、evaluation reservation、receipt、tranche history 与 dependency overlay schema 必须显式注册。 |
 | repository overlay | `AGENTS.md:19-23` | 要求 reusable pack 保持通用；仓库当前没有 dependency overlay/preflight 约定。 | 新 overlay 独占 PR 编号，通用 checker 不接触 GitHub。 |
 
 ## 设计方案
@@ -77,7 +77,8 @@ baseline_id, transaction_id, state = prepared | committed
 provider 返回由配置的 trust root 可验证的 committed attestation；它证明一次提交，
 但**不单独证明当前状态**。每次公开 gate 命令必须由受保护 runtime 先生成唯一
 `evaluation_id` 与不可由 worker 选择的单次 challenge，再以 provider
-`begin-evaluation` CAS 在 current committed record 上建立短期独占 reservation 并取得：
+`begin-evaluation` CAS 在 current committed record 上建立短期独占 reservation，并返回
+两份相互绑定的 canonical signed evidence：
 
 ```text
 current_state_proof = provider_id, trust_root_id, proof_id,
@@ -87,6 +88,11 @@ current_state_proof = provider_id, trust_root_id, proof_id,
                       reservation_id, reservation_token_digest,
                       state = evaluation_reserved,
                       issued_at, expires_at, signature
+
+evaluation_reservation = provider_id, trust_root_id, reservation_id,
+                         evaluation_id, challenge_id, repo_id, issue,
+                         generation, ledger_digest, reservation_token_digest,
+                         state = active, issued_at, expires_at, signature
 ```
 
 provider 必须从该 key 的 current committed record 直接出具 proof，而非为调用方指定的
@@ -111,19 +117,27 @@ decision, finalized_at, signature
 ```
 
 queue 只接受 schema-valid、签名有效且与**同一 result bytes**匹配的 receipt；裸
-evaluation result 只是 candidate，不能开 lane。proof 签发后 generation 前移、writer
-竞态、重复 challenge、过期/取消/重放 reservation、旧 attestation、缺少 fresh proof、
-finalize CAS 失败或 receipt/result digest 不一致统一返回 `anchor_freshness_invalid`。
-reservation 到期恢复只能标记取消并阻断本次 action，不得把 candidate result 转成成功。
-因此 check/use 窗口被 provider reservation 与 finalize CAS 覆盖，而不只是被 nonce
-防重放。相同完整绑定输入进入 offline evaluator 时仍保持纯函数；freshness 与权威
-decision receipt 发生在 evaluator 外，不读取 evaluator 的本地墙钟。
+evaluation result 只是 candidate，不能开 lane。queue 将 matching receipt 交给唯一 writer
+的 `append-start`；provider 必须在同一 prepare/CAS transaction 中对 receipt 的
+`generation + ledger_digest + result_digest` 重验 current record，并以
+`(repo_id, issue, receipt_id)` create-only 消费 receipt。只有 ledger 原子追加
+`attempt_started`、anchor generation commit 与 receipt consumption 三者可恢复地共同完成
+后才 dispatch lane。proof 签发后或 finalize 后 generation 前移、writer 竞态、重复
+challenge、过期/取消/重放 reservation、receipt 重放、旧 attestation、缺少 fresh proof、
+finalize/append-start CAS 失败或 receipt/result digest 不一致统一返回
+`anchor_freshness_invalid`。reservation 到期恢复只能标记取消并阻断本次 action，不得把
+candidate result 转成成功。因此 check/use 窗口被 provider reservation、finalize CAS 与
+append-start receipt consumption 覆盖，而不只是被 nonce 防重放。相同完整绑定输入进入
+offline evaluator 时仍保持纯函数；freshness 与权威 decision receipt 发生在 evaluator 外，
+不读取 evaluator 的本地墙钟。
 
-`issue_attempt_current_state_proof.schema.json` 封闭 proof + reservation 字段，
-`issue_progress_decision_receipt.schema.json` 封闭 finalize receipt；两者
-`additionalProperties:false`，并与 anchor/evidence/ledger/scope-authorization/
-tranche-history/dependency-overlay schemas 一起加入 `SPEC_SCHEMA_FILES` 及 exact ownership
-test。proof/receipt 不得继续作为 anchor schema 内未封闭的任意字典。
+`issue_attempt_current_state_proof.schema.json`、独立
+`issue_evaluation_reservation.schema.json` 与
+`issue_progress_decision_receipt.schema.json` 分别封闭 proof、reservation 与 finalize
+receipt；三者 `additionalProperties:false`，签名 bytes 通过 ID/digest 精确 cross-bind，
+并与 anchor/evidence/ledger/scope-authorization/tranche-history/dependency-overlay schemas
+一起加入 `SPEC_SCHEMA_FILES` 及 exact ownership test。proof/reservation/receipt 不得继续
+作为 anchor schema 内未封闭的任意字典。
 
 复制在 ledger 内、工作树文件或 agent 可编辑 checkpoint 的 anchor/proof 字段都不可信。
 anchor 缺失、回退、pending、签名无效或不匹配一律 `blocked`，从而检测内部链无法发现的
@@ -254,9 +268,12 @@ commit message 不参与。evidence 只允许受控 path/URL/digest/status，不
 每次调用必须显式提供 expected ledger digest、expected anchor generation、candidate
 event 和 anchor attestation；helper 重算 canonical digest，拒绝旧事件的删除/改写、
 重复 ID/terminal/commit SHA、非法状态转换和 CAS 冲突。queue Skill 只能调用该 helper，
-不能拼装或直接写 JSON。provider 存在 active evaluation reservation 时，所有 ledger
-writer 命令必须返回 CAS conflict；只有 `finalize-evaluation` 或显式到期取消后才可开始
-下一次 writer transaction。其命令输出有界、错误非零且不静默降级。
+不能拼装或直接写 JSON。provider 存在 active evaluation reservation 时，所有普通 ledger
+writer 命令必须返回 CAS conflict；`finalize-evaluation` 后仅允许携带 matching signed
+receipt 的 `append-start` 进入 transaction。它必须重验 current generation/ledger/result
+digest、create-only 消费 receipt，并把 `attempt_started` append、anchor commit 与 receipt
+consumption 纳入同一恢复协议；显式到期取消只允许本次 action 失败后重新 evaluation。
+其命令输出有界、错误非零且不静默降级。
 
 `open-scope` 还必须加载 closed `issue_scope_authorization`，其语义固定为一次
 `decision: open_scope_once`：
@@ -421,11 +438,11 @@ ownership。`gh191-dependencies-open/order-invalid/ready.json` 分别覆盖负�
 | B-018 | exact human rescope/unpark authorization | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_attempt_writer.py -k "scope_authorization or unpark or replay"` |
 | B-019 | trusted evidence issuer/adapter provenance | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_attempt_collector.py tests/test_issue_progress_gate.py -k "issuer or adapter or provenance or pagination or signature"` |
 | B-020 | serial upstream merge/rebase gate | `python3 -m pytest -q tests/test_repository_dependency_preflight.py -k "open or order or rebase or ready"` |
-| B-021 | provider reservation + decision finalize CAS | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "reservation or finalize or generation_race or receipt"`，含 `issue-attempt-proof-generation-race.json` |
+| B-021 | provider reservation + decision finalize CAS + append-start receipt consumption | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "reservation or finalize or append_start or generation_race or receipt"`，含 finalize→append-start generation 前移与 receipt replay 负例 |
 | B-022 | complete closed shared evaluation output | `python3 -m pytest -q tests/test_issue_progress_gate.py -k "evaluation_result or exact_keys or actions"`，验证 allowed/blocked 两个 evaluation fixtures |
 | B-023 | trusted runtime tranche history | `python3 -m pytest -q tests/test_runtime_issue_tranche_history_evidence.py -k "archive or tracked or complete or incomplete or conflict"`，含 complete/incomplete fixtures |
 | B-024 | per-commit issue-reference provenance | `python3 -m pytest -q tests/test_github_issue_attempt_evidence.py tests/test_issue_progress_gate.py -k "commit_reference or predicate or prefix or derivation"`，含 mixed-reference fixture |
-| B-025 | closed proof/reservation/receipt schemas and ownership | `python3 -m pytest -q tests/test_pack_asset_validation.py tests/test_issue_progress_gate.py -k "current_state_proof or decision_receipt or schema or ownership"` |
+| B-025 | independent closed proof/reservation/receipt schemas, cross-binding and ownership | `python3 -m pytest -q tests/test_pack_asset_validation.py tests/test_issue_progress_gate.py -k "current_state_proof or evaluation_reservation or decision_receipt or schema or ownership"` |
 | B-026 | repo overlay isolation and fresh dependency helper | `python3 -m pytest -q tests/test_repository_dependency_preflight.py tests/test_check_workflow.py -k "overlay or generic or consumer or dependency"`，验证 open/order-invalid/ready fixtures |
 
 ## 数据流
@@ -437,7 +454,7 @@ trusted runtime archive/git history → signed tranche-history envelope
 candidate + one-time scope auth → deterministic writer ↔ provider CAS
 ledger + attestation + reserved proof + trusted snapshots → offline evaluation_result candidate
 candidate digest + reservation → provider finalize CAS → signed decision receipt
-receipt-bound evaluation_result → allowed/blocked action
+receipt → writer append-start CAS + receipt consumption + attempt_started commit → lane dispatch
 ```
 
 ## 备选方案

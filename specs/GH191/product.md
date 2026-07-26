@@ -97,8 +97,12 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
     建立绑定该 evaluation、generation 与 ledger digest 的短期独占 reservation；在
     offline result 生成后，受保护 runtime 必须以同一 reservation 对 provider current
     generation 执行 compare-and-finalize，并返回绑定 result digest 的签名 decision
-    receipt。只有 receipt 成功的 result 才可开 lane；签发后 generation 前移、reservation
-    过期/取消/重放、writer 与 evaluation 竞态或 finalize CAS 失败都必须阻断。
+    receipt。`append-start` 必须在同一 provider transaction 中 create-only 消费该
+    receipt，并以 receipt 绑定的 generation、ledger digest 与 result digest 对 current
+    record 做 CAS，成功落下 `attempt_started` 后才可 dispatch lane。只有这条原子链成功
+    的 result 才可开 lane；签发后 generation 前移、reservation/receipt 过期或重放、
+    writer 与 evaluation 竞态、finalize/append-start CAS 失败或 receipt/result 不匹配
+    都必须阻断。
 22. B-022 当 `issue_progress_gate.py` 返回 evaluation result 时，输出必须是
     `schemas/evaluation_result.schema.json` 的完整闭合投影：包含 `decision`、`route`、
     `mode`、`current_state`、`issue`、`pr`、`reasons`、`satisfied`、`missing`、
@@ -118,9 +122,10 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
     错 issue/SHA、predicate 漂移或 provenance digest 不匹配的 commit 不得被猜测计数，
     而应使 history fail closed。
 25. B-025 current-state proof、evaluation reservation 与 decision receipt 必须分别受
-    closed schema 和 pack ownership 校验；proof/receipt 缺少 repo/issue/evaluation、
-    generation、ledger/result digest、有效期、provider/trust-root 或签名字段，出现未知
-    字段，或 schema 未在 pack validator 注册时，公开 gate 必须失败。
+    独立 closed schema 和 pack ownership 校验；三者缺少各自必需的
+    repo/issue/evaluation、generation、ledger/result digest、有效期、
+    provider/trust-root 或签名字段，出现未知字段，cross-binding 不一致，或任一 schema
+    未在 pack validator 注册时，公开 gate 必须失败。
 26. B-026 GH-191 的 PR 编号、串行依赖与 planned-path overlap 必须只存在于本仓库显式
     dependency overlay，由 read-only repository preflight helper 以 fresh GitHub evidence
     评估；通用 `check_workflow.py` 与 consumer 安装包不得硬编码、查询或阻断
@@ -139,7 +144,9 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
 - [ ] `as_of` 边界测试证明相同输入跨墙钟重跑结果不变。
 - [ ] old ledger + old committed attestation/proof 回放、错/已消费 challenge、过期 proof、
       proof 签发后 provider generation 前移、reservation 过期/重放与 finalize CAS 失败均
-      阻断；fresh proof + reservation + decision receipt 正例通过。
+      阻断；finalize 后到 `append-start` 前 generation 前移、receipt 重放或消费失败同样
+      阻断；fresh proof + reservation + decision receipt 被 `append-start` 原子消费并
+      落下 `attempt_started` 的正例通过。
 - [ ] allowed/blocked evaluation fixtures 都完整匹配共享 `evaluation_result`，使用
       `reasons`，缺字段、额外字段、`reason_ids` 替代或动作矛盾均被拒绝。
 - [ ] 迁移从可信 checkpoint archive/tracked history 恢复完整 tranche；缺段、浅历史、
