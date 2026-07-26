@@ -208,10 +208,12 @@ dependency binding。client 读取所有 attested realpath 的实际 bytes 重�
 - `installed_copy` 时，每个 attested entrypoint 与 runtime client 都必须位于 resolver 证明的
   同一 runtime-owned installed root。current-invocation loader registry 还必须独立固定
   `runtime/installed_bundle_manifest.json` 的相对路径与 SHA-256；该 manifest 固定
-  `bundle_id`、`source_lock_manifest_sha256` 及除 manifest 自身外全部 bundled files 的
-  `{relative_path, mode, size, sha256}` 闭集。manifest 不得包含自己的 digest，防止自哈希；
-  它自身的 digest 只由 host registry attestation 固定，caller、bundle 内其它文件或 consumer
-  checkout 不能提供或覆盖；
+  `bundle_id`、versioned source release identity 及除 manifest 自身外全部 bundled files 的
+  `{relative_path, mode, size, sha256}` 闭集，但不得包含自身 digest 或完整
+  `source_lock_manifest_sha256`。normalized source lock 单向记录 manifest 的 SHA-256；
+  current-invocation host registry attestation 同时固定该 manifest digest 与完整 source-lock
+  digest，形成 `source lock → manifest → bundled files` 的无环生成图。caller、bundle 内
+  其它文件或 consumer checkout 不能提供或覆盖任一 digest；
 - 同时匹配、均不匹配、symlink/path escape、bytes/root/manifest 漂移或字段缺失均 fail closed。
 
 hook/client/resolver/peer/verifier 不可用时 queue 明确 unavailable，不得回退到
@@ -235,8 +237,9 @@ caller-selected repo/path 或 consumer checkout 中的相对 executable。host �
   同源同 hash），不得从 consumer checkout 的 repo-root `checks/` import path 解析；
   source checkout 缺失时 installed skill 仍能完成该 doctor 检查。该 API 只能检查
   binding 的 canonical root/device/inode，结果必须回显
-  `canonical_installed_root`、`installed_root_binding_digest` 与
-  `source_lock_manifest_sha256` 并全部相等才是 startup `match`。public
+  `canonical_installed_root`、`installed_root_binding_digest`、host-pinned
+  `installed_bundle_manifest.sha256` 与 `source_lock_manifest_sha256` 并全部相等才是 startup
+  `match`。public
   `tools/check_installed_codex_skills.py --target-dir` 仍可供人工诊断，但默认目录、CLI target
   或另一 matching installation 的结果不能产生 startup authorization。
 
