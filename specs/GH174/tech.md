@@ -127,8 +127,9 @@ host phase-load hook
    scanner 必须按 line/occurrence 定位豁免，不能把该 token 加入全局 allowlist。
    只扫链接语法不够：这类 skill 文档习惯用反引号裸写可操作文件名，未加链接语法的
    `references/review-and-merge.md` 同样会诱导多跳重读；
-5. 与 GH-172 normalized lock manifest 对账：声明集合必须等于 queue 的额外
-   `files[]` 集合；
+5. 与 GH-172 normalized lock manifest 对账：声明集合必须等于 queue 额外 `files[]` 中的
+   typed reference 子集（即 `references/*.md` 条目）；`runtime/phase_loader.py` 等
+   非 reference 分发文件由 lock/doctor 单独校验，不参与该相等性比较；
 6. 检查每个引用的 exact required header、声明 phase 与反向路由一致；
 7. 检查关键 marker 只在主文件存在，并按**结构化清单**判定冲突：每条不可绕过合同在
    主文件里有稳定语义 ID（`contract_id`），引用中若出现同一 `contract_id` 的规范性
@@ -217,7 +218,10 @@ caller-selected repo/path 或 consumer checkout 中的相对 executable。host �
   `--require-installed`。
 - `installed_copy`：除对同一 attested source root 的 source graph `allowed` 外，runtime
   client 必须把已验证 attestation 中的 typed `installed_root_binding` 直接交给
-  `checks.installed_skill_integrity.inspect_installed_skills()` internal API。该 API 只能检查
+  installed-integrity internal API：该 API 随 v2 lock 与 runtime client 一同打包进 queue
+  bundle（与 repo `checks/installed_skill_integrity.py` 的 `inspect_installed_skills()`
+  同源同 hash），不得从 consumer checkout 的 repo-root `checks/` import path 解析；
+  source checkout 缺失时 installed skill 仍能完成该 doctor 检查。该 API 只能检查
   binding 的 canonical root/device/inode，结果必须回显
   `canonical_installed_root`、`installed_root_binding_digest` 与
   `source_lock_manifest_sha256` 并全部相等才是 startup `match`。public
