@@ -6,7 +6,7 @@ GH-203
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":203,"complete":true,"paths":["skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement/SKILL.md","specs/GH203/product.md","specs/GH203/tasks.md","specs/GH203/tech.md"],"spec_refs":["specs/GH203/product.md","specs/GH203/tech.md","specs/GH203/tasks.md"]}
+{"version":1,"issue":203,"complete":true,"paths":["skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement/SKILL.md","skills/specrail-pr-gate/SKILL.md","specs/GH203/product.md","specs/GH203/tasks.md","specs/GH203/tech.md"],"spec_refs":["specs/GH203/product.md","specs/GH203/tech.md","specs/GH203/tasks.md"]}
 -->
 
 ## Product Spec

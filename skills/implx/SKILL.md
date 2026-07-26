@@ -47,15 +47,18 @@ Use `queue_mode: bounded_tranche` only when the prompt explicitly limits scope,
 for example one issue, one PR, the current tranche, plan-only, status-only, or
 review-only work.
 
-Single-issue short circuit: when the prompt targets exactly one issue whose
-spec coverage is already `complete` (or `exception_allowed`) and the change is
-plausibly `fastlane`/`standard` tier, skip the queue skill entirely — run the
-startup checks above, then route straight to
-`skills/specrail-implement/SKILL.md` plus
-`skills/specrail-pr-gate/SKILL.md`. Do not build the full-queue coverage
-classification, queue-planning YAML, or tranche budget for one scoped issue.
-Fall back to the queue skill only when the short circuit discovers multi-issue
-coupling, a `heavy` tier surface, or missing spec coverage.
+Single-issue short circuit: use it only when the prompt names exactly one issue,
+its non-legacy product/tech/tasks packet is `complete`, its done-when is
+decidable, and the surface is plausibly `fastlane`/`standard`. Skip only the
+full-queue coverage map, queue-planning YAML, and tranche budget. Still map
+existing PRs, collect duplicate-work evidence, pass the `implement` route,
+verify against the packet, produce and validate an exact-head local review
+artifact/manifest, collect current PR evidence with `--review-manifest`, and run
+the serial PR gate plus applicable merge authorization. Route through
+`skills/specrail-implement/SKILL.md` and `skills/specrail-pr-gate/SKILL.md`.
+`exception_allowed` is not a complete packet and never qualifies. Fall back to
+the queue skill on multi-issue coupling, ownership conflict, heavy risk,
+packet/head drift, or any missing qualification.
 
 ## Authorization Mode
 
