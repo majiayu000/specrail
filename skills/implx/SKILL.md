@@ -276,8 +276,6 @@ implx_handoff:
     dirty_files:
   human_decisions:
   focused_handoff:
-  thread_dispatch_gate:
-    native_subagents:
-    spawn_requirement:
-    native_thread_evidence:
+  thread_dispatch_gate_ref: <checkpoint path>  # recorded once in the runtime
+                                               # checkpoint; do not copy fields
 ```
