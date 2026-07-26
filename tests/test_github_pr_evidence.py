@@ -591,11 +591,11 @@ def test_authorization_flags_must_include_actor_and_source() -> None:
 
 def _round_cap_authorization() -> dict[str, object]:
     return {
-        "authorization_id": "RCA-10-4",
+        "authorization_id": "RCA-10-3",
         "pr": 10,
         "prior_head_sha": "a" * 40,
         "target_head_sha": "b" * 40,
-        "review_round": 4,
+        "review_round": 3,
         "decision": "continue_once",
         "actor": "maintainer",
         "source": "maintainer decision in issue #10",
@@ -664,7 +664,7 @@ def test_round_cap_authorization_requires_explicit_maintainer_role_map(
     ("mutation", "message"),
     [
         ({"decision": "merge"}, "continue_once"),
-        ({"review_round": 3}, "greater than 3"),
+        ({"review_round": 2}, "greater than 2"),
         ({"pr": True}, "positive integer"),
         ({"prior_head_sha": "not-a-sha"}, "40-character Git SHA"),
         ({"target_head_sha": "a" * 40}, "distinct prior and target"),
@@ -770,7 +770,7 @@ def test_pr_gate_schema_closes_round_audit_and_cap_authorizations() -> None:
     ]
     round_audit = {
         "policy": "bounded_diff_v1",
-        "cap": 3,
+        "cap": 2,
         "total_rounds": 1,
         "rounds": [
             {

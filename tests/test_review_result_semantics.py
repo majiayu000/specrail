@@ -577,7 +577,7 @@ def write_bounded_manifest(repo: Path, artifacts: list[dict[str, object]]) -> st
     manifest = {
         "version": 2, "pr": 489, "head_sha": artifacts[-1]["head_sha"],
         "human_final_review_required": False,
-        "round_policy": {"name": "bounded_diff_v1", "cap": 3},
+        "round_policy": {"name": "bounded_diff_v1", "cap": 2},
         "rounds": rounds,
         "lanes": [{
             "lane_id": "reviewer-1", "producer_identity": "agent-reviewer-1",
@@ -615,13 +615,12 @@ def test_v2_derives_round_audit_and_compact_carry(tmp_path: Path) -> None:
     finding = {"id": "F-1", "severity": "important", "actionable": True, "summary": "fix"}
     artifacts = [
         bounded_artifact(1, findings=[finding]),
-        bounded_artifact(2, prior=[compact("round-1")]),
-        bounded_artifact(3, prior=[compact("round-1", status="resolved")]),
+        bounded_artifact(2, prior=[compact("round-1", status="resolved")]),
     ]
     result = load_bounded(tmp_path, artifacts)
     assert result["errors"] == []
     assert result["round_audit"] == {
-        "policy": "bounded_diff_v1", "cap": 3, "total_rounds": 3,
+        "policy": "bounded_diff_v1", "cap": 2, "total_rounds": 2,
         "rounds": [
             {
                 "artifact_id": item["artifact_id"], "review_round": item["review_round"],
@@ -721,22 +720,24 @@ def test_v2_rejects_unknown_duplicate_and_prose_compact_findings(tmp_path: Path)
     assert "no source definition" in joined
 
 
-def test_v2_round_four_requires_exact_escalation_union(tmp_path: Path) -> None:
+def test_v2_round_three_requires_exact_escalation_union(tmp_path: Path) -> None:
     finding = {"id": "F-1", "severity": "suggestion", "actionable": False, "summary": "open"}
     current = {"id": "F-4", "severity": "important", "actionable": True, "summary": "new"}
-    artifacts = [bounded_artifact(1, findings=[finding])]
-    artifacts.extend(bounded_artifact(i, prior=[compact("round-1")]) for i in [2, 3])
-    fourth = bounded_artifact(4, prior=[compact("round-1")], findings=[current])
-    fourth["round_cap_escalation"] = {
-        "authorization_id": "RCA-167-4",
+    artifacts = [
+        bounded_artifact(1, findings=[finding]),
+        bounded_artifact(2, prior=[compact("round-1")]),
+    ]
+    third = bounded_artifact(3, prior=[compact("round-1")], findings=[current])
+    third["round_cap_escalation"] = {
+        "authorization_id": "RCA-167-3",
         "unresolved_findings": [
             {"source_artifact_id": "round-1", "finding_id": "F-1"},
-            {"source_artifact_id": "round-4", "finding_id": "F-4"},
+            {"source_artifact_id": "round-3", "finding_id": "F-4"},
         ],
     }
-    artifacts.append(fourth)
+    artifacts.append(third)
     assert load_bounded(tmp_path, artifacts)["errors"] == []
-    fourth["round_cap_escalation"]["unresolved_findings"].pop()
+    third["round_cap_escalation"]["unresolved_findings"].pop()
     assert any("exactly match" in item for item in load_bounded(tmp_path, artifacts)["errors"])
 
 

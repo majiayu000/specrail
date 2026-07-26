@@ -6,7 +6,7 @@ from typing import Any
 
 
 ROUND_POLICY = "bounded_diff_v1"
-ROUND_CAP = 3
+ROUND_CAP = 2
 
 
 def _nonempty(value: Any) -> bool:
@@ -18,7 +18,7 @@ def validate_bounded_rounds(
 ) -> dict[str, Any] | None:
     policy, rounds = manifest.get("round_policy"), manifest.get("rounds")
     if policy != {"name": ROUND_POLICY, "cap": ROUND_CAP}:
-        errors.append("review manifest v2 round_policy must be bounded_diff_v1 with cap 3")
+        errors.append("review manifest v2 round_policy must be bounded_diff_v1 with cap 2")
     if not isinstance(rounds, list) or not rounds:
         errors.append("review manifest v2 rounds must be a non-empty list")
         return None

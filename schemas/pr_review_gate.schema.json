@@ -658,7 +658,7 @@
           "additionalProperties": false,
           "properties": {
             "policy": {"const": "bounded_diff_v1"},
-            "cap": {"const": 3},
+            "cap": {"const": 2},
             "total_rounds": {"type": "integer", "minimum": 1},
             "rounds": {
               "type": "array",
@@ -745,7 +745,7 @@
             "type": "string",
             "pattern": "^[0-9a-fA-F]{40}$"
           },
-          "review_round": {"type": "integer", "minimum": 4},
+          "review_round": {"type": "integer", "minimum": 3},
           "decision": {"const": "continue_once"},
           "actor": {"type": "string", "minLength": 1},
           "source": {"type": "string", "minLength": 1},

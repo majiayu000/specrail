@@ -59,7 +59,7 @@ def _round_artifact(review_round: int, head_sha: str, prior_head_sha: str | None
     if review_round >= 2:
         artifact["base_head_sha"] = prior_head_sha
         artifact["diff_sha256"] = f"{review_round}" * 64
-    if review_round > 3:
+    if review_round > 2:
         artifact["round_cap_escalation"] = {
             "authorization_id": f"RCA-718-{review_round}",
             "unresolved_findings": [],
@@ -81,7 +81,7 @@ def _bounded_round_evidence(tmp_path: Path) -> tuple[dict[str, object], Path]:
     _git(repo, "config", "user.name", "SpecRail Test")
     _git(repo, "config", "user.email", "specrail@example.invalid")
     heads = []
-    for review_round in range(1, 5):
+    for review_round in range(1, 4):
         (repo / "review-target.txt").write_text(str(review_round), encoding="utf-8")
         _git(repo, "add", "--", "review-target.txt")
         _git(repo, "commit", "-m", f"review target {review_round}")
@@ -92,7 +92,7 @@ def _bounded_round_evidence(tmp_path: Path) -> tuple[dict[str, object], Path]:
             heads[review_round - 1],
             heads[review_round - 2] if review_round >= 2 else None,
         )
-        for review_round in range(1, 5)
+        for review_round in range(1, 4)
     ]
     for index, artifact in enumerate(artifacts[1:], start=1):
         exact = _git(
@@ -128,7 +128,7 @@ def _bounded_round_evidence(tmp_path: Path) -> tuple[dict[str, object], Path]:
         "pr": 718,
         "head_sha": heads[-1],
         "human_final_review_required": False,
-        "round_policy": {"name": "bounded_diff_v1", "cap": 3},
+        "round_policy": {"name": "bounded_diff_v1", "cap": 2},
         "rounds": rounds,
         "lanes": [
             {
@@ -152,19 +152,19 @@ def _bounded_round_evidence(tmp_path: Path) -> tuple[dict[str, object], Path]:
     evidence["gate_query_head_sha"] = heads[-1]
     evidence["review_evidence"] = trusted
     evidence["review_completed_at"] = trusted["review_completed_at"]
-    evidence["gate_started_at"] = "2026-07-23T00:05:00Z"
-    evidence["gate_query_completed_at"] = "2026-07-23T00:06:00Z"
+    evidence["gate_started_at"] = "2026-07-23T00:04:00Z"
+    evidence["gate_query_completed_at"] = "2026-07-23T00:05:00Z"
     evidence["round_cap_authorizations"] = [
         {
-            "authorization_id": "RCA-718-4",
+            "authorization_id": "RCA-718-3",
             "pr": 718,
             "prior_head_sha": heads[-2],
             "target_head_sha": heads[-1],
-            "review_round": 4,
+            "review_round": 3,
             "decision": "continue_once",
             "actor": "maintainer",
             "source": "maintainer decision in GH-167",
-            "authorized_at": "2026-07-23T00:03:45Z",
+            "authorized_at": "2026-07-23T00:02:45Z",
             "authorized_human_maintainer": True,
         }
     ]
@@ -635,7 +635,7 @@ def test_pr_gate_blocks_naive_merge_dispatch_timestamp() -> None:
     assert any("timezone-aware" in reason for reason in result["reasons"])
 
 
-def test_terminal_contract_allows_exact_round_four_authorization(
+def test_terminal_contract_allows_exact_round_three_authorization(
     tmp_path: Path,
 ) -> None:
     evidence, repo = _bounded_round_evidence(tmp_path)
@@ -661,7 +661,7 @@ def test_terminal_contract_requires_external_round_cap_authorization(
 
     _, missing, reasons = evaluate_review_contract(evidence, repo)
 
-    assert "round_cap_authorizations[RCA-718-4]" in missing
+    assert "round_cap_authorizations[RCA-718-3]" in missing
     assert any("missing round cap authorization" in reason for reason in reasons)
 
 
@@ -669,7 +669,7 @@ def test_terminal_contract_rejects_tampered_embedded_round_audit(
     tmp_path: Path,
 ) -> None:
     evidence, repo = _bounded_round_evidence(tmp_path)
-    evidence["review_evidence"]["round_audit"]["total_rounds"] = 3
+    evidence["review_evidence"]["round_audit"]["total_rounds"] = 2
 
     _, _, reasons = evaluate_review_contract(evidence, repo)
 
@@ -771,7 +771,7 @@ def test_terminal_contract_rejects_authorization_rebound_to_other_scope(
         _, _, reasons = evaluate_review_contract(evidence, repo)
 
         assert any(
-            f"RCA-718-4.{field} must equal trusted round binding" in reason
+            f"RCA-718-3.{field} must equal trusted round binding" in reason
             for reason in reasons
         ), (field, reasons)
 
@@ -792,7 +792,7 @@ def test_terminal_contract_rejects_authorization_unknown_fields_and_bad_time(
 
 def test_terminal_contract_rejects_authorization_after_review_start(tmp_path: Path) -> None:
     evidence, repo = _bounded_round_evidence(tmp_path)
-    evidence["round_cap_authorizations"][0]["authorized_at"] = "2026-07-23T00:04:01Z"
+    evidence["round_cap_authorizations"][0]["authorized_at"] = "2026-07-23T00:03:01Z"
 
     _, _, reasons = evaluate_review_contract(evidence, repo)
 

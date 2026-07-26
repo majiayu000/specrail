@@ -89,8 +89,8 @@ def _round_cap_authorization_items(
         ]
     if not isinstance(round_audit, dict):
         return [], [], ["trusted review_evidence.round_audit must be an object"]
-    if round_audit.get("policy") != "bounded_diff_v1" or round_audit.get("cap") != 3:
-        return [], [], ["trusted round_audit policy/cap must be bounded_diff_v1/3"]
+    if round_audit.get("policy") != "bounded_diff_v1" or round_audit.get("cap") != 2:
+        return [], [], ["trusted round_audit policy/cap must be bounded_diff_v1/2"]
     rounds = round_audit.get("rounds")
     if not isinstance(rounds, list) or not rounds:
         return [], [], ["trusted round_audit.rounds must be a non-empty list"]
@@ -145,7 +145,7 @@ def _round_cap_authorization_items(
             reasons.append(f"trusted round_audit.rounds[{index + 1}] must be an object")
             continue
         review_round = current_round.get("review_round")
-        if not _positive_int(review_round) or review_round <= 3:
+        if not _positive_int(review_round) or review_round <= 2:
             continue
         authorization_id = current_round.get("escalation_authorization_id")
         if not _nonempty(authorization_id):
@@ -154,7 +154,7 @@ def _round_cap_authorization_items(
                 "escalation_authorization_id"
             )
             reasons.append(
-                f"review round {review_round} exceeds cap 3 without exact authorization"
+                f"review round {review_round} exceeds cap 2 without exact authorization"
             )
             continue
         authorization_key = str(authorization_id)

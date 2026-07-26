@@ -324,10 +324,10 @@ def _normalize_round_cap_authorization(
     if (
         not isinstance(review_round, int)
         or isinstance(review_round, bool)
-        or review_round <= 3
+        or review_round <= 2
     ):
         raise EvidenceError(
-            f"round cap authorization #{index}.review_round must be greater than 3"
+            f"round cap authorization #{index}.review_round must be greater than 2"
         )
     prior_head_sha = _round_cap_string(item, "prior_head_sha", index)
     target_head_sha = _round_cap_string(item, "target_head_sha", index)
