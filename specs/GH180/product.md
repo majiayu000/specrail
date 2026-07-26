@@ -55,21 +55,33 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
    product/tech 写成后必须能以 `staged` 形态通过 packet 校验。
 7. B-007 当进入 `implement` route 时，入场前提必须是可信当前状态
    `ready_to_implement` 加有效 product/tech；入场检查不得预先要求尚应由该 route
-   创建的 `task_plan`。route 创建并验证 `tasks.md` 后，代码实现才可开始，消除
-   “先有 tasks 才能进入创建 tasks 的 route”循环。
+   创建的 `task_plan`。staged packet 的 machine result 必须只授予独立的
+   `task_planning` capability，明确阻断 `production_implementation`；route 创建并验证
+   `tasks.md` 后，必须对 complete packet 重新取得只授予
+   `production_implementation` 的结果，代码实现才可开始，消除“先有 tasks 才能进入创建
+   tasks 的 route”循环。consumer 必须声明消费目的，且 production verify 必须确定性拒绝
+   staged/task-planning result，即使其通用 gate `decision` 为 `allowed`。
 8. B-008 从 spec 写作进入实现时，默认及 `auth_mode: review` 路径必须同时具备：可信、
    按时间有序且完成 `ready_to_spec → spec_pr_open → spec_review → spec_approved` 的
    lifecycle approval evidence，以及时间严格晚于所接受 `spec_approved` 事件的 fresh trusted
    `ready_to_implement` label event；只看采集时间或当前 label 不足以证明该顺序。approval
    必须绑定同一 repository 的 spec PR、该 PR 的不可变 exact head SHA，以及有权限 maintainer
-   对该 exact head 的 approval；被批准的 product/tech 摘要必须从该 SHA 的 blob 计算，不能从
-   当前工作树、当前 base 或调用方给出的 hash 推断。
+   对该 exact head 的 approval；被接受的 `ready_to_implement` event actor 也必须独立通过同一
+   maintainer permission policy，权限缺失、查询失败或低于阈值均 fail closed，不能从“能加
+   label”或 approval actor 的权限推断。被批准的 product/tech 摘要必须从该 SHA 的 blob
+   计算，不能从当前工作树、当前 base 或调用方给出的 hash 推断。duplicate gate 只可排除这个
+   exact approved spec-only PR 及其 exact-head branch：repository id、PR number、head
+   repository/ref/SHA 与完整 changed-path 集必须全部匹配 approval source；changed paths 必须
+   包含 product/tech，且全部属于该 exact-head tech manifest 声明的 `spec_refs`，不得包含
+   planned implementation path。其它引用本 issue 的 PR/branch、该 PR 的 head/path 漂移或
+   不完整查询仍按 duplicate fail closed。
    只有当前用户明确发起的 `auth_mode: auto` invocation 可以按 `workflow.yaml` 现有 policy
    waive `spec_approval`；runtime 必须在 runtime-owned grant registry 中存在由用户授权、
-   与 current invocation/issue/route 和精确 `waived_human_gates: ["spec_approval"]` 匹配的
+   与 current invocation/repository identity/issue/route 和精确
+   `waived_human_gates: ["spec_approval"]` 匹配的
    active grant。调用方提供的 authorization record 只能作为 grant selector，不能创建、
    改写或证明授权。provider 必须从 registry 取出 grant 并把其稳定摘要连同 current invocation
-   identity/generation 绑定到独立签发的 live trust anchor。SpecRail client 必须通过固定的
+   identity/generation 与 immutable repository id 绑定到独立签发的 live trust anchor。SpecRail client 必须通过固定的
    authenticated local IPC adapter 执行 fresh challenge-response，并调用 runtime-owned、
    可移植的 RFC8785-JCS/Ed25519 verifier；endpoint/provider/verifier、peer identity 与 trust
    root 均不能由 CLI、environment、authorization record、repository 或 saved result 选择。
@@ -100,7 +112,12 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
     readiness、验证或 task plan 证据。
 14. B-014 readiness-sensitive 结果必须同时绑定 issue evidence、spec approval authorization
     evidence（review 路径的 ordered exact-head lifecycle 或 auto 路径的 runtime-registry
-    grant）、duplicate-work evidence，以及当前 packet artifact。issue 与 duplicate evidence
+    grant）、duplicate-work evidence、immutable repository id + canonical repository name，
+    以及当前 packet artifact。repository identity 必须贯穿 fresh issue/duplicate evidence、
+    auto grant selector、runtime-owned grant、challenge request、signed response、
+    `authorization_grant_sha256`、cross-challenge stable binding、saved route result 与 consumer
+    重验；缺失、跨仓、rename 后 name 不一致或任一环节不匹配均拒绝，不能只靠相同 issue/route
+    复用授权。issue 与 duplicate evidence
     各自必须同时产生：包含 `collected_at` 的完整 envelope audit sha256，以及只排除
     `collected_at`、其余规范化内容全部保留的 stable semantic snapshot sha256；跨 fresh
     capture 只比较 semantic snapshot，且必须独立重验每次 envelope 的 `collected_at`
@@ -118,7 +135,11 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
     rotation 的 `key_id`；每个 fresh response 的 `key_id` 和 key activity 仍须分别 fail-closed
     校验。consumer 随后重验 freshness、open PR 与 remote branch snapshot 再比较 semantic
     摘要；不得只把 saved hash 与 saved result 自身比较，也不得让 caller record 或 saved result
-    自报 current invocation 或授权。任一 artifact、linked issue、approval/grant、runtime
+    自报 current invocation、repository identity 或授权。saved result 必须记录闭合的
+    `authorization_scope` 与 `allowed_actions`；`--verify-result` 必须要求显式
+    `--consume-for task_planning|production_implementation` 并做 exact match，尤其不得让
+    `task_planning` scope 满足 production consumer。任一 artifact、linked issue、repository
+    identity、approval/grant、runtime
     current generation、duplicate-work semantic snapshot 或 freshness 状态变化后，消费者必须
     确定性拒绝旧结果并基于最新 snapshot 重跑；旧 selector、旧 anchor 与旧结果不得授权新
     invocation 或新内容。
@@ -158,10 +179,14 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
   稳定负例，且不得通过降级成 `staged` 掩盖错误。
 - [ ] `write_spec` 在 `ready_to_spec` 只形成 product/tech；`implement` 在 review 路径凭
   same-repository spec PR 的 immutable exact-head maintainer approval 与 ordered human
-  lifecycle 入场，且所接受的 `ready_to_implement` event 必须晚于 `spec_approved`；在明确的
+  lifecycle 入场，且所接受的 `ready_to_implement` event 必须晚于 `spec_approved`、其 actor
+  必须独立满足 maintainer permission policy；duplicate gate 只排除 exact approved spec-only
+  PR/branch，任何 identity/head/path/query 漂移仍阻断；在明确的
   auto invocation 中凭 runtime-owned grant registry 中的 active `spec_approval` waiver 入场，
-  caller record 仅作 selector。两者都仍须 fresh trusted readiness、fresh duplicate-work
-  evidence 与有效 product/tech，再创建并验证 tasks，最后才允许代码实现。
+  caller record 仅作 selector。selector、grant、response、stable binding 与 saved result 均绑定
+  immutable repository id。两者都仍须 fresh trusted readiness、fresh duplicate-work evidence
+  与有效 product/tech；staged result 只授予 `task_planning`，创建并验证 tasks 后须用
+  `production_implementation` scope 重新验证，最后才允许代码实现。
 - [ ] Host integration 明确区分 runtime provider/verifier owner 与 SpecRail client owner：
   runtime owner 部署 authenticated local IPC、current-generation 与 authorization-grant
   registry、Ed25519 signer/private key、OS/runtime-owned trust store，以及 guaranteed
@@ -193,13 +218,13 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
 | --- | --- |
 | 空/缺失输入 | covered: B-001, B-004, B-005, B-009（缺 tasks 是合法 staged；缺 product/tech、空文件或缺 evidence 分别 fail closed） |
 | 错误与失败路径 | covered: B-004, B-005, B-013, B-017, B-019（无效 artifact、采集/权限失败、部分写入均不可伪装成功） |
-| 授权/权限 | covered: B-003, B-008, B-009, B-016, B-017（shape/readiness label 不单独授权；review implement 验证同仓 spec PR exact-head 人类 approval 与后续 readiness event；auto 只接受 runtime-owned registry grant，caller record 仅作 selector；两者都验证其余 current evidence） |
-| 并发/竞态 | covered: B-014（artifact、issue、lifecycle/grant、runtime current generation 或 duplicate-work semantic snapshot 漂移后必须重判；freshness 与 key activity 分别校验，合法 key rotation 不改变 stable binding） |
+| 授权/权限 | covered: B-003, B-007..B-009, B-016, B-017（shape/readiness label 不单独授权；review implement 验证同仓 spec PR exact-head 人类 approval、readiness actor maintainer authority 与后续 event；auto 只接受 repository-bound runtime-owned registry grant，caller record 仅作 selector；staged scope 只可规划 tasks） |
+| 并发/竞态 | covered: B-008, B-014（artifact、repository identity、issue、lifecycle/grant、spec PR exact head/path、runtime current generation 或 duplicate-work semantic snapshot 漂移后必须重判；freshness 与 key activity分别校验，合法 key rotation 不改变 stable binding） |
 | 重试/幂等 | covered: B-015, B-019（同输入同结论；失败或中断后全量重验，不复用旧片段） |
-| 非法状态转换 | covered: B-006..B-008, B-012, B-013（write_spec/implement 职责分离，禁止靠文件跳状态） |
+| 非法状态转换 | covered: B-006..B-008, B-012, B-013（write_spec/task planning/production implementation 职责与 machine scope 分离，禁止靠文件或 staged allowed decision 跳状态） |
 | 兼容/迁移 | covered: B-011, B-012, B-016, B-017（旧完整 packet、提前 tasks 纠偏与 GH-180 两阶段 bootstrap 均有窄化合同） |
 | 降级/回退 | covered: B-005, B-010, B-013, B-017（结构可验证不等于授权；错误 tasks/evidence 不得静默回退成功） |
-| 证据与审计完整性 | covered: B-009, B-010, B-014..B-018（fresh envelope 与 semantic snapshot 分离、spec/packet snapshot 分离、exact-head approval、runtime grant 与 unproven bootstrap 字段/判定理由均可追溯） |
+| 证据与审计完整性 | covered: B-008..B-010, B-014..B-018（fresh envelope 与 semantic snapshot、spec/packet snapshot、task-planning/production scope 分离；exact-head approval/duplicate exemption、readiness actor authority、repository-bound runtime grant 与 unproven bootstrap 均可追溯） |
 | 取消/中断 | covered: B-019（只认中断后的真实文件与状态，部分完成不升级） |
 
 ## 发布说明

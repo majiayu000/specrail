@@ -6,7 +6,7 @@ GH-180
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":180,"complete":true,"paths":["AGENT_USAGE.md","README.md","checks/check_workflow.py","checks/duplicate_work_gate.py","checks/pack_asset_validation.py","checks/github_approved_spec_evidence.py","checks/github_duplicate_evidence.py","checks/github_issue_evidence.py","checks/route_gate.py","checks/runtime_invocation_context.py","checks/runtime_invocation_provider.py","evaluate.py","examples/fixtures/issue-body-hint-ready-to-implement.json","examples/fixtures/issue-ready-to-implement.json","examples/fixtures/issue-ready-to-spec.json","examples/fixtures/issue-reserved-internal.json","integrations/runtime-invocation-provider.md","labels.yaml","schemas/duplicate_work_evidence.schema.json","schemas/issue_evidence.schema.json","schemas/runtime_invocation_context.schema.json","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement/SKILL.md","skills/specrail-plan-tasks/SKILL.md","skills/specrail-workflow/SKILL.md","skills/specrail-write-product-spec/SKILL.md","skills/specrail-write-tech-spec/SKILL.md","templates/pull_request.md","templates/zh-CN/pull_request.md","tests/route_gate_test_support.py","tests/test_check_workflow.py","tests/test_check_workflow_paths.py","tests/test_configured_spec_path_review_regressions.py","tests/test_duplicate_work_gate.py","tests/test_evaluate.py","tests/test_github_duplicate_evidence.py","tests/test_github_issue_evidence.py","tests/test_github_issue_route_evidence.py","tests/test_issue_evidence_freshness.py","tests/test_pack_asset_validation.py","tests/test_route_gate.py","tests/test_runtime_invocation_context.py","tests/test_runtime_invocation_provider.py"],"spec_refs":["specs/GH180/bootstrap-evidence.json","specs/GH180/product.md","specs/GH180/tech.md","specs/GH180/tasks.md"]}
+{"version":1,"issue":180,"complete":true,"paths":["AGENT_USAGE.md","README.md","checks/check_workflow.py","checks/duplicate_work_gate.py","checks/pack_asset_validation.py","checks/github_approved_spec_evidence.py","checks/github_duplicate_evidence.py","checks/github_issue_evidence.py","checks/route_gate.py","checks/runtime_invocation_context.py","checks/runtime_invocation_provider.py","evaluate.py","examples/fixtures/issue-body-hint-ready-to-implement.json","examples/fixtures/issue-ready-to-implement.json","examples/fixtures/issue-ready-to-spec.json","examples/fixtures/issue-reserved-internal.json","integrations/runtime-invocation-provider.md","labels.yaml","schemas/duplicate_work_evidence.schema.json","schemas/evaluation_result.schema.json","schemas/issue_evidence.schema.json","schemas/runtime_invocation_context.schema.json","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement/SKILL.md","skills/specrail-plan-tasks/SKILL.md","skills/specrail-workflow/SKILL.md","skills/specrail-write-product-spec/SKILL.md","skills/specrail-write-tech-spec/SKILL.md","templates/pull_request.md","templates/zh-CN/pull_request.md","tests/route_gate_test_support.py","tests/test_check_workflow.py","tests/test_check_workflow_paths.py","tests/test_configured_spec_path_review_regressions.py","tests/test_duplicate_work_gate.py","tests/test_evaluate.py","tests/test_github_duplicate_evidence.py","tests/test_github_issue_evidence.py","tests/test_github_issue_route_evidence.py","tests/test_issue_evidence_freshness.py","tests/test_pack_asset_validation.py","tests/test_route_gate.py","tests/test_runtime_invocation_context.py","tests/test_runtime_invocation_provider.py","tests/test_specrail_schema.py"],"spec_refs":["specs/GH180/bootstrap-evidence.json","specs/GH180/product.md","specs/GH180/tech.md","specs/GH180/tasks.md"]}
 -->
 
 ## Product Spec
@@ -29,8 +29,9 @@ GH-180
 | authorization mode | `workflow.yaml:15-58`、`skills/implx/SKILL.md:53-109` | 持久化 baseline 是 review；只有当前用户明确发起的 `implx auto` invocation 可临时选择 auto，且 auto policy 明确 waive `spec_approval` | 实现必须消费而不是改写该 policy；review 要 exact-head lifecycle approval，auto 要 runtime-owned invocation grant，caller record 仅作 selector；二者都不能 waive readiness 或其它 current evidence |
 | current invocation trust | search-first 未发现现有 route trust-anchor/provider adapter、runtime-owned grant registry 或 host integration contract；runtime checkpoint/tier authorization 只覆盖队列/merge，不证明 route caller 的 current invocation | caller record 可自报 `invocation_id`、grant 与 waived gates；若 provider 只签 caller digest，agent 可自行制造授权，旧同 issue/route record 与 saved result 也可跨 invocation 重放 | 新增 provider/context/integration assets；固定 authenticated IPC 查询 runtime-owned current-generation + grant registry，caller record 仅作 selector，runtime-owned portable verifier 校验 Ed25519/JCS/trust store |
 | portable verification | fresh-checkout Python 环境没有可依赖的 `cryptography`、`nacl`、`jcs` 或 `rfc8785` manifest/安装合同 | 单靠 client spec 要求 Ed25519/RFC8785 无法保证普通 checkout 可运行 | host runtime package 必须提供固定 authenticated verifier interface；repo client 只做闭合 schema/binding 与 verifier IPC 调用，不 vendor 私钥/自选 backend，verifier 缺失时 auto fail closed |
-| duplicate-work evidence | `checks/github_duplicate_evidence.py`、`checks/duplicate_work_gate.py`、`schemas/duplicate_work_evidence.schema.json` | collector/gate 能验证 open PR/remote branch 完整性，但 saved route consumer 不要求 fresh duplicate evidence，gate 也不限制 evidence 年龄 | saved result 后出现新 PR/branch 时，旧 duplicate success 仍可能被消费 |
-| route gate | `checks/route_gate.py:240-405` | readiness route 可接受 CLI `--state`，CLI `--label` 又在推断前并入 labels；artifact 只检查文件存在 | 两种自报入口都可绕过可信 label，且旧 route success 可被错误复用于改变后的 packet 或 duplicate snapshot |
+| duplicate-work evidence | `checks/github_duplicate_evidence.py`、`checks/duplicate_work_gate.py:134-197`、`schemas/duplicate_work_evidence.schema.json` | collector/gate 能验证 open PR/remote branch 完整性，但无条件拒绝每个引用 issue 的 open PR 与匹配 branch，无法识别作为 approval source 的 exact spec-only PR；saved route consumer 也不要求 fresh duplicate evidence或限制 evidence 年龄 | 必须只排除 approval object 精确绑定的同仓 spec-only PR/head branch，其它候选与任何 identity/head/path/query 漂移继续 fail closed；saved result 后的新 PR/branch 也必须使旧成功失效 |
+| route result contract | `checks/route_gate.py:513-516`、`schemas/evaluation_result.schema.json:6-89` | `allowed_actions` 仅按 lifecycle state 加入 `implement`，`decision=allowed` 不区分 staged task planning 与 complete production implementation | staged allowed result 可被旧 consumer 直接当成生产实现授权；必须增加闭合 scope/capability 并让 verify-result 按消费目的拒绝错用 |
+| route gate | `checks/route_gate.py:240-405` | readiness route 可接受 CLI `--state`，CLI `--label` 又在推断前并入 labels；artifact 只检查文件存在 | 两种自报入口都可绕过可信 label，且旧 route success 可被错误复用于改变后的 packet、repository identity 或 duplicate snapshot |
 | evidence regressions | `tests/test_github_issue_evidence.py:245-760`、`tests/route_gate_test_support.py:142-181`、`tests/test_configured_spec_path_review_regressions.py:155-345`、`examples/fixtures/issue-*.json` | 既有断言允许 readiness CLI state，trusted helper/fixtures 没有采集时间；主测试文件 851 行 | freshness 收紧会影响现有全量回归，必须纳入 manifest，并把超限文件按现有 route-evidence 模块拆分 |
 | agent contract | `AGENT_USAGE.md:86-130` | Basic Flow 列出三种 artifact，却未说明 write_spec 与 implement 的分阶段所有权 | agent 容易把 validator 的完整性要求误读为提前生成 tasks |
 | route router | `skills/specrail-workflow/SKILL.md:16-45` | 路由到 product、tech、tasks focused skill，但未明示 staged packet 的交接条件 | 需声明 product/tech 完成后等待真实 `ready_to_implement`，不能靠 shape 跳状态 |
@@ -102,9 +103,12 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   拒绝，否则直接跳到 `ready_to_implement` 后补三个 label 也能伪造出通过链，而 product
   invariant 要求完整生命周期）。approval actor 的 repository permission 必须满足现有
   maintainer policy，且 snapshot 前后 issue identity/labels 不得漂移。collector 还必须取得
-  被接受 `ready_to_implement` label event 的 event id、actor 与 timestamp；该 timestamp 必须
-  严格晚于 accepted `spec_approved` event。仅仅在 approval 之后重新采集一个早已存在的
-  readiness label 必须以 `readiness_precedes_spec_approval` 拒绝。
+  被接受 `ready_to_implement` label event 的 event id、actor 与 timestamp，并对该 actor 独立
+  执行相同的 repository permission lookup/threshold；缺 actor、权限查询失败、unknown/none/read
+  或低于 maintainer policy 均以 `readiness_actor_unauthorized` fail closed，不能以 label event
+  存在、actor 能操作 label 或 approval actor 已获授权代替。该 timestamp 必须严格晚于 accepted
+  `spec_approved` event。仅仅在 approval 之后重新采集一个早已存在的 readiness label 必须以
+  `readiness_precedes_spec_approval` 拒绝。
 
   approval source 必须是同一 repository 中绑定 GH-180 的 spec PR，而不是 fork、当前工作树或
   default-base 猜测。闭合 object 记录 repository id、PR number、base repository/ref、
@@ -116,18 +120,34 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   不唯一、跨 repository、head 漂移、approval 不在 exact head、blob 缺失/不匹配，或当前
   `spec_snapshot_sha256` 改变，都以 `spec_approval_stale` fail closed。`github_issue_evidence.py`
   在 review/default implement evidence 中嵌入该对象；schema 禁止开放字段；
+- `spec_lifecycle_approval` 同时提供 duplicate gate 唯一可用的
+  `approved_spec_pr_exemption`：闭合字段为 immutable `repository_id`、canonical
+  `repository`、`pr_number`、`head_repository_id`、`head_ref`、`approved_spec_head_sha`、
+  `changed_paths_complete: true` 与排序后的 `changed_paths`。changed paths 必须精确等于配置
+  source PR 的完整 path 集，必须包含配置渲染出的 product/tech，并且每一项都属于该 exact-head
+  tech manifest 的 `spec_refs`；因此正常 staged PR 可只有 product/tech，GH-180 bootstrap 可包含
+  已声明的 tasks/evidence，但任何 manifest `paths` 中的 implementation path 或未声明 path 都使
+  exemption 失效。collector 从同一 exact-head PR 查询得到 path 集与 head identity，caller
+  不能自报 `spec_only`。route 把该闭合对象交给 duplicate gate，gate 仅从 open-PR
+  candidates 排除 repository id + PR number + head repository/ref/SHA + 完整 path 集全部相等的
+  那一项，并仅从 remote-branch candidates 排除该 exact head repository/ref/SHA；若 source PR
+  已关闭/合并，其同一 exact-head branch 仍可按该 binding 排除。任何字段缺失、查询不完整、
+  fork、额外 path、head/branch 漂移或第二个引用 issue 的 PR/branch 均不享受 exemption，继续
+  `blocked`/`needs_human`。auto 路径没有 human approved spec PR，因此没有该 exemption；
 - `workflow.yaml` 不在 planned changes 中，现有 auth policy 保持原样：persisted/default
   `auth_mode` 是 review；只有当前用户明确发起的 auto invocation 才能选择 transient auto 并
   waive `spec_approval`。`route_gate` 为 review/default 路径离线重验完整 lifecycle object；
   auto 路径要求 `--auth-mode auto --auth-evidence <invocation-authorization.json>`，随后由
   `checks/runtime_invocation_provider.py` 内部连接固定 runtime service 并执行 challenge-response；
   CLI 没有 endpoint、provider、verifier、trust-root、keyset 或 signed-context 参数。caller
-  authorization record 必须只包含 runtime registry `grant_id` 与待匹配的 invocation/issue/route
-  selectors；其 `auth_mode`、waived gates、actor/source 或 digest 都不能成为 authority。
+  authorization record 必须只包含 runtime registry `grant_id` 与待匹配的
+  invocation/repository id + canonical name/issue/route selectors；其 `auth_mode`、waived
+  gates、actor/source 或 digest 都不能成为 authority。
   provider 先通过 authenticated transport session 确定 current invocation/generation，再用
   `grant_id` 查询 runtime-owned、caller 不可写的 authorization-grant registry；只有 registry
-  中由用户授权、active、未撤销、未过期且与 current invocation/issue/route、`auth_mode: auto`
-  和精确 `waived_human_gates: ["spec_approval"]` 匹配的 grant 才可签发 response。response 绑定
+  中由用户授权、active、未撤销、未过期且与 current invocation/immutable repository id +
+  canonical name/issue/route、`auth_mode: auto` 和精确
+  `waived_human_gates: ["spec_approval"]` 匹配的 grant 才可签发 response。response 绑定
   runtime canonical grant 的 `authorization_grant_sha256`，而不是签任意 caller record digest。
   missing/unknown/revoked/expired/mismatched grant 一律拒绝。
 
@@ -138,12 +158,15 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   Python crypto/JCS module，也不接受 caller backend。provider/verifier 不可达、peer 不可信、
   unknown key、签名/JCS 错误、过期/未来 response、非 current generation 或任一 binding 不匹配
   均 fail closed。route result 绑定 `authorization_grant_sha256`、
-  `runtime_invocation_context_binding_sha256`、invocation id/generation 与 authorization kind；
+  `runtime_invocation_context_binding_sha256`、invocation id/generation、repository identity 与
+  authorization kind；
   context 原文、signature、`key_id` 或 trust root 不写进 saved result。
 
   `runtime_invocation_context_binding_sha256` 只覆盖 **challenge-independent、rotation-stable**
-  字段：current invocation id、generation、issue、route、`auth_mode`、精确 waived gates、
-  runtime-owned `grant_id` 与 `authorization_grant_sha256`。它显式排除 request id/challenge、
+  字段：current invocation id、generation、immutable repository id、canonical repository
+  name、issue、route、`auth_mode`、精确 waived gates、runtime-owned `grant_id` 与
+  `authorization_grant_sha256`。grant 的 canonical digest 本身也必须含相同 repository identity。
+  它显式排除 request id/challenge、
   `issued_at`、`expires_at`、signature、`key_id` 与其它 envelope-only 字段。初次 route 和
   consumer 的每个 fresh response 仍必须分别由 verifier 校验自己的 `key_id` 在该次签发时
   active/non-revoked；两个有效重叠 key 之间的合法 rotation 不改变 stable binding。用完整
@@ -158,16 +181,30 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   saved-result 与 artifact drift。二者都按稳定 repository-relative path + 内容 sha256 聚合。
   合法创建 tasks 只改变 packet snapshot，不改变 spec snapshot；
 - route 在计算 snapshot 前调用 staged-aware packet validator，确保 product/tech 内容有效，
-  已存在的 tasks 也有效；implement 入场允许 tasks 缺失，但 tasks 创建后必须重跑 route；
+  已存在的 tasks 也有效；implement 入场允许 tasks 缺失，但 tasks 创建后必须重跑 route。
+  `schemas/evaluation_result.schema.json` 收紧 implement result：staged packet 固定输出
+  `authorization_scope: "task_planning"`、`allowed_actions: ["plan_tasks"]`，并把 `implement`
+  放入 `blocked_actions`；complete packet 只有在全部 gate 通过时才输出
+  `authorization_scope: "production_implementation"` 与 `allowed_actions: ["implement"]`。
+  通用 `decision` 继续使用闭集 `allowed|warn|needs_human|blocked`，但 `decision: allowed`
+  单独不是生产授权。scope、shape 与 allowed/blocked actions 的非法组合必须 schema/gate
+  拒绝，不能为了兼容旧 consumer 同时发出两个 capability；
 - duplicate evidence schema 将 `collected_at` 收紧为可解析 UTC 时间；`duplicate_work_gate`
-  使用与 issue evidence 同样显式、可配置且有安全默认值的最大年龄，重新验证 issue/repository、
-  complete open-PR query、open PR refs 与 matching remote branches。collector 测试固定顺序和
-  canonical JSON。route result 记录包含 `collected_at` 的
+  使用与 issue evidence 同样显式、可配置且有安全默认值的最大年龄，重新验证 immutable
+  repository id + canonical name、issue、complete open-PR/changed-path query、open PR refs 与
+  matching remote branches；只应用上一段 exact `approved_spec_pr_exemption`，并把排除的
+  PR/branch identity 记录在 satisfied audit 中。collector 测试固定顺序和 canonical JSON。
+  route result 记录包含 `collected_at` 的
   `duplicate_work_evidence_envelope_sha256`，以及只删除 `collected_at` 的
   `duplicate_work_evidence_snapshot_sha256`、采集时间与 decision；前者审计本次输入，后者才
   跨 fresh capture 比较，freshness 独立重验；
-- `route_gate --verify-result <saved-route.json> --evidence <fresh-issue-evidence.json>
-  --duplicate-evidence <fresh-duplicate-evidence.json>` 作为确定性 consumer gate；auto 路径
+- `route_gate --verify-result <saved-route.json> --consume-for
+  task_planning|production_implementation --evidence <fresh-issue-evidence.json>
+  --duplicate-evidence <fresh-duplicate-evidence.json>` 作为确定性 consumer gate；
+  `--verify-result` 缺 `--consume-for` 必须拒绝，且要求 saved `authorization_scope`、
+  packet shape 和 allowed/blocked actions 与 requested consumption exact match；特别是
+  `--consume-for production_implementation` 对 staged、`task_planning`、缺 scope 或 legacy
+  result 一律以 `authorization_scope_mismatch` 拒绝，不得靠 `decision: allowed` 通过。auto 路径
   还必须追加 `--auth-mode auto --auth-evidence <same-invocation-authorization.json>`；consumer
   内部再次通过 provider adapter 发出新的 challenge，禁止调用方重供或复用 signed context。
   consumer
@@ -179,9 +216,11 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   rotation-stable binding digest。随后 fresh duplicate evidence 重做 freshness/open PR/branch
   检查并比较 semantic snapshot，重算当前 `spec_snapshot_sha256` 与
   `packet_snapshot_sha256`，最后匹配 saved result 的 issue、route、authorization/context/
-  evidence/artifact 摘要与 allowed decision。不得把 saved hash 与 saved result 自身比较，也
+  evidence/artifact 摘要、repository identity、authorization scope/capability 与 allowed
+  decision。不得把 saved hash 与 saved result 自身比较，也
   不得把 saved context 副本或 caller record 当作 live trust anchor/authorization。新
-  invocation/generation/grant、PR/branch、文件、label/lifecycle/readiness ordering 或 semantic
+  invocation/generation/repository/grant、PR/branch、文件、label/lifecycle/readiness ordering、
+  consumer purpose 或 semantic
   evidence 变化都使旧结果确定性失效；只有 `collected_at` 或 active signing `key_id` 合法变化
   且各自 fresh/active 校验通过时不得误报 drift。
 - 更新四个 shipped issue fixtures，使其结构包含 `repository` 与 `collected_at`；固定时间 fixture
@@ -213,7 +252,8 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
 - **challenge request**：adapter 必须用 CSPRNG 为每次 route/`--verify-result` 独立生成
   32-byte challenge（base64url、无 padding）和 16-byte request id，禁止从 CLI/env/record/result
   接收。闭合 request 仅含 `protocol_version: 1`、`request_id`、`challenge`、
-  `claimed_invocation_id`、caller record 中的 `grant_id` selector、`issue`、`route` 与
+  `claimed_invocation_id`、caller record 中的 `grant_id` selector、fresh trusted evidence
+  得到的 immutable `repository_id` + canonical `repository`、`issue`、`route` 与
   `auth_mode: "auto"`；request 不携带可由 caller 定义的 grant digest、actor/source 或
   `waived_human_gates`。provider 必须从 runtime registry 读取 grant 后自行决定并返回这些
   authority fields，绝不签任意 caller-supplied waiver；
@@ -223,8 +263,9 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   `grant_authorized_at`、精确 `waived_human_gates: ["spec_approval"]`、
   `server_instance_id`、`issued_at`、`expires_at`、`key_id`、
   `signature_algorithm: "Ed25519"`、`canonicalization: "RFC8785-JCS"` 与 `signature`。
-  `authorization_grant_sha256` 来自 runtime-owned canonical grant entry，grant 必须 active、
-  未撤销/未过期，并与 current invocation/generation、issue/route/auth mode 精确匹配；
+  `authorization_grant_sha256` 来自 runtime-owned canonical grant entry，且该 canonical entry
+  必须含 response/request 相同的 repository id + name；grant 必须 active、未撤销/未过期，并与
+  current invocation/generation/repository/issue/route/auth mode 精确匹配；
   `expires_at - issued_at` 不得超过 60 秒；client 只接受当前时间位于该区间且 challenge/request
   id 精确匹配的单次响应；
 - **签名字节**：移除顶层 `signature` 后按 RFC 8785 JSON Canonicalization Scheme 生成 UTF-8
@@ -246,12 +287,13 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   重叠，route response 与 consumer response 可以由不同 active key 签名；`key_id` 不进入
   cross-challenge binding digest，但每次都必须独立通过 key activity 与 signature 校验；
 - **current/replay**：provider 必须以 authenticated transport session 的 current invocation/
-  generation 为权威，并把 fresh challenge、issue、route、runtime grant digest 与精确 waived
+  generation 为权威，并把 fresh challenge、repository id + name、issue、route、runtime grant digest 与精确 waived
   gates 一并签名。client 要求 claimed/current invocation 与 selected/runtime grant 均相等，
   只在本次调用内消费 challenge 一次；route 与 consumer 使用不同 challenge。旧 response
   无法回答新 challenge，旧 selector/旧 saved result 即使 issue/route 相同，也因 current
-  invocation/generation 或 runtime grant digest 不匹配而确定性拒绝；generation/grant 在 route
-  与 consumer 之间改变同样拒绝。仅 active signing key rotation 不构成 grant/invocation 漂移；
+  invocation/generation/repository 或 runtime grant digest 不匹配而确定性拒绝；
+  generation/repository/grant 在 route 与 consumer 之间改变同样拒绝。仅 active signing key
+  rotation 不构成 grant/invocation 漂移；
 - **可用性**：provider/grant registry/verifier 未部署或不可达、transport peer 不可信、
   trust store 不可读、unknown/revoked/expired key 或 grant、JCS/signature/时间/challenge/
   binding 错误、generation 改变时，auto route 必须以明确 reason fail closed。operator 可以
@@ -265,18 +307,21 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
 2. review/default 路径采集同仓 spec PR immutable exact-head maintainer approval 及有序
    `spec_pr_open → spec_review → spec_approved` lifecycle evidence；明确 auto invocation
    则用 caller selector 查询 runtime-owned active grant，并通过 provider + portable verifier
-   的 fresh challenge-response 形成限于 current invocation/issue/route 的 `spec_approval` waiver；
+   的 fresh challenge-response 形成限于 current invocation/repository/issue/route 的
+   `spec_approval` waiver；
 3. 两条路径都在 authorization 之后取得 event timestamp 严格更晚的 fresh trusted
-   `ready_to_implement`，再用 fresh issue + fresh duplicate evidence 令 implement route 对
-   staged packet allowed；freshness 单独校验，跨采集比较排除且只排除 `collected_at` 的 semantic
-   snapshot；
+   `ready_to_implement`，并独立验证该 event actor 的 maintainer permission；review 路径的
+   duplicate gate 只排除 exact approved spec-only PR/head branch，再用 fresh issue + fresh
+   duplicate evidence 令 implement route 对 staged packet 输出
+   `authorization_scope=task_planning`、只允许 `plan_tasks`；freshness 单独校验，跨采集比较排除
+   且只排除 `collected_at` 的 semantic snapshot；
 4. `specrail-plan-tasks` 创建并验证 tasks，packet 变为 complete；
 5. 对 complete snapshot 重跑 implement route，并立即用
-   `--verify-result <result> --evidence <fresh-evidence>
+   `--verify-result <result> --consume-for production_implementation --evidence <fresh-evidence>
    --duplicate-evidence <fresh-duplicate-evidence>`（auto 重供同一 grant selector，client
    adapter 自动发出新的 provider challenge 并调用 portable verifier）对当前
    `spec_snapshot_sha256`、`packet_snapshot_sha256`、fresh semantic evidence、
-   approval-or-grant 与 freshness 分别验证；
+   repository identity、approval-or-grant、scope/capability 与 freshness 分别验证；
 6. `specrail-implement-queue` 只有在 `spec_status=complete` 且 consumer gate 通过时才允许生产代码 lane。
 
 因此 implement route 入场不循环要求它将创建的 tasks，但生产代码也不能从 staged packet
@@ -317,19 +362,22 @@ ready_to_spec packet 一律走 staged 路径。
 task-planning、direct implement 与 queue skill 使用相同术语：shape 是
 `staged|complete|invalid`，queue spec status 是 `needs_tasks|complete|needs_spec`，readiness
 来自 fresh trusted GitHub evidence；spec approval 在 review/default 路径来自同仓 spec PR
-immutable exact-head maintainer approval 与有序 lifecycle，且 readiness event 必须更晚；在
+immutable exact-head maintainer approval 与有序 lifecycle，readiness event 必须更晚且其 actor
+必须满足 maintainer policy，duplicate exemption 只覆盖 exact approved spec-only PR/head；在
 明确 auto invocation 中来自 caller selector、runtime-owned grant registry 与 verified live
-current-invocation context 的联合验证。
+current-invocation context 的联合验证，且整条链绑定 immutable repository identity。
 staged 写作完成后必须等待 review approval，或在 auto 合同下记录 waiver 并真实设置/重采
-readiness；tasks 完成后必须重跑 route 与 consumer gate。七个 skill 修改后只更新其
+readiness；staged result 只能 `plan_tasks`，tasks 完成后必须重跑 route，并以
+`--consume-for production_implementation` 通过 consumer gate。七个 skill 修改后只更新其
 `skills-lock.json` hash；不修改 skill 集合、顺序、路径或其它 hash。
 
 审计由同一当前 packet 上的两份互补证据组成：`check_workflow` 输出 artifact
 shape/validation/packet snapshot，`route_gate` 输出 linked issue、trusted state source、
 采集时间、完整 evidence envelope audit hash、排除且只排除 `collected_at` 的 semantic
-snapshot、`spec_snapshot_sha256`、`packet_snapshot_sha256`、approval-or-grant、decision 与
-missing/reasons。消费者必须用
-`--verify-result <result> --evidence <fresh-evidence>
+snapshot、`spec_snapshot_sha256`、`packet_snapshot_sha256`、repository identity、
+approval-or-grant、`authorization_scope`、allowed/blocked actions、decision 与
+missing/reasons。生产消费者必须用
+`--verify-result <result> --consume-for production_implementation --evidence <fresh-evidence>
 --duplicate-evidence <fresh-duplicate-evidence>`（auto 重供 grant selector，由 client adapter
 内部发出新的 provider challenge 并调用 portable verifier）重算语义/文件摘要、分别重验
 freshness 与 key activity 并重跑 duplicate gate，不得拼接不同 snapshot 的成功结果或把 saved
@@ -344,11 +392,11 @@ hash 自比较后声称 implementation-ready。
 | B-004 | product/tech 现有校验 | 缺失、空、bad issue token、bad manifest fixtures 继续非零 |
 | B-005 | present-task validation | 无效 task fixture 输出 `shape=complete` 且非零，绝不输出 staged success |
 | B-006 | workflow/router/focused write docs + write_spec regression | write_spec route 只要求 product/tech，focused skills 使用 fresh label evidence |
-| B-007 B-013 | route gate、plan-tasks、direct implement、implx 与 queue coverage | staged=`needs_tasks`；tasks 后以 current exact-head approval 或 runtime grant、fresh issue/duplicate semantic evidence 重跑并匹配 complete packet snapshot 才能进入生产实现 |
-| B-008 B-009 | issue/lifecycle/spec-PR evidence collector、runtime provider/grant registry/portable verifier integration、context schema、route gate、labels 与 fixtures/tests | review 验证 same-repo exact-head maintainer approval 及后续 readiness event；auto 只接受 runtime registry active grant 并通过 fixed authenticated provider/verifier IPC；caller 不能选择 provider/verifier/root 或自造 waiver |
+| B-007 B-013 | route gate、evaluation-result schema、plan-tasks、direct implement、implx 与 queue coverage | staged result 只含 `task_planning`/`plan_tasks` 且阻断 implement；production `--consume-for` 确定性拒绝 staged/legacy/missing-scope result；tasks 后以 complete `production_implementation` scope 才能进代码 lane |
+| B-008 B-009 | issue/lifecycle/spec-PR evidence collector、duplicate collector/gate、runtime provider/grant registry/portable verifier integration、context schema、route gate、labels 与 fixtures/tests | review 验证 same-repo exact-head maintainer approval、readiness actor permission 与 post-approval event，并只排除 exact spec-only source PR/head；auto 只接受 repository-bound runtime registry active grant 和 fixed authenticated provider/verifier IPC |
 | B-011 | all existing packets + full suite | `--all-specs` 中既有三文件 packet 全部 `complete`，无需迁移 |
 | B-012 | PR #179 follow-up fixture/verification | 删除 GH165 tasks 后新 validator 报 staged 且 CI 绿，issue 仍非 implementation-ready |
-| B-014 B-015 | validator/route authorization/runtime challenge-response/evidence/spec+packet snapshots + `--verify-result` | fresh envelope hash 保留 `collected_at` 作审计，semantic snapshot 只排除该字段且单独验 freshness；spec snapshot 只比 product/tech approval，packet snapshot 检测 tasks/artifact drift；route/consumer 可用不同 active key，但各 response 独立验签/key activity，stable binding 排除 `key_id` |
+| B-014 B-015 | validator/route authorization/runtime challenge-response/evidence/spec+packet snapshots + scoped `--verify-result` | repository id+name 贯穿 selector/grant/request/response/digests/result；fresh envelope 与 semantic snapshot、spec 与 packet snapshot、task-planning 与 production scope 分别校验；合法 key rotation只排除 `key_id` |
 | B-016 B-017 | tracked bootstrap evidence | direct transition、reported decisions/waiver claim 与 unproven invocation/route/waived gates/exact trigger/collected_at/hash 分栏；authorization_effect=none |
 | B-018 | CLI + route evidence pair | shape 行含 path/shape/readiness/snapshot；route JSON 含 issue/state/auth_mode/authorization kind 与 hash/evidence hashes/decision/reasons |
 | B-019 | partial-file fixtures | 半写/空 product 或 tech 失败；中断后只按当前文件重新分类 |
@@ -357,12 +405,14 @@ hash 自比较后声称 implementation-ready。
 
 Git tree 中的 packet paths → `spec_packet_shape` → `validate_spec_packet` 内容错误集合 →
 `check_workflow` 稳定 shape/validation/packet snapshot 输出。live GitHub issue evidence、同仓
-spec PR exact-head review lifecycle 或 runtime-owned grant + verified current-invocation anchor、
+spec PR exact-head review lifecycle/readiness actor authority 或 repository-bound runtime-owned
+grant + verified current-invocation anchor、
 duplicate-work evidence → route gate 分别校验 freshness、semantic snapshot、readiness event
-ordering、authorization kind、open PR/branch、spec snapshot 和 packet snapshot → 带
-grant/runtime-context/evidence envelope+semantic/artifact 摘要的 decision JSON。
+ordering、authorization kind、exact spec-source duplicate exemption、open PR/branch、spec
+snapshot 和 packet snapshot → 带 repository/grant/runtime-context/evidence
+envelope+semantic/artifact 摘要及 authorization scope 的 decision JSON。
 queue 在 task planning 前校验 staged snapshot，tasks 写入后再用 validator、route gate 和 spec
-coverage 重跑，再用 `--verify-result` 与 fresh issue/duplicate evidence 同时匹配 complete
+coverage 重跑，再用 production-scoped `--verify-result` 与 fresh issue/duplicate evidence 同时匹配 complete
 snapshot；生产实现只消费 fresh 且全部摘要、human gates 和 duplicate gate 均匹配的结果。
 
 ## 备选方案
@@ -376,18 +426,21 @@ snapshot；生产实现只消费 fresh 且全部摘要、human gates 和 duplica
 ## 风险
 
 - Security: shape 与 readiness label 都不得被当作 spec approval；review implement 验证同仓
-  spec PR immutable exact-head maintainer approval 与后续 readiness event，auto implement 只
-  接受 runtime-owned active grant + authenticated challenge-response；runtime grant registry、
+  spec PR immutable exact-head maintainer approval、readiness actor authority 与 exact-source
+  duplicate exemption，auto implement 只接受 repository-bound runtime-owned active grant +
+  authenticated challenge-response；runtime grant registry、
   private key/issuer/verifier 由 host owner 管理，不进入 repo，client 不允许 endpoint/verifier/
   root 注入；两者都验证可信 readiness、duplicate、spec/packet snapshot 与 consumer evidence。
-- Compatibility: CLI 新增确定性 shape 行但保留既有最终消息与 exit code；旧完整 packet 无需改写。
+- Compatibility: CLI 新增确定性 shape/scope 行但保留既有最终消息与 exit code；旧 saved result
+  缺 scope 时 fail closed，必须重跑，不能兼容成 production authorization；旧完整 packet 无需改写。
 - Availability: host provider + grant registry + portable verifier 是 auto 的显式前置条件；任一
   未部署或不可达时 auto reason 为 blocked，正常 review route 不受影响，且绝不自动从 auto
   改成 review。
-- Race: route JSON 显式绑定 auth mode、approval-or-grant、runtime generation、issue/duplicate
+- Race: route JSON 显式绑定 repository、auth mode、approval-or-grant、runtime generation、issue/duplicate
   semantic snapshot、spec 与 packet snapshot；生产操作前必须查询 live runtime、重采 evidence、
   单独验 freshness/key activity并重算匹配。`collected_at` 与 active `key_id` 的预期变化不误判
-  drift，其它语义、grant、readiness ordering 或 artifact 变化均拒绝。freshness 是 bounded
+  drift，其它语义、repository、grant、spec-source head/path、readiness ordering、consumer
+  purpose 或 artifact 变化均拒绝。freshness 是 bounded
   staleness，不宣称消除 GitHub 查询后的瞬时竞态。
 - Maintenance: `validate_spec_packet` 保持 list 返回值，新增 helper 避免大规模 API 迁移；修改后
   `checks/check_workflow.py` 与所有 touched files 仍须 `<800` 行。
@@ -404,14 +457,18 @@ snapshot；生产实现只消费 fresh 且全部摘要、human gates 和 duplica
 - [ ] Evidence/route: `/usr/bin/python3 -m pytest -q tests/test_issue_evidence_freshness.py
   tests/test_route_gate.py tests/test_runtime_invocation_context.py
   tests/test_runtime_invocation_provider.py tests/test_duplicate_work_gate.py
-  tests/test_github_duplicate_evidence.py`，覆盖 review same-repo exact-head approval、完整 lifecycle
-  与 `spec_approved < ready_to_implement`；auto grant-selector + runtime-owned registry/provider/
+  tests/test_github_duplicate_evidence.py tests/test_specrail_schema.py`，覆盖 review same-repo
+  exact-head approval、只排除 exact spec-only PR/head branch、其它 PR/branch 与 source
+  identity/head/path/query 漂移阻断、完整 lifecycle、readiness actor permission fail-closed 与
+  `spec_approved < ready_to_implement`；覆盖 staged/production scope/action 闭合组合和 production
+  verify-result 拒绝 staged/legacy result；auto grant-selector + runtime-owned registry/provider/
   verifier 正负例、固定 endpoint/peer identity、Ed25519/JCS signing bytes、active/rotated/revoked
   keyset 及跨 challenge 合法 key rotation、
   CLI state/readiness label self-report、缺失/未来/超窗 issue/duplicate evidence、错误 issue、
   新 PR/branch、provider unavailable、endpoint/root 注入尝试、challenge/response replay、
   缺/伪造/过期/旧 generation context、caller 自造/旧/revoked grant、旧 selector 与 saved result
-  跨 invocation 重放、只变化 `collected_at` 的 fresh recapture、semantic evidence 漂移、
+  跨 repository/invocation 重放、缺失/错误/rename-drift repository id/name、只变化
+  `collected_at` 的 fresh recapture、semantic evidence 漂移、
   spec/packet snapshot 分离与 artifact 漂移。
 - [ ] Regression migration: `/usr/bin/python3 -m pytest -q tests/test_github_issue_evidence.py tests/test_github_issue_route_evidence.py tests/test_configured_spec_path_review_regressions.py tests/test_route_gate_sensitive.py`，覆盖拆分后的原有断言、shipped fixtures、configured paths 与 sensitive route helper；所有修改文件 `<800`。
 - [ ] Submission: `/usr/bin/python3 -m pytest -q`、
