@@ -335,30 +335,10 @@ Keep ownership boundaries explicit:
 
 ## Bounded Review Contract
 
-<!-- specrail-bounded-review-contract-v1:start -->
-Bounded review contract (`manifest.version: 2`,
-`round_policy: {name: "bounded_diff_v1", cap: 3}`):
-
-- `rounds[]` is the source of truth. Each entry is the closed set
-  `{artifact_id, review_round, review_mode, base_head_sha, head_sha, diff_sha256, escalation_authorization_id}`;
-  the loader derives continuous rounds `1..N` from the artifact set.
-- Round 1 may use `full`. Every `review_round >= 2` must use `review_mode:
-  resumed | diff_only`, never `full`; `base_head_sha` must equal the previous
-  round's `head_sha`, and the supplied bytes and `diff_sha256` must match the
-  exact `git diff --no-ext-diff --binary <base_head_sha>..<head_sha> --` output.
-- `prior_findings[]` is compact typed carry only:
-  `{finding_id, source_artifact_id, status, evidence_pointer}` with
-  `evidence_pointer.kind: thread | comment | artifact | commit`; do not replay
-  historical finding prose. Carry every still-unresolved historical finding.
-- Before every `review_round >= 4`, stop. Continue exactly once only with an
-  external, role-mapped maintainer authorization whose `decision` is
-  `continue_once` and whose id, PR, prior/target heads, and round match exactly.
-- The over-cap `round_cap_escalation.unresolved_findings[]` must equal the full
-  union of historical unresolved findings and current critical, important, or
-  otherwise actionable findings; no finding may disappear or be invented.
-- `auth_mode: auto` merge authorization and `human_full_review_request` do not
-  authorize an over-cap review round and cannot replace that exact cap evidence.
-<!-- specrail-bounded-review-contract-v1:end -->
+Use the canonical manifest-v2 `bounded_diff_v1` contract in
+`skills/specrail-review-pr/SKILL.md`; do not copy it here. Queue execution must
+load that Skill before review, and `checks/review_json_gate.py` plus
+`checks/review_result_semantics.py` remain the deterministic authority.
 
 ## Reviewer Lane Execution
 
@@ -717,66 +697,27 @@ raw PR evidence JSON that re-evaluates to `allowed`.
 
 ### Merge Authorization
 
-`auth_mode: auto`:
+Mode selection and full evidence details live in `skills/implx/SKILL.md` and
+`skills/specrail-pr-gate/SKILL.md`; runtime enforcement lives in
+`checks/runtime_ledger_gate.py`.
 
-- The current user message must explicitly say `implx auto` / `implx 自动`.
-  That invocation is the standing merge authorization for the run. Do not ask
-  per-PR merge questions.
-- Merge when ALL current evidence is green: CI/check rollup passing, PR gate
-  passed, review threads resolved, reviewer-lane evidence present, merge state
-  clean. Any evidence gap means skip the PR, record the gap in
-  `remaining_queue`, and keep draining.
-- Use closing keywords on final slices; after merge, close issues whose
-  acceptance criteria are fully merged. Merged-but-open issues found during
-  closure audit are closed with a comment linking the merged PRs.
-- Human-gate items (duplicate-ownership conflicts, maintainer waivers, probe
-  or time-window gates, conflicting review feedback, destructive or
-  irreversible actions) never block the queue: skip, continue, and report them
-  once in a final `human_decisions` list with a recommended action each.
-- Auto mode does not weaken reviewer-lane requirements, the self-review
-  authorization rules, the Bounded Tranche Hard Stop, or the runtime ledger
-  gate. Standing merge authorization is not self-review authorization.
-
-`auth_mode: review` — tiered authorization (GH-143 decision B):
-
-- `standard_auto` (no per-PR question): a PR qualifies when ALL of the
-  following hold —
-  - `pr_tier` is `fastlane` or `standard`, recorded with its evidence
-    (`pr_tier_evidence`: changed-line count and touched paths);
-  - all four green evidence classes are current: CI rollup passing, review
-    threads all resolved with `unresolved_count: 0`, pr_gate decision
-    `allowed`, independent reviewer-lane verdict `clean` or `non_blocking`;
-  - the item is not enforcement-sensitive;
-  - at least one independent tier endorsement beyond the self-reported
-    `pr_tier_evidence` exists: (a) a gate-verifiable CI tier-check artifact
-    reference, or (b) a reviewer-lane `tier_attestation`
-    (`{pr_tier, attested: true, basis}`) in the review artifact whose
-    `pr_tier` matches the checkpoint value. Self-reported evidence alone is
-    never sufficient. Until a CI tier check ships, the reviewer-lane
-    attestation is the only accepted endorsement. The attestation counts
-    only when the review artifact validates against
-    `schemas/review_result.schema.json` and the artifact's own
-    `review_source` is `independent_lane`; a malformed artifact is a hard
-    error. A `review_source: self_review` item can never qualify for
-    `standard_auto` — with no independent party it fails closed to
-    `heavy_manual` regardless of attestation content.
-  Record `authorization_tier: standard_auto` and
-  `merge_authorization.source: tier_policy_gh143` (audit anchor — do not
-  rename) on the checkpoint item, with the four green evidence references.
-- `heavy_manual` (per-PR human authorization, unchanged): `heavy` tier PRs
-  and enforcement-sensitive surfaces (gate code, enforcement, contracts,
-  authorization semantics, schemas/migrations, security, any
-  `enforcement_sensitive: true` item). Record
-  `authorization_tier: heavy_manual` with the human actor/source.
-- Fail-closed: missing, unevidenced, or out-of-set `pr_tier` is treated as
-  `heavy`. A tier dispute — CI tier-check disagreement, a reviewer
-  `tier_attestation` that mismatches the checkpoint `pr_tier`, or a
-  reviewer-recorded `tier_dispute: true` — blocks `standard_auto` and routes
-  to a human decision. Only the reviewer/merge-reviewer lane (or a human)
-  may set or clear `tier_dispute`; the implementer lane has no authority
-  over it. `checks/runtime_ledger_gate.py` blocks any violation.
-- Tier authorization never replaces or fills an evidence gap: any non-green
-  evidence means the PR waits or routes to a human, exactly as before.
+- `auto` exists only after the current user says `implx auto` / `implx 自动`.
+  Its standing merge authorization applies only when current CI, PR gate,
+  review threads, local reviewer evidence, and merge state are all green.
+  Gaps go to `remaining_queue`; standing merge authorization is never
+  self-review authorization.
+- In `review`, `standard_auto` requires non-sensitive `fastlane`/`standard`
+  tier evidence, the same four green evidence classes, and independent
+  substantiation from a gate-verifiable CI tier check or an
+  `independent_lane` artifact's matching
+  `{pr_tier, attested: true, basis}`. Record
+  `authorization_tier: standard_auto` and the stable audit anchor
+  `merge_authorization.source: tier_policy_gh143`.
+- Self-review never qualifies for `standard_auto`. Heavy/sensitive/unknown
+  tiers use `heavy_manual` with per-PR human actor/source. Missing evidence,
+  malformed artifacts, CI/attestation disagreement, or `tier_dispute: true`
+  fails closed; only reviewer/merge-reviewer or human roles may resolve a
+  dispute. Tier authorization never fills another evidence gap.
 
 ### Graded Re-confirmation After Authorization (GH-143)
 
@@ -839,32 +780,15 @@ must never report an outcome without remote confirmation:
 
 ## Output
 
-Report:
-
-- overall objective, queue mode, current tranche, and remaining queue
-- issue-to-PR mapping
-- PR links, head SHAs, and merge commits when merged
-- acceptance criteria covered or remaining
-- tests and deterministic checks run
-- review-thread, CI, merge-state, and PR-gate evidence
-- issues still open and why
-- `human_decisions`: the consolidated list of items needing a human choice,
-  each with a recommended action (auto mode reports this once at the end
-  instead of asking mid-run)
-- local dirty or stale worktree state
+Report the objective/mode/tranche/remaining queue; issue-to-PR mapping and
+acceptance coverage; PR/head/merge links; fresh tests, CI, review-thread,
+merge-state and PR-gate evidence; open blockers; local worktree state; and one
+consolidated `human_decisions` list with a recommendation per item.
 
 ## Rejection Persistence And Retry
 
-When a gate command in this skill (`checks/route_gate.py`,
-`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
-other than `allowed`, the caller persists the gate's JSON output to
-`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
-missing). This write is orchestrator behavior; the gate itself stays
-read-only. Use the `rejection_items[]` list to fix every defect in a single
-round instead of guessing one item per retry.
-
-On the next retry of the same gate for the same issue or PR, pass
-`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
-the new output contains a `repeat_rejection` section, the same item was
-rejected verbatim twice: stop retrying and report the contract violation to a
-human instead of starting another round.
+Persist every non-`allowed` route/review/PR gate result at
+`.specrail/runtime/rejections/<gate>-<issue|pr>.json`, fix the complete
+`rejection_items[]` set, and pass it back with `--prior-rejection`. A
+`repeat_rejection` means stop retrying and report the repeated contract
+violation; gates themselves remain read-only.

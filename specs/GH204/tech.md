@@ -6,7 +6,7 @@ GH-204
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":204,"complete":true,"paths":["integrations/threads.md","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","specs/GH204/product.md","specs/GH204/tasks.md","specs/GH204/tech.md"],"spec_refs":["specs/GH204/product.md","specs/GH204/tech.md","specs/GH204/tasks.md"]}
+{"version":1,"issue":204,"complete":true,"paths":["integrations/threads.md","skills-lock.json","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","specs/GH204/product.md","specs/GH204/tasks.md","specs/GH204/tech.md","tests/test_review_contract_docs.py"],"spec_refs":["specs/GH204/product.md","specs/GH204/tech.md","specs/GH204/tasks.md"]}
 -->
 
 ## Product Spec

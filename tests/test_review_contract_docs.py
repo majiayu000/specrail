@@ -5,7 +5,6 @@ REPO = Path(__file__).resolve().parents[1]
 CONTRACT_FILES = (
     "review/agent_first_review.md",
     "skills/specrail-review-pr/SKILL.md",
-    "skills/specrail-implement-queue/SKILL.md",
     "skills/implx/SKILL.md",
     "integrations/threads.md",
 )
@@ -62,3 +61,13 @@ def test_authoritative_docs_reject_legacy_full_review_escape_hatches() -> None:
         text = (REPO / relative_path).read_text(encoding="utf-8").lower()
         for phrase in FORBIDDEN_LEGACY_PHRASES:
             assert phrase not in text, f"{relative_path}: forbidden legacy phrase: {phrase}"
+
+
+def test_queue_skill_references_canonical_bounded_review_contract() -> None:
+    text = (REPO / "skills/specrail-implement-queue/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "skills/specrail-review-pr/SKILL.md" in text
+    assert "do not copy it here" in text
+    assert START not in text
+    assert END not in text
