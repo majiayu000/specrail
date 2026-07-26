@@ -120,7 +120,10 @@ host phase-load hook
 2. 校验 closed phase enum、非空路由、POSIX 相对路径与 skill-root containment；
 3. 校验每个路径是普通文件且无 symlink component；
    对每个 reference 另校验 UTF-8 decode、`<500` 行与 `≤16384` UTF-8 bytes，并把
-   expected size/digest 交给 v2 lock/loader；
+   expected size/digest 交给 v2 lock/loader；再对 manifest 中每个 phase 计算主文件
+   与该 phase 全部映射引用的 UTF-8 bytes 合计，超过 40960 即确定性失败——独立
+   per-file 上限（28672 + 16384 = 45056）本身不足以阻止强制注入总量超过拆分前
+   40,985-byte 单文件；
 4. 扫描引用中的 Markdown link/marker **以及裸路径 token**（反引号或纯文本里的
    `SKILL.md`、`references/*.md` 等规范化路径），拒绝对主文件/其他引用的二级路由；
    唯一例外是步骤 6 验证通过的第一条 exact required header 中恰好一次 `SKILL.md`，
@@ -260,8 +263,13 @@ invocation 重放的 opaque `bootstrap_handle`；
 phase manifest 选择 references；agent 不能传 path/bytes/parser endpoint。client 逐项从
 startup-held root descriptor no-follow open，校验 regular file、mode、containment、
 `<500` lines、`≤16384` UTF-8 bytes、pinned source-lock/expected size/digest；同一 stable
-descriptor 只读取一次 immutable bytes，随后通过 `authenticated_host_context` 中已绑定的
-parser sink 直接提交该 buffer，禁止校验后重新打开路径或让 parser 自行读文件。
+descriptor 只读取一次 immutable bytes。该 phase 全部已校验 buffers 组成**单个原子
+batch**，通过 `authenticated_host_context` 中已绑定 parser sink 的 prepare/commit/abort
+协议提交：prepare 阶段 staged 内容对 agent context 完全不可见；任一 buffer 校验或
+接受失败则整个 batch abort，已 staged 内容全部丢弃、无任何引用生效；仅当 parser 接受
+完整 reference set 后由单次 commit 原子生效并产出 receipt。禁止逐 buffer 独立提交
+（多引用 phase 如 `runtime_handoff` 不得让第一个引用先生效）、校验后重新打开路径或
+让 parser 自行读文件。
 
 成功 `phase_load_receipt` 是 closed、attested 结果：
 
@@ -290,6 +298,8 @@ invocation 并取得新的 fresh binding。
 bytes 和 `splitlines()` 计算，边界 500/28672 均测试 exact pass 与 +1 fail。
 
 queue 主文件不超过 500 行/28672 bytes；每个引用低于 500 行且不超过 16384 UTF-8 bytes；
+每个 phase 的主文件+全部映射引用 UTF-8 bytes 合计不超过 40960，40960 exact pass、
+40961 fail，`startup_planning` 与 `runtime_handoff` 的 boundary fixture 必须覆盖；
 runtime client 作为 `0755` v2-lock 分发文件且严格 `<800` 行。三引用不互相依赖。GH-172
 合并后基于最新 manifest API 实现并最后刷新 queue/implx hash。
 
@@ -376,13 +386,16 @@ remote merge confirmed → post_merge_closure → closure-audit procedure
 - [ ] Drift regression: startup 后、phase 首次加载前分别替换 repo/installed reference bytes、
       path、symlink 与 source lock，均在 phase action 前拒绝；未漂移时 parser 只接收同一次
       read 得到的 verified bytes；wrong parser peer、replayed handle/receipt 与 partial
-      injection 也不得使内容生效。
+      injection 也不得使内容生效；`runtime_handoff` 双引用 fixture 断言第二个 buffer
+      被拒绝时 batch abort 后第一个引用内容同样不可见。
 - [ ] Startup firewall: main-only bootstrap 与 startup-planning 正例在任何 remote query 前
       激活 artifact-first；大 GitHub listing/diagnostic 的 raw output 不进入 parent，
       recovery reference 未加载也保持 enforceable；150 lines、16384 total bytes、512
       bytes/line、4096 tokens 各自 exact boundary/+1 全覆盖。
 - [ ] Reference size: 三引用逐文件 `<500` lines/`≤16384` UTF-8 bytes，invalid UTF-8 与
-      16385-byte fixture 在 graph、lock/install 与 phase load 各层一致失败。
+      16385-byte fixture 在 graph、lock/install 与 phase load 各层一致失败；每 phase
+      主文件+映射引用合计 40960 exact pass 与 40961 fail fixture 覆盖
+      `startup_planning` 与 `runtime_handoff`。
 
 ## 回滚方案
 
