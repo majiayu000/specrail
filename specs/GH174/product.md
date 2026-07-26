@@ -22,6 +22,9 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 - 用确定性检查保证引用闭集、路径安全、无循环、无冲突并可安装。
 - 让 startup 以 loader-owned evidence 绑定实际加载的 entrypoint，并在第一条命令前启用
   output firewall。
+- 让 host 从锁定位置启动 runtime client，并通过认证的 phase-loader/parser handoff 消费
+  load-time 校验的同一 bytes。
+- 为 parent output 与每个引用同时设置可执行的 line/UTF-8 byte/token 上限。
 
 ## 非目标
 
@@ -102,6 +105,38 @@ readiness、review、authorization、merge 或 fail-closed 合同。
     entrypoint 与 loader-resolved queue dependency。两条路径必须处于同一 canonical source
     root 并绑定同一 source-lock chain；只校验 queue canonical path、混用 root/lock 或存在未知
     skill ID 均 fail closed。
+22. B-022 当 `implx` 或 direct queue entrypoint 被 host 加载时，host skill loader 必须在
+    agent 可执行任何命令前，从 current-invocation loader registry 解析并启动
+    `runtime/phase_loader.py`；client 的 canonical path、regular-file/mode、bytes digest、
+    source-lock chain 与 invocation 必须由 host 在执行前绑定。consumer checkout、当前工作目录、
+    agent/CLI/environment/checkpoint 提供的 client/path/digest 或“本机是否已安装”均不得选择
+    bootstrap executable。`repo_copy` 必须在没有 installed copy 时仍可由同一 host hook
+    attestation；`installed_copy` 必须绑定实际 loaded installed root。host hook/client
+    不可用或不匹配时必须在 remote read、checkpoint 或 lane 前 fail closed。
+23. B-023 当任一 phase 首次加载引用时，agent 只能把 startup 返回的 opaque
+    `bootstrap_handle` 与闭集 `phase_id` 交给 host `load_phase` API。该 API 必须重新验证
+    startup-pinned root/lock/path/digest，以 stable no-follow descriptor 读取一次 bytes，并把
+    同一 immutable bytes buffer 交给 current-invocation 认证的 parser/agent injection sink；
+    caller 不得传路径、bytes、parser endpoint 或 reopen 文件。成功 receipt 必须绑定
+    invocation、phase、reference digests、parser identity 与 injection identity；peer/handle/
+    receipt 缺失、重放、错 invocation、parser authentication 失败或 digest 漂移均在内容生效
+    前 fail closed。
+24. B-024 当 origin 为 `installed_copy` 时，startup doctor 必须只检查 resolver-attested
+    installed root：root identity 只能从已验证 `bootstrap_handle` 传入 internal doctor API，
+    不得由 public CLI 的默认目录、`--target-dir`、environment 或 agent text 替代。doctor
+    `match` receipt 必须回绑 canonical root identity、root binding digest 与同一
+    `source_lock_manifest_sha256`；检查其它 matching installation、root rebind 或任一回绑
+    不一致均不能授权实际 loaded copy。
+25. B-025 当 `output_firewall_v1` 向 parent 注入 command tail/summary 时，必须同时满足
+    `max_lines=150`、`max_total_utf8_bytes=16384`、`max_line_utf8_bytes=512` 与
+    `max_tokens=4096`；截断 marker 必须包含在全部上限内，raw excess 只能留在 artifact。
+    token count 使用 current-invocation host tokenizer identity；meter/identity 不可用时不得
+    注入未经计数的 tail，只能返回固定最小 status 与 artifact path。四项 exact boundary
+    必须通过，任一 `+1` 必须在进入 parent context 前确定性截断或阻断。
+26. B-026 当任何 phase reference 被 graph validator、lock、installer、doctor 或 loader
+    接受时，该文件必须是合法 UTF-8、少于 500 行且不超过 16384 UTF-8 bytes；byte ceiling
+    对每个引用独立计算并进入 v2 lock expected-size/digest 证据。16384 bytes 必须通过，
+    16385 bytes、无效 UTF-8 或任一组件只检查行数均 fail closed。
 
 ## 验收标准
 
@@ -128,6 +163,17 @@ readiness、review、authorization、merge 或 fail-closed 合同。
       handoff 或 retry 即可取得 closure-audit 详细合同。
 - [ ] `repo_copy` 对 direct queue 校验 queue canonical path，对 `implx` outer 同时校验 implx
       与 delegated queue canonical paths，且两者属于同一 source/root/lock chain。
+- [ ] host 在 agent 命令前从 loader registry 启动 path/digest/mode 已绑定的
+      `runtime/phase_loader.py`；repo copy 在无本机安装时可 bootstrap，installed copy 精确绑定
+      loaded installed root，consumer checkout 中同名/缺失 checker 均不能改变结果。
+- [ ] `load_phase(bootstrap_handle, phase_id)` 对 phase 引用 stable-open/read/verify 一次，并把
+      同一 immutable bytes 交给认证 parser/injection sink；错 handle/peer/receipt、reopen 或
+      post-startup 漂移都在引用生效前失败。
+- [ ] installed doctor 的启动授权只消费 attested root，receipt 回绑 root identity/digest 与
+      source-lock；默认根或另一 matching installation 不能替实际 loaded root 授权。
+- [ ] parent output 同时受 150 行、16384 UTF-8 bytes、每行 512 UTF-8 bytes、4096 tokens
+      限制；每个 reference 另受 `<500` 行与 `≤16384` UTF-8 bytes 限制，所有 exact/+1
+      fixtures 确定性通过或失败。
 - [ ] lock、installer、installed doctor 对多文件闭集语义一致。
 - [ ] 现有行为测试与全量测试全绿，且不含 GH-160 diff。
 - [ ] 合并后的真实注入指标作为独立、非阻断 follow-up 记录，不属于本 issue Done-When、
@@ -137,16 +183,16 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
-| 空/缺失输入 | covered: B-003 B-005 B-008 B-013 B-019 B-021 |
-| 错误与失败路径 | covered: B-005 B-008 B-009 B-014 B-019 B-020 B-021 |
-| 授权/权限 | covered: B-002 B-009 B-010 B-017 B-021 |
-| 并发/竞态 | covered: B-014 B-019 |
-| 重试/幂等 | covered: B-011 B-012 B-014 B-019 |
-| 非法状态转换 | covered: B-004 B-005 B-010 B-017 B-018 B-019 B-020 B-021 |
-| 兼容/迁移 | covered: B-002 B-006 B-010 B-015 B-017 B-020 B-021 |
-| 降级/回退 | covered: B-005 B-009 B-013 B-014 B-017 B-018 B-019 B-020 B-021 |
-| 证据与审计完整性 | covered: B-006 B-008 B-012 B-016 B-017 B-018 B-019 B-020 B-021 |
-| 取消/中断 | covered: B-014 B-019 |
+| 空/缺失输入 | covered: B-003 B-005 B-008 B-013 B-019 B-021 B-022 B-023 B-024 B-025 B-026 |
+| 错误与失败路径 | covered: B-005 B-008 B-009 B-014 B-019 B-020 B-021 B-022 B-023 B-024 B-025 B-026 |
+| 授权/权限 | covered: B-002 B-009 B-010 B-017 B-021 B-022 B-023 B-024 |
+| 并发/竞态 | covered: B-014 B-019 B-022 B-023 B-024 |
+| 重试/幂等 | covered: B-011 B-012 B-014 B-019 B-022 B-023 B-025 B-026 |
+| 非法状态转换 | covered: B-004 B-005 B-010 B-017 B-018 B-019 B-020 B-021 B-022 B-023 B-024 B-025 B-026 |
+| 兼容/迁移 | covered: B-002 B-006 B-010 B-015 B-017 B-020 B-021 B-022 B-023 B-024 B-026 |
+| 降级/回退 | covered: B-005 B-009 B-013 B-014 B-017 B-018 B-019 B-020 B-021 B-022 B-023 B-024 B-025 B-026 |
+| 证据与审计完整性 | covered: B-006 B-008 B-012 B-016 B-017 B-018 B-019 B-020 B-021 B-022 B-023 B-024 B-025 B-026 |
+| 取消/中断 | covered: B-014 B-019 B-022 B-023 B-025 |
 
 ## 发布说明
 
@@ -156,4 +202,7 @@ queue 的入口和行为保持不变，详细规则改为按 phase 一跳加载�
 startup 的 host prerequisite；不可用时 queue 明确 fail closed。output firewall 仍由主入口
 在 startup 首条命令前生效，不因 reference 拆分延后。phase loader 以 invocation 固定的
 root/lock/digest 对每次首次加载闭锁 bytes；正常 merge 后通过第五个
-`post_merge_closure` phase 加载 closure-audit 细节。
+`post_merge_closure` phase 加载 closure-audit 细节。host 必须先部署
+`specrail.runtime.skill-contract.v2`，以 attested runtime client/installed root 和认证 parser
+handoff 承担 bootstrap/load-phase；未部署时不能用 consumer checkout 中的相对 Python
+命令降级。parent output 与 reference byte ceilings 是实现硬门，不是观测指标。
