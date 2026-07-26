@@ -61,20 +61,27 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
    `production_implementation` 的结果，代码实现才可开始，消除“先有 tasks 才能进入创建
    tasks 的 route”循环。consumer 必须声明消费目的，且 production verify 必须确定性拒绝
    staged/task-planning result，即使其通用 gate `decision` 为 `allowed`。
+   shared runtime lifecycle mapping 中 `needs_tasks` 只能对应
+   `ready_to_implement`，不得继续映射为 `spec_approved` 或更早状态。
 8. B-008 从 spec 写作进入实现时，默认及 `auth_mode: review` 路径必须同时具备：可信、
    按时间有序且完成 `ready_to_spec → spec_pr_open → spec_review → spec_approved` 的
-   lifecycle approval evidence，以及时间严格晚于所接受 `spec_approved` 事件的 fresh trusted
-   `ready_to_implement` label event；只看采集时间或当前 label 不足以证明该顺序。approval
+   lifecycle approval evidence；被接受的 exact-head maintainer `APPROVED` review
+   `submittedAt` 必须严格早于被接受的 `spec_approved` label event，后者又必须严格早于
+   fresh trusted `ready_to_implement` label event。先打任一 lifecycle/readiness label、
+   后补 exact-head review 不得追溯授权；只看采集时间或当前 label 不足以证明该顺序。approval
    必须绑定同一 repository 的 spec PR、该 PR 的不可变 exact head SHA，以及有权限 maintainer
    对该 exact head 的 approval；被接受的 `ready_to_implement` event actor 也必须独立通过同一
    maintainer permission policy，权限缺失、查询失败或低于阈值均 fail closed，不能从“能加
    label”或 approval actor 的权限推断。被批准的 product/tech 摘要必须从该 SHA 的 blob
    计算，不能从当前工作树、当前 base 或调用方给出的 hash 推断。duplicate gate 只可排除这个
    exact approved spec-only PR 及其 exact-head branch：repository id、PR number、head
-   repository/ref/SHA 与完整 changed-path 集必须全部匹配 approval source；changed paths 必须
-   包含 product/tech，且全部属于该 exact-head tech manifest 声明的 `spec_refs`，不得包含
-   planned implementation path。其它引用本 issue 的 PR/branch、该 PR 的 head/path 漂移或
-   不完整查询仍按 duplicate fail closed。
+   repository/ref/SHA 与完整 changed-path 集必须全部匹配 approval source。duplicate collector
+   必须先由 repo-owned workflow artifact 配置与 closed role classifier 确定
+   `product_spec | tech_spec | task_plan | packet_evidence` 的路径 allowlist，再验证 exact-head
+   manifest `spec_refs` 是该 allowlist 的无重复子集且与 implementation `paths` 完全 disjoint；
+   manifest/caller 不能新增 role 或扩大 allowlist。changed paths 必须包含 product/tech、
+   全部属于经分类的 validated `spec_refs`，且不得包含 planned implementation path。其它引用
+   本 issue 的 PR/branch、该 PR 的 head/path 漂移或不完整查询仍按 duplicate fail closed。
    只有当前用户明确发起的 `auth_mode: auto` invocation 可以按 `workflow.yaml` 现有 policy
    waive `spec_approval`；runtime 必须在 runtime-owned grant registry 中存在由用户授权、
    与 current invocation/repository identity/issue/route 和精确
@@ -178,10 +185,13 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
 - [ ] 缺 product、缺 tech、无效 tasks、tasks-only 与空/不可读 artifact 均有
   稳定负例，且不得通过降级成 `staged` 掩盖错误。
 - [ ] `write_spec` 在 `ready_to_spec` 只形成 product/tech；`implement` 在 review 路径凭
-  same-repository spec PR 的 immutable exact-head maintainer approval 与 ordered human
-  lifecycle 入场，且所接受的 `ready_to_implement` event 必须晚于 `spec_approved`、其 actor
-  必须独立满足 maintainer permission policy；duplicate gate 只排除 exact approved spec-only
-  PR/branch，任何 identity/head/path/query 漂移仍阻断；在明确的
+   same-repository spec PR 的 immutable exact-head maintainer approval 与 ordered human
+   lifecycle 入场，且必须满足 exact-head `APPROVED submittedAt < spec_approved event <
+   ready_to_implement event`；所接受 readiness actor 必须独立满足 maintainer permission
+   policy。duplicate gate 只排除 exact approved spec-only PR/branch，其 `spec_refs` 必须先
+   通过 repo-owned closed artifact-role allowlist 分类并与 implementation `paths` disjoint；
+   caller/manifest 不能把实现文件声明成 spec ref，任何 identity/head/path/query 漂移仍阻断；
+   在明确的
   auto invocation 中凭 runtime-owned grant registry 中的 active `spec_approval` waiver 入场，
   caller record 仅作 selector。selector、grant、response、stable binding 与 saved result 均绑定
   immutable repository id。两者都仍须 fresh trusted readiness、fresh duplicate-work evidence
@@ -195,7 +205,8 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
   dependency。provider、grant registry 或 verifier 未部署时 auto 不可用，但正常
   human-lifecycle review route 保持可用。
 - [ ] readiness/lifecycle/auto-waiver 缺失或冲突、readiness event 不晚于 approval、spec PR
-  非同仓或 approval 不绑定 exact head、超出 freshness 窗口、未来时间、错误 issue、body hint、
+  非同仓、approval 不绑定 exact head、exact-head review 不早于 `spec_approved`、先打 label
+  后补 review、超出 freshness 窗口、未来时间、错误 issue、body hint、
   CLI `--state`/readiness `--label` 自报，以及 artifact/duplicate-work 并发漂移或 caller
   record/saved result 自报 invocation/grant、旧 selector/anchor/result 重放均不能产生
   implementation-ready 结论；fresh evidence 的完整 envelope hash 用于审计，排除且只排除
@@ -211,6 +222,8 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
   它不声称完成 B-008 正常链，不充当当前 route authorization，且不能跨 issue 复用。
 - [ ] 同一输入重复校验结果稳定，失败重试、取消和中断不会复用旧授权或产生部分成功。
 - [ ] validator、route 与审计输出对同一 packet 的 shape、readiness 和阻断原因一致。
+- [ ] shared runtime mapping 把 `needs_tasks` 精确映射到 `ready_to_implement`；runtime
+      checkpoint/lifecycle audit 不得把 task planning 记录为 `spec_approved` 阶段状态。
 
 ## 边界情况清单
 
