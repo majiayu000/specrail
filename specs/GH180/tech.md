@@ -93,8 +93,11 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   `implementation_entry_kind: spec_first | direct_bug | mixed_impl`。`spec_first` 要求可信轨迹从
   `ready_to_spec` 开始并存在独立 exact-head spec PR；`direct_bug` 要求没有 spec packet，且有
   `SPEC.md` 已定义的 accepted-small-bug expected/actual evidence 和可信
-  `triaged → ready_to_implement`；`mixed_impl` 要求 standard/fastlane tier 与同一 PR 的 mixed
-  relation，并且没有更早的独立 spec-only source。该值不得由 CLI、manifest 或 PR body选择；
+  `triaged → ready_to_implement`；`mixed_impl` 必须仅从实现开始前即可取得的 trusted
+  planning evidence 分类：queue-derived standard/fastlane tier、queue coverage 记录的
+  single-PR 计划关系，且没有更早的独立 spec-only source；入场分类不得以"PR 已包含生产
+  代码"为前提，同一 PR 真实承载 spec/tasks/implementation 的完成态 mixed relation 由该 PR
+  既有的 final-review/merge gate 在实现完成后验证。该值不得由 CLI、manifest 或 PR body选择；
   缺失、矛盾或同时匹配多个 kind 时 fail closed。只有 `spec_first` 进入下述 staged spec
   approval lifecycle；direct/mixed 继续执行各自现有 duplicate、readiness、approval/final-review
   gate，且 `mixed_impl` 不生成 `approved_spec_pr_exemption`；
@@ -166,8 +169,12 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   exemption 失效。collector 从同一 exact-head PR 查询得到 path 集与 head identity，caller
   不能自报 `spec_only`。route 把该闭合对象交给 duplicate gate，gate 仅从 open-PR
   candidates 排除 repository id + PR number + head repository/ref/SHA + 完整 path 集全部相等的
-  那一项，并仅从 remote-branch candidates 排除该 exact head repository/ref/SHA；若 source PR
-  已关闭/合并，其同一 exact-head branch 仍可按该 binding 排除。任何字段缺失、查询不完整、
+  那一项，并仅从 remote-branch candidates 排除该 exact head repository/ref/SHA。每次 fresh
+  collection 都必须重查 source PR 的当前状态：仅 open 或可验证 merged（`merged_at` 与
+  `merge_commit_sha` 存在且一致）的 PR 是有效 approval source；closed-unmerged 的 PR 以
+  `spec_approval_source_abandoned` fail closed，即使 issue lifecycle labels 未同步清理，其
+  approval 与 exact-head branch exemption 一并失效。source PR 已 merged 时，其同一
+  exact-head branch 仍可按该 binding 排除。任何字段缺失、查询不完整、
   fork、额外 path、head/branch 漂移或第二个引用 issue 的 PR/branch 均不享受 exemption，继续
   `blocked`/`needs_human`。auto 路径没有 human approved spec PR，因此没有该 exemption；
 - `workflow.yaml` 不在 planned changes 中，现有 auth policy 保持原样：persisted/default
@@ -366,9 +373,12 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
    `spec_snapshot_sha256`、`packet_snapshot_sha256`、fresh semantic evidence、
    repository identity、approval-or-grant、scope/capability 与 freshness 分别验证；
 6. 若为 sensitive，等待该 exact approved revision merge 到 trusted default base，fresh 重采
-   existing `approved_spec`，验证 `merged_at`、`merge_commit_sha` 与 ancestry；
-7. `specrail-implement-queue` 只有在 `spec_status=complete`、consumer gate 以及适用的
-   sensitive merged-base gate 都通过时才允许生产代码 lane。
+   existing `approved_spec`，验证 `merged_at`、`merge_commit_sha` 与 ancestry；merge 会改变
+   default base 与 open-PR/branch evidence，按 B-014 使第 5 步 merge 前的 route/consumer
+   结果失效，因此 ancestry 校验通过后必须以 fresh issue/duplicate evidence 重跑第 5 步的
+   implement route 与 production-scoped consumer gate；
+7. `specrail-implement-queue` 只有在 `spec_status=complete`、consumer gate（sensitive 时为
+   merge 后重跑的那一次）以及适用的 sensitive merged-base gate 都通过时才允许生产代码 lane。
 
 因此 implement route 入场不循环要求它将创建的 tasks，但生产代码也不能从 staged packet
 开始。ready_to_implement 后 tasks 被删除或损坏时，queue coverage 重新分类为 `needs_tasks`，
