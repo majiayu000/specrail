@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -421,6 +422,75 @@ def test_pr_gate_blocks_authorized_self_review_without_lane_failure() -> None:
 
     assert result["decision"] == "blocked"
     assert any("self_review requires recorded lane_failures" in reason for reason in result["reasons"])
+
+
+def _fastlane_self_review_evidence() -> dict[str, object]:
+    evidence = fixture("pr-self-review-unauthorized.json")
+    touched_paths = ["docs/notes.md"]
+    evidence["lane_failures"] = []
+    evidence["self_review_authorization"] = {
+        "actor": "coordinator",
+        "source": "fastlane policy",
+        "scope": (
+            "PR #718 exact head "
+            "e36d97517d8d0b27faca1abe5e5c63f9f88684d9"
+        ),
+        "basis": "fastlane_policy",
+        "conversation_marker": "implx auto 2026-07-26",
+    }
+    evidence["pr_tier"] = "fastlane"
+    evidence["pr_tier_evidence"] = {
+        "changed_lines": 12,
+        "touched_paths": touched_paths,
+        "source": "github_changed_files",
+        "head_sha": evidence["head_sha"],
+        "paths_sha256": hashlib.sha256(
+            json.dumps(touched_paths, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+    }
+    evidence["enforcement_sensitive"] = False
+    return evidence
+
+
+def test_pr_gate_allows_trusted_fastlane_self_review_without_lane_failure() -> None:
+    result = evaluate_pr_gate(_fastlane_self_review_evidence())
+
+    assert result["decision"] == "allowed"
+    assert result["pr_tier"] == "fastlane"
+    assert result["enforcement_sensitive"] is False
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        ("missing_sensitive", "requires enforcement_sensitive false"),
+        ("too_large", "changed_lines must be at most 50"),
+        ("protected", "protected path"),
+        ("stale_head", "head_sha must match"),
+    ],
+)
+def test_pr_gate_blocks_untrusted_fastlane_self_review(
+    mutation: str,
+    expected: str,
+) -> None:
+    evidence = _fastlane_self_review_evidence()
+    tier_evidence = evidence["pr_tier_evidence"]
+    if mutation == "missing_sensitive":
+        evidence.pop("enforcement_sensitive")
+    elif mutation == "too_large":
+        tier_evidence["changed_lines"] = 100_000
+    elif mutation == "protected":
+        tier_evidence["touched_paths"] = ["checks/pr_gate.py"]
+        tier_evidence["paths_sha256"] = hashlib.sha256(
+            b'["checks/pr_gate.py"]'
+        ).hexdigest()
+    else:
+        tier_evidence["head_sha"] = "0" * 40
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(expected in reason for reason in result["reasons"])
 
 
 def test_pr_gate_blocks_missing_thread_resolver_attribution() -> None:

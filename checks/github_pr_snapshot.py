@@ -96,6 +96,7 @@ def collect_pr_file_snapshot(
     cursor: str | None = None
     identity: tuple[str, str, str, str, str] | None = None
     expected_count: int | None = None
+    changed_lines: int | None = None
     paths: list[str] = []
     seen_cursors: set[str] = set()
 
@@ -192,10 +193,17 @@ def collect_pr_file_snapshot(
                 f"pull files REST snapshot incomplete: collected {len(rest_files)} of {expected_count}"
             )
         rest_current: set[str] = set()
+        changed_lines = 0
         for index, raw in enumerate(rest_files, start=1):
             item = json_object(raw, f"pull files[{index}]")
             filename = _string(item.get("filename"), f"pull files[{index}].filename")
             rest_current.add(filename)
+            changed_lines += _count(
+                item.get("additions"), f"pull files[{index}].additions"
+            )
+            changed_lines += _count(
+                item.get("deletions"), f"pull files[{index}].deletions"
+            )
             previous = item.get("previous_filename")
             if previous is not None:
                 all_paths.add(_string(previous, f"pull files[{index}].previous_filename"))
@@ -211,7 +219,7 @@ def collect_pr_file_snapshot(
         raise EvidenceError(
             "PR base must match the trusted default-branch snapshot"
         )
-    return {
+    result = {
         "head_sha": head_sha,
         "base_ref": base_ref,
         "base_sha": base_sha,
@@ -222,6 +230,9 @@ def collect_pr_file_snapshot(
         "paths": normalized_paths,
         "paths_sha256": digest,
     }
+    if changed_lines is not None:
+        result["changed_lines"] = changed_lines
+    return result
 
 
 def assert_same_pr_file_snapshot(

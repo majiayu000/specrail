@@ -493,6 +493,8 @@ def test_pr_file_snapshot_includes_sensitive_rename_source_path() -> None:
         lambda _args: [{
             "filename": "docs/safe.py",
             "previous_filename": "checks/pr_gate.py",
+            "additions": 7,
+            "deletions": 3,
         }],
     )
     base = load_pack(ROOT)
@@ -505,6 +507,7 @@ def test_pr_file_snapshot_includes_sensitive_rename_source_path() -> None:
     )
 
     assert snapshot["file_count"] == 1
+    assert snapshot["changed_lines"] == 10
     assert classification["matched_paths"] == ["checks/pr_gate.py"]
 
 
@@ -524,7 +527,8 @@ def test_production_runner_array_reaches_rest_array_consumer(
     graph = snapshot_page(["docs/safe.py"], total=1, has_next=False, cursor=None)
     completed = subprocess.CompletedProcess(
         args=["gh"], returncode=0,
-        stdout='[{"filename":"docs/safe.py"}]', stderr="",
+        stdout='[{"filename":"docs/safe.py","additions":1,"deletions":0}]',
+        stderr="",
     )
     monkeypatch.setattr("github_pr_evidence.subprocess.run", lambda *_args, **_kwargs: completed)
 

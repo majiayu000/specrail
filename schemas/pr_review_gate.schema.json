@@ -98,6 +98,19 @@
           }
         ]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "review_source": {"const": "self_review"},
+          "self_review_authorization": {"properties": {"basis": {"const": "fastlane_policy"}}, "required": ["basis"]}
+        },
+        "required": ["review_source", "self_review_authorization"]
+      },
+      "then": {
+        "required": ["enforcement_sensitive", "pr_tier", "pr_tier_evidence"],
+        "properties": {"enforcement_sensitive": {"const": false}, "pr_tier": {"const": "fastlane"}}
+      }
     }
   ],
   "properties": {
@@ -189,10 +202,7 @@
       "type": ["integer", "null"],
       "minimum": 1
     },
-    "repository": {
-      "type": "string",
-      "minLength": 1
-    },
+    "repository": {"type": "string", "minLength": 1},
     "base_sha": {
       "type": "string",
       "minLength": 40
@@ -209,20 +219,15 @@
       "type": "string",
       "minLength": 1
     },
-    "changed_files_count": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "changed_files_sha256": {
-      "type": "string",
-      "minLength": 64
-    },
-    "enforcement_sensitive": {
-      "type": "boolean"
-    },
-    "sensitive_route": {
-      "enum": ["approved_spec", "spec_revision"]
-    },
+    "changed_files_count": {"type": "integer", "minimum": 0},
+    "changed_files_sha256": {"type": "string", "minLength": 64},
+    "pr_tier": {"$ref": "runtime_tier_authorization.schema.json#/properties/pr_tier"},
+    "pr_tier_evidence": {"$ref": "runtime_tier_authorization.schema.json#/properties/pr_tier_evidence"},
+    "authorization_tier": {"$ref": "runtime_tier_authorization.schema.json#/properties/authorization_tier"},
+    "ci_tier_check": {"$ref": "runtime_tier_authorization.schema.json#/properties/ci_tier_check"},
+    "tier_attestation_ref": {"type": "string", "minLength": 1},
+    "enforcement_sensitive": {"type": "boolean"},
+    "sensitive_route": {"enum": ["approved_spec", "spec_revision"]},
     "sensitive_classification": {
       "type": "object",
       "required": [
