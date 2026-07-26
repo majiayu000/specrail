@@ -20,6 +20,8 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 - 在主文件保留所有运行时关键合同和 phase-to-reference 路由。
 - 将阶段细节移到单层、受锁定、按需加载的引用文件。
 - 用确定性检查保证引用闭集、路径安全、无循环、无冲突并可安装。
+- 让 startup 以 loader-owned evidence 绑定实际加载的 entrypoint，并在第一条命令前启用
+  output firewall。
 
 ## 非目标
 
@@ -70,6 +72,23 @@ readiness、review、authorization、merge 或 fail-closed 合同。
     拆分后仍有唯一规范位置并由主入口路由，不得因移动而失去静态校验。
 16. B-016 当合并后观测真实运行指标时，读取次数/token 注入仅作为独立观测；结构、
     完整性与行为门禁全绿即可完成本 issue。
+17. B-017 当 `implx` 或 direct queue 启动时，origin preflight 必须消费当前 invocation
+    的 fresh loader-owned loaded-entrypoint binding：direct queue 绑定实际加载的 queue
+    entrypoint；`implx` outer 绑定实际加载的 implx entrypoint 以及 loader-resolved queue
+    dependency descriptor。checker 根据两者的实际路径/bytes digest、delegation relation、
+    canonical bundle/source root 与受信 installed-root binding 推导
+    `repo_copy | installed_copy`。CLI、environment、repository、checkpoint、agent 提供的
+    `--repo`/`--entrypoint`/origin 值或旧 binding 均不得选择或证明 origin；loader resolver、
+    peer verification、freshness、path containment、digest 或 invocation binding 缺失/不匹配时，
+    必须在任何 remote fetch/list/map 前 fail closed。repo copy 仍不得因本机未安装而失败；
+    installed copy 仍必须额外通过与同一 source manifest 绑定的 doctor `match`。
+18. B-018 当 `startup_planning` 开始时，`implx` 与 queue 主 `SKILL.md` 必须分别在其
+    第一条 preflight、诊断或 remote command 前激活同一最小 output-firewall normative
+    contract：潜在大输出的 raw
+    stdout/stderr 只进入 artifact，parent 只接收 exit status、有界 tail、targeted summary 与
+    artifact path，并禁止 raw CI log、full-suite log、session JSONL 或 broad generated-tree
+    search 进入 parent context。该合同不得只存在于 `evidence-and-recovery.md`；startup
+    planning reference 可以补充操作细节，但未加载 recovery reference 也不得使 firewall 失效。
 
 ## 验收标准
 
@@ -81,6 +100,14 @@ readiness、review、authorization、merge 或 fail-closed 合同。
       `implx` 外层都在任何远端状态读取前完成 origin-aware preflight。
 - [ ] 每个 phase 只加载自己声明的引用：startup 仅 planning，runtime_handoff 恰为
       planning+evidence，review 仅 review，recovery 仅 evidence；跨 phase 复用不算重复。
+- [ ] startup 不接受 caller-selected origin/path：fresh loader-owned descriptor 精确绑定
+      current invocation、direct loaded queue 或 loaded implx + resolved queue dependency 的
+      path/bytes/delegation 与 canonical roots；repo copy 正例不依赖
+      installed copy，installed copy 正例必须 doctor match，旧/伪造/不可达 resolver 均在 remote
+      read 前失败。
+- [ ] output firewall 的最小 normative contract 保留在主入口，并在 preflight 与任何 remote
+      list/map 前生效；只加载 startup planning reference 的正例也必须把大输出导向 artifact，
+      不得等待 runtime_handoff/retry_recovery。
 - [ ] lock、installer、installed doctor 对多文件闭集语义一致。
 - [ ] 现有行为测试与全量测试全绿，且不含 GH-160 diff。
 - [ ] 合并后的真实注入指标作为独立、非阻断 follow-up 记录，不属于本 issue Done-When、
@@ -92,17 +119,19 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 | --- | --- |
 | 空/缺失输入 | covered: B-003 B-005 B-008 B-013 |
 | 错误与失败路径 | covered: B-005 B-008 B-009 B-014 |
-| 授权/权限 | covered: B-002 B-009 B-010 |
+| 授权/权限 | covered: B-002 B-009 B-010 B-017 |
 | 并发/竞态 | covered: B-014 |
 | 重试/幂等 | covered: B-011 B-012 B-014 |
-| 非法状态转换 | covered: B-004 B-005 B-010 |
-| 兼容/迁移 | covered: B-002 B-006 B-010 B-015 |
-| 降级/回退 | covered: B-005 B-009 B-013 B-014 |
-| 证据与审计完整性 | covered: B-006 B-008 B-012 B-016 |
+| 非法状态转换 | covered: B-004 B-005 B-010 B-017 B-018 |
+| 兼容/迁移 | covered: B-002 B-006 B-010 B-015 B-017 |
+| 降级/回退 | covered: B-005 B-009 B-013 B-014 B-017 B-018 |
+| 证据与审计完整性 | covered: B-006 B-008 B-012 B-016 B-017 B-018 |
 | 取消/中断 | covered: B-014 |
 
 ## 发布说明
 
 queue 的入口和行为保持不变，详细规则改为按 phase 一跳加载。安装旧单文件副本的用户
 必须在 GH-172 多文件完整性能力可用后显式更新；活动会话可能需要重启。真实 token
-改善作为合并后观测，不替代结构和行为验证。
+改善作为合并后观测，不替代结构和行为验证。loaded-entrypoint resolver 是 origin-aware
+startup 的 host prerequisite；不可用时 queue 明确 fail closed。output firewall 仍由主入口
+在 startup 首条命令前生效，不因 reference 拆分延后。
