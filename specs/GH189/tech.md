@@ -98,8 +98,16 @@ counter+genesis witness pair（witness 三个 `last_allocation_*` 字段为 `nul
 即 `corrupt`。无 allocation journal 时 counter
 `last_allocated_token` 必须精确等于 witness `high_water_token`，且不小于 canonical
 lease/retained audit token；任一单独回滚、symlink、非普通文件、越界 mode、identity swap
-或内容/schema 损坏均 `unsafe/corrupt`。只有协调回滚 counter+witness 及相关资产才属于
-product non-goal。
+或内容/schema 损坏均 `unsafe/corrupt`。lease 的单独回滚按是否跨 allocation 边界区分：
+witness `last_allocation_outcome` 为 `issued` 时，存在的 canonical lease 必须携带
+`fencing_token == high_water_token`；held lease token 小于 high-water 只在最近 outcome 为
+`reserved`/`skipped` 时合法，否则 inspect 判 `corrupt`。该 invariant 检测跨 allocation
+边界的 lease 单独回滚（如恢复 resume/takeover 之前的旧 token lease），
+`tests/test_active_run_lease.py` 必须覆盖 rollback 检出与 skipped 合法两侧。未跨
+allocation 边界的同 token 字节级回滚（如恢复同一 allocation 的旧 renewal bytes 或复活
+已 release 的同 token lease）没有 durable allocation 证据可区分，只由 mutation API 的
+`expected_digest` compare 拦截并发误用；同一 OS principal 的该类字节级回滚与协调回滚
+counter+witness 及相关资产同属 product non-goal。
 
 每次 acquire/resume/takeover 都在 mutex 内执行同一 allocation transaction：
 
@@ -210,7 +218,13 @@ actor, source, conversation_evidence_id, authorized_at, expires_at
 ```
 
 `decision` 只能是 `takeover_once`；`reason_digest` 绑定未输出的原始理由，时间必须是
-timezone-aware 且有效期不超过实现常量。host-owned role map 必须把同一 actor 显式映射为
+timezone-aware 且有效期不超过实现常量。freshness 不得只依赖 core 用本地 wall clock 比较
+artifact 内 `authorized_at`/`expires_at`：有效期以 adapter 在 core 每次以 ref 重新调用时
+基于自身可信时间源的即时裁决为准，adapter 必须拒绝解析已过期的 ref 而不是返回旧
+artifact；core 的 timestamp 比较只是防御性二次检查，两者任一判过期都 fail closed。因此
+本地 wall-clock 回拨不能复活已过期授权，artifact 不引入 boot/monotonic 字段，
+`tests/test_active_run_takeover_authorization.py` 必须覆盖 adapter 端过期拒绝与
+core 端二次检查两条路径。host-owned role map 必须把同一 actor 显式映射为
 maintainer 并绑定可信 `source`/`conversation_evidence_id`；请求 takeover 的 new owner 不得
 充当 authorizer。core 在 mutex 内重新调用 adapter，并逐字段匹配当前 canonical stale
 lease 与请求的新 identity。caller 自带 artifact/role map、artifact 内自报 marker、
@@ -354,8 +368,29 @@ parsing 与 ad hoc inline import。
 `4`=`corrupt | unsafe | clock_unsafe`；
 `5`=`unsupported`；`64`=CLI 参数/schema 错误；`70`=未分类 I/O/内部失败。mutation
 precondition mismatch 必须返回 `conflict`/2；不得把 nonzero 状态降级为 warning。
+
+非成功路径的 `reason_code` 同样是闭集，实现不得自造字符串；每个 nonzero 结果只允许
+下表 state/exit/reason 组合（`argument_error`/`internal_error` 是 envelope 专用 state，
+不属于 `inspect_lease()` 派生集合）：
+
+| `state` | exit | 允许的 `reason_code` 闭集 |
+| --- | --- | --- |
+| `held` | 2 | `held` |
+| `busy` | 2 | `mutex_busy` |
+| `conflict` | 2 | `precondition_mismatch` \| `allocation_recovered_token_skipped` |
+| `stale` | 3 | `expired` \| `boot_epoch_changed` |
+| `takeover_recovery_required` | 3 | `takeover_recovery_required` |
+| `remote_operation_unknown` | 3 | `remote_operation_unknown` |
+| `corrupt` | 4 | `corrupt_asset` |
+| `unsafe` | 4 | `unsafe_path` |
+| `clock_unsafe` | 4 | `clock_unsafe` |
+| `unsupported` | 5 | `unsupported_platform` |
+| `argument_error` | 64 | `argument_error` \| `schema_error` |
+| `internal_error` | 70 | `io_error` \| `internal_error` |
+
 CLI tests 对每个 operation、free/unsupported/unsafe 与 parser/schema error 同时断言
-closed JSON、nullability 与退出码，queue 只消费该接口。
+closed JSON、nullability 与退出码，并对上表逐组合断言 nonzero state/reason/exit 闭集，
+任何表外 reason_code 都是 schema error；queue 只消费该接口。
 
 #### cross-process expiry evidence
 
@@ -388,7 +423,13 @@ audit 未 committed 或 lease 尚未完成首次绑定都必须 fail closed。
 
 queue 在 Startup acquire；在 spawn lane 与 checkpoint replace 前 renew/validate。
 checkpoint replace 成功但 lease bind 失败时不得宣称 checkpoint 可 resume，下一次 gate
-会因 digest mismatch 阻断。
+会因 digest mismatch 阻断。该 renew/validate 是 admission 判定，本 issue 不声称它与随后
+的 checkpoint replace 或 lane spawn 构成单一 serialized transaction：若 admission 之后
+owner 因合法 resume/takeover 失效，旧 owner 的 checkpoint 覆盖只会造成 canonical lease
+`checkpoint_digest` mismatch 并对所有后续 gate fail closed，新 owner 仍持有效 lease，可
+重写自己的 v4 checkpoint 并 renew 重新 bind 恢复；携带已失效 token 的 lane 则在其每个
+checkpoint/lane/remote-write 边界被 fencing 阻断，不能产生 durable 或远端效果。跨这些
+本地边界的原子事务超出文件型 lease 的诚实能力，属于后续设计。
 
 PR/issue/comment/label/push 等 provider mutation 采用持久 remote-operation guard，而不是把一次
 preflight 描述为 provider-side fencing。`operation_kind` 闭集为
@@ -411,7 +452,14 @@ issue close/update 属于 `issue_write`，不得标记为 `pr_write` 或绕过�
 
 resume 的安全授权明确只有 checkpoint+canonical lease 两方。验证旧 binding 后必须调用
 上述 `resume(...)` 轮换 token/owner，再写入新 token 的 checkpoint 并重新 bind；继续使用
-旧 token 的 gate/renew 即使拿到最新 digest 也必须失败。checkpoint 可保留 `goal_id`，调用方
+旧 token 的 gate/renew 即使拿到最新 digest 也必须失败。该 fencing 边界的诚实范围是
+cooperative stale session：rotation 后的新 token/owner marker 存放在同一 OS principal
+可读的 canonical lease 中，而 `renew` 验证的是 caller 提交的 identity 副本，因此一个
+主动重新 inspect 并整套复制新 marker/token/digest 的对抗性本地进程无法被文件型 lease
+区分——同一 principal 本就可以直接改写 lease bytes。B-007 的保证据此限定为：只持有
+rotation 前 identity 的旧 session（跨 compaction/session 恢复的正常情形）必然在 renew
+与所有 boundary gate 失败；防御同 principal 的主动 identity 复制需要 uncopyable
+host/process capability，超出本 issue 的威胁模型，留待后续设计。checkpoint 可保留 `goal_id`，调用方
 也可在恢复时独立调用 live Goal 查询来确认 Goal ID/status，以恢复目标和预算上下文；
 但现有 Goal API 没有独立承载 repo/run/token 的合同，因此 Goal evidence 不参与 fencing
 判断，也不得宣称 checkpoint+Goal+lease 三方安全绑定。没有 Goal 能力或 live Goal
@@ -446,9 +494,13 @@ evidence 时，只报告 Goal continuity 未验证，不得削弱 checkpoint+lea
 fencing-allocation/lease/takeover-audit/takeover-authorization/takeover-consumption 七个
 active-run closed schema 及 `runtime_checkpoint_v4.schema.json` 是 pack assets，不读取
 common dir counter/witness/journal/lease/audit/authorization consumption/remote-operation
-状态。`tests/test_active_run_schema.py` 独占七个 active-run schema 的 valid/malformed/
-unknown-field/conditional binding 测试；`tests/test_pack_asset_validation.py` 对每个 schema
-路径和 owner 建立 exact 集合断言，任何漏注册或错误 owner 均失败。
+状态。`implx_checkpoint_v4.md` 必须同时注册进 `checks/pack_asset_validation.py` 的
+`SPEC_TEMPLATE_FILES` deterministic ownership，使 base 与 `templates/zh-CN` localized
+parity、缺失/不可读检测覆盖两个 queue-only checkpoint templates；缺任一份或 parity
+失败时 `check_workflow.py` 必须失败。`tests/test_active_run_schema.py` 独占七个 active-run schema 的 valid/malformed/
+unknown-field/conditional binding 测试；`tests/test_pack_asset_validation.py` 对每个 schema/template
+路径和 owner 建立 exact 集合断言（含 `SPEC_TEMPLATE_FILES` 中的
+`implx_checkpoint_v4.md`），任何漏注册或错误 owner 均失败。
 
 ### 5. 无 polling 生命周期
 
