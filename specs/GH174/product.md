@@ -36,7 +36,10 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 ## Behavior Invariants
 
 1. B-001 当 agent 加载 queue Skill 时，主 `SKILL.md` 必须不超过 500 行且不超过
-   28 KiB；任一上限超出均使 pack check 失败。
+   28 KiB；且对 phase manifest 中每个 phase，主文件与该 phase 全部映射引用的
+   UTF-8 bytes 合计不得超过 40960（严格低于拆分前 40,985-byte 单文件），使任一
+   phase（尤其 `startup_planning` 与 `runtime_handoff`）的强制注入总量都不得超过
+   现状；任一上限超出均使 pack check 失败。
 2. B-002 当 agent 只读取主文件时，仍必须看到 Startup、skip labels、Done-When、
    Same-Issue Circuit Breaker、停止条件、reviewer lane、authorization、merge gate
    和 fail-closed 的不可绕过摘要。
@@ -140,7 +143,9 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 
 ## 验收标准
 
-- [ ] 主 Skill 同时满足 ≤500 行与 ≤28 KiB。
+- [ ] 主 Skill 同时满足 ≤500 行与 ≤28 KiB；每个 phase 的主文件+全部映射引用 UTF-8
+      bytes 合计 ≤40960，40960/40961 exact/+1 boundary fixtures 覆盖
+      `startup_planning` 与 `runtime_handoff`。
 - [ ] 关键运行合同全部保留在主文件，阶段细节按稳定 phase ID 一跳加载。
 - [ ] 引用图检查拒绝缺失、未锁定、漂移、越界、循环、未使用与可判定冲突引用；required
       header 中唯一的 `SKILL.md` token 被窄豁免，其他裸主文件/引用路径仍被拒绝。
