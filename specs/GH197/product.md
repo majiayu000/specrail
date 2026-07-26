@@ -74,7 +74,10 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 6. B-006 WHEN manifest v2 引用派生 artifact THEN manifest 必须在闭集
    `migrations[]` 中为该 artifact 声明恰好一条 `{artifact_id, record_path}`；
    派生 artifact 自身也必须携带 closed `migration_provenance` marker。受保护 adapter
-   必须提供 exact legacy identity evidence；凡 repo/PR/artifact/head 命中该 evidence 的
+   必须从 target base 的固定 conventional path 加载 closed repo legacy registry；
+   registry 以 exact cutoff、expected identity list/count/digest 和 PR #181/#186/#193
+   source Git object entries 自证 allowlist 完整性，调用方不得指定 path、过滤 entries
+   或缩小 coverage。凡 repo/PR/artifact/head 命中该 registry-derived evidence 的
    round-1 artifact，即使换路径、手工复制或省略 marker/migrations 条目，也必须 block。
    记录缺失、重复、未知 artifact_id、marker/record/evidence 不一致均必须 block。
 7. B-007 一条迁移记录只能绑定一个 source/derived 对；WHEN 同一记录被复用到其它
@@ -95,7 +98,9 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
     WHEN 未收到显式 `--apply` THEN 不得写任何文件。apply 必须消费一次性 closed
     `migration_authorization` 与显式 maintainer role map：授权精确绑定 repo immutable ID、
     PR、fresh base/head、source path + pre-migration commit/blob/digest、derived path/digest、
-    target policy digest、`decision: migrate_legacy_round1_once`、actor/source/time。
+    唯一 record path/digest、target policy digest、
+    `decision: migrate_legacy_round1_once`、actor/source/time。record 的 `migrated_at`
+    必须等于 `authorized_at`，canonical record bytes/digest 不得由 apply 时另选。
     CLI 字符串、自报角色、auto/merge/cap 授权均不能替代或代填。
 12. B-012 WHEN 回滚 THEN 删除派生 artifact、迁移记录与 manifest `migrations[]`
     条目即可回到迁移前的 fail-closed 状态；原始 artifact 不受影响，重复执行
@@ -117,10 +122,14 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 - [ ] manifest `migrations[]` 缺条目、重复条目、指向未知 artifact、
   `migration_provenance` 缺失/伪造，以及命中 trusted legacy identity 后手工复制或改路径
   规避记录均被拒（B-006）。
+- [ ] registry path 由 PR gate 固定、从 exact target base 加载；缺 registry、错 repo/
+  cutoff、entries 与 expected identity list/count/digest 不一致、caller 传空/子集或改
+  coverage scope 均 fail closed（B-006/B-009）。
 - [ ] round >= 2 或字段已合规的 artifact 请求迁移被拒；新产出的 round-1 bounded
   artifact 带非 null base/diff 在 `review_json_gate.py` 即 block（B-001/B-010）。
 - [ ] CLI dry-run 不落盘；apply 缺授权/role map、错 actor role、错 repo/PR/head/
-  commit/blob/source/derived digest、重复 authorization ID 均拒绝；exact 授权幂等
+  commit/blob/source/derived/record path 或 digest、`migrated_at != authorized_at`、同 ID
+  不同 bytes 均拒绝；exact 授权幂等
   （B-011/B-012）。
 - [ ] `python3 -m pytest -q`、`python3 checks/check_workflow.py --repo .
   --all-specs`、`python3 tools/spec_depth_audit.py --spec-dir specs/GH197 --gate`
