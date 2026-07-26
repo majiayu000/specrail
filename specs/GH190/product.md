@@ -74,6 +74,43 @@ checkpoint，并在 compaction 后继续低产出长跑。
 19. B-019 当 queue/implx agent 需要创建或绑定 Goal 时，必须调用具名 builder CLI，
     使用 closed JSON input/output 与稳定 decision/reason/exit code；不得要求 Markdown
     skill 进程内调用 Python 或自行拼接 tool payload。
+20. B-020 当 builder 决定 `auth_mode`、`queue_mode` 或 `goal_capability` 时，必须从
+    runtime-owned invocation/capability attestation 导出并绑定 repo/run；checkpoint
+    或 CLI 中由 caller 自报的 mode/capability 不得启用或禁用 active Goal。attestation
+    缺失/无效时必须 `blocked: untrusted_routing`；只有 verified host receipt 才能把
+    capability 判为 unavailable 并进入 disabled 分支。
+21. B-021 当使用 pack-default budget 时，必须由只读 GitHub evidence adapter 绑定
+    trusted default branch、canonical `workflow.yaml` 内容、引入该值的 merged PR 与
+    maintainer approval event；caller 提供的 `approval_ref`、摘要或不存在声明均不算
+    批准证据，default branch/config/approval 任一漂移必须阻断。
+22. B-022 当 active Goal 被绑定时，`goal_id` 必须来自 runtime-owned、可验证且与
+    exact `create_goal` request digest 匹配的 result receipt，并由 fresh live Goal
+    snapshot 确认；任意非空 CLI 字符串、旧 receipt、跨 run receipt 或 request/result
+    不匹配不得生成 active contract。
+23. B-023 当 `bind` 成功时，必须一次输出 closed initial checkpoint bundle，至少包含
+    trusted routing/budget evidence、immutable queue/human baseline、current queue
+    snapshot、零条 rebind、sequence-0 transition、external transition anchor 与 active
+    contract；queue/skill 不得补字段或把局部 bind output 拼成 checkpoint。
+24. B-024 当 Goal 状态 transition 被追加时，event 必须引用 versioned canonical
+    evidence object，并绑定 artifact ID、source/type 与完整内容摘要；gate 必须按
+    complete/exhausted/interrupted/blocked 分支重算并验证其 remote/tool/handoff/
+    blocker prerequisites，只有不可重算的 `evidence_digest` 必须阻断。
+25. B-025 当 Goal 被创建或更新时，runtime 必须在 checkpoint 外持久化不可回退的
+    monotonic revision、status 与 transition-tail anchor，并出具可验证 receipt；resume
+    必须用 fresh live snapshot 对账。删除/重写 checkpoint 内 terminal history后声称
+    active、anchor 回退/缺失或 external terminal 与 local active 不一致均必须阻断。
+26. B-026 当 queue current snapshot rebind 时，必须引用 fresh、schema-valid、
+    content-bound GitHub adapter artifact；该 artifact 必须绑定 collector identity、
+    repo/default-base、完整分页结果、可信 `as_of` 与 canonical payload digest。
+    caller 自报的 `remote_truth_digest` 或无法重算的 snapshot 不得推进 rebind。
+27. B-027 当 v1–v3 迁移的可信 routing 要求 active Goal 时，迁移必须先产出 closed、
+    gate-valid但不可执行的 `migration_pending` 分支，只允许确定性的 finalize/recovery；
+    取得 fresh remote evidence 与 attested create result 后，binder 必须原子输出最终
+    active v4 bundle。普通 `goal:null` v4 不得作为中间态绕过或永久阻断迁移。
+28. B-028 当 GH-189 active-run lease contract 及其 runtime implementation 尚未合并
+    进目标 default branch 时，GH-190 实现与 active Goal 路径必须保持 blocked；合并后
+    必须 rebase 并复用其 `run_id`/`fencing_token`/lease evidence，不得由 GH-190 复制
+    或自报一套冲突字段。
 
 ## 验收标准
 
@@ -84,6 +121,14 @@ checkpoint，并在 compaction 后继续低产出长跑。
       例，不能靠调用方自报或改写旧状态。
 - [ ] queue/implx 通过 agent-facing CLI 取得 tool payload 与 bound active contract。
 - [ ] auto/review/bounded/unavailable 与 complete/exhausted/interrupted 路径全覆盖。
+- [ ] routing/capability、pack default 与 Goal ID 只接受 runtime/GitHub trusted
+      evidence；伪造 mode、capability、approval 或 `goal_id` 的负例全部 blocked。
+- [ ] `bind` 一次产生完整 initial bundle，migration pending 只能 finalize/recover，
+      不存在需要 skill 手工补字段或无法通过 gate 的普通 v4 中间态。
+- [ ] remote rebind 与每类 transition 都绑定可重算 canonical evidence；外部 live
+      anchor 能检测 terminal history 截断后伪造 active。
+- [ ] GH-189 未合并时 implementation gate blocked；合并/rebase 后只复用其 lease
+      contract。
 - [ ] 测试无 Goal API 副作用，full suite 与 forward dry-run 全绿。
 - [ ] 不选择 GH-160 的预算值，不含 GH-160 diff。
 
@@ -91,18 +136,20 @@ checkpoint，并在 compaction 后继续低产出长跑。
 
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
-| 空/缺失输入 | covered: B-003 B-004 B-012 B-014 B-015 |
-| 错误与失败路径 | covered: B-003 B-006 B-012 B-014 B-019 |
-| 授权/权限 | covered: B-003 B-007 B-011 B-015 |
-| 并发/竞态 | covered: B-006 B-011 B-016 B-017 |
-| 重试/幂等 | covered: B-002 B-011 B-013 B-014 B-016 B-017 B-019 |
-| 非法状态转换 | covered: B-007 B-008 B-009 B-010 B-016 |
-| 兼容/迁移 | covered: B-007 B-011 B-018 |
-| 降级/回退 | covered: B-003 B-007 B-014 B-018 |
-| 证据与审计完整性 | covered: B-005 B-006 B-012 B-013 B-015 B-016 B-017 |
-| 取消/中断 | covered: B-010 B-014 |
+| 空/缺失输入 | covered: B-003 B-004 B-012 B-014 B-015 B-020 B-021 B-022 B-025 B-026 |
+| 错误与失败路径 | covered: B-003 B-006 B-012 B-014 B-019 B-022 B-023 B-024 B-027 B-028 |
+| 授权/权限 | covered: B-003 B-007 B-011 B-015 B-020 B-021 B-022 B-028 |
+| 并发/竞态 | covered: B-006 B-011 B-016 B-017 B-022 B-023 B-025 B-026 B-027 B-028 |
+| 重试/幂等 | covered: B-002 B-011 B-013 B-014 B-016 B-017 B-019 B-022 B-023 B-025 B-026 B-027 |
+| 非法状态转换 | covered: B-007 B-008 B-009 B-010 B-016 B-024 B-025 B-027 |
+| 兼容/迁移 | covered: B-007 B-011 B-018 B-027 B-028 |
+| 降级/回退 | covered: B-003 B-007 B-014 B-018 B-020 B-025 B-027 B-028 |
+| 证据与审计完整性 | covered: B-005 B-006 B-012 B-013 B-015 B-016 B-017 B-020 B-021 B-022 B-023 B-024 B-025 B-026 |
+| 取消/中断 | covered: B-010 B-014 B-024 B-025 B-027 |
 
 ## 发布说明
 
 active Goal 从松散备注升级为强类型执行合同。没有已批准 token budget 时不再创建
-无界 Goal；这不决定预算值，预算策略仍由 GH-160/维护者单独处理。
+无界 Goal；host 缺少可验证 invocation/Goal receipts 时也不会把 caller 自报数据当作
+capability。实现等待 GH-189 合并并复用其 lease contract。这不决定预算值，预算策略
+仍由 GH-160/维护者单独处理。
