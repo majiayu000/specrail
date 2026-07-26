@@ -100,9 +100,11 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
     receipt。`append-start` 必须在同一 provider transaction 中 create-only 消费该
     receipt，并以 receipt 绑定的 generation、ledger digest 与 result digest 对 current
     record 做 CAS，成功落下 `attempt_started` 后才可 dispatch lane。只有这条原子链成功
-    的 result 才可开 lane；签发后 generation 前移、reservation/receipt 过期或重放、
-    writer 与 evaluation 竞态、finalize/append-start CAS 失败或 receipt/result 不匹配
-    都必须阻断。
+    的 result 才可开 lane。receipt 必须有可信时间源签名绑定的有效期；finalize 后中断时，
+    未过期 receipt 只可幂等 retry/recover 同一 `append-start`，过期或明确放弃时只能
+    原子 cancel/expire receipt、恢复普通 writer 并阻断当前 action，不得把 candidate
+    转成成功。签发后 generation 前移、reservation/receipt 过期或重放、writer 与
+    evaluation 竞态、finalize/append-start CAS 失败或 receipt/result 不匹配都必须阻断。
 22. B-022 当 `issue_progress_gate.py` 返回 evaluation result 时，输出必须是
     `schemas/evaluation_result.schema.json` 的完整闭合投影：包含 `decision`、`route`、
     `mode`、`current_state`、`issue`、`pr`、`reasons`、`satisfied`、`missing`、
@@ -145,8 +147,9 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
 - [ ] old ledger + old committed attestation/proof 回放、错/已消费 challenge、过期 proof、
       proof 签发后 provider generation 前移、reservation 过期/重放与 finalize CAS 失败均
       阻断；finalize 后到 `append-start` 前 generation 前移、receipt 重放或消费失败同样
-      阻断；fresh proof + reservation + decision receipt 被 `append-start` 原子消费并
-      落下 `attempt_started` 的正例通过。
+      阻断；finalize 后 crash/abandon/expiry 的 retry/recover/cancel 状态机不会永久阻塞
+      writer，也不会放行当前 action；fresh proof + reservation + 未过期 decision receipt
+      被 `append-start` 原子消费并落下 `attempt_started` 的正例通过。
 - [ ] allowed/blocked evaluation fixtures 都完整匹配共享 `evaluation_result`，使用
       `reasons`，缺字段、额外字段、`reason_ids` 替代或动作矛盾均被拒绝。
 - [ ] 迁移从可信 checkpoint archive/tracked history 恢复完整 tranche；缺段、浅历史、
