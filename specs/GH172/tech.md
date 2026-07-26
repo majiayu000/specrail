@@ -235,7 +235,12 @@ manifest 与 integrity library：
    递归 cleanup 每一层都从已打开 directory fd no-follow 枚举并用 `unlinkat`/`rmdir`，不得
    退回 pathname `rmtree`。
 
-   每次 installer/doctor preflight 都从 target-root fd 检查上述 fixed record。doctor/dry-run/
+   每次 installer/doctor preflight 都从 target-root fd 检查上述 fixed record。record 本身
+   在解析任何 JSON 前必须先安全打开：仅以 target-root dirfd 上的
+   `openat(O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC)` 打开，立即 `fstat` 并要求
+   `S_ISREG`、`st_nlink == 1` 且 size 不超过固定 `MAX_TXN_RECORD_BYTES = 64 * 1024`；
+   symlink、FIFO、device、多硬链或超限 record 一律在读取前 fail closed 保留现场，读取本身
+   也是不超过该 cap 加一个探测 byte 的 bounded read。doctor/dry-run/
    queue 只报告并阻断；只有新的显式 `--apply` 可恢复。读取 closed JSON 后、任何 recovery
    object open/分类/清理前，先按 manifest 与 transaction id 重新计算并验证路径字段：
    `destination` 必须逐 byte 等于当前 locked skill 的 canonical name；`staging` 必须逐 byte
@@ -250,10 +255,14 @@ manifest 与 integrity library：
    destination 完整匹配 old identity，说明 exchange 未发生：无论 staging 等于 new，还是
    step 7 中被 kill 留下的不完整/不匹配 tree，都属于可恢复的 pre-exchange 状态，只经所持
    target-root fd 安全删除 staging 与 record 并保持 old，后续显式 apply 不得被永久阻断；
-   若 destination=new 且 staging=old，说明 exchange 已发生，完成 post-check 后清理 old/
-   record。若 staging 已不存在，则只在 destination 完整匹配 record 的 new identity 时判定
-   old cleanup 已完成并删除 record，或完整匹配 old identity 时判定 transaction 未生效/已
-   rollback 并删除 record；其它缺失、重复、矛盾或任一对象不安全时保留现场并 fail closed，
+   若 destination 完整匹配 new identity，说明 exchange 已发生：无论 staging 等于完整 old
+   tree，还是清理阶段被 kill 留下的部分删除残留（甚至任意不匹配内容），都属于可恢复的
+   post-exchange cleanup 状态，只经所持 target-root fd 恢复递归删除 staging 残留，完成
+   post-check 后清理 record；staging 残留的分类不要求匹配 old identity，因为 exchange 后
+   canonical destination 的正确性只由 new identity 证明。若 staging 已不存在，则在
+   destination 完整匹配 new identity 时判定 old cleanup 已完成并删除 record，或完整匹配
+   old identity 时判定 transaction 未生效/已 rollback 并删除 record；只有 destination 既不
+   匹配 old 也不匹配 new identity，或任一对象不安全时才保留现场并 fail closed，
    不得猜测删除或交换。恢复的 cleanup、exchange rollback、record 删除与每个阶段的 fsync 都只用
    stable descriptor chain。由此任意 kill/power-loss 点 canonical destination 都存在，且
    下次显式 apply 能确定恢复。
@@ -273,7 +282,11 @@ manifest 与 integrity library：
    source initial `fstat` 还必须在读取前验证 `st_nlink == 1`，final `fstat` 继续为 1 且
    mode 未改变。source hard link/symlink/special file、hash/mode 不匹配
    或 pre/post snapshot 变化时通过 target-root fd 清理 staging/record 并失败，不得读取 escape
-   target，也不得替换现有 destination。所有 source 完整稳定后才进入 descriptor-relative
+   target，也不得替换现有 destination。所有 source 完整稳定后，还必须在
+   `RENAME_EXCHANGE`/`RENAME_NOREPLACE` 前自底向上 `fsync` 每个已填充的 structural
+   directory descriptor 与 staging root fd：仅 fsync 文件不会使其目录项 durable，step 6
+   对 staging 目录的 fsync 发生在填充前，不能替代本次填充后的目录 fsync。之后才进入
+   descriptor-relative
    commit；复制对象只来自 manifest，不从未声明目录枚举推断；
 8. apply/exchange 后沿所持 target-root fd 重新运行完整 inspect，再完成 anchor-to-path identity rewalk；
    只有整体 `match`、所有 v2 mode 精确、pathname 仍绑定同一 descriptor chain 才成功。失败时
@@ -302,7 +315,11 @@ directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 
   `skills-lock.json` 的 raw bytes：normalized shared manifest（每 skill 的 name、每文件的
   `(relative_path, sha256, normalized_mode)`，按 skill/path 字节序排序）序列化为带
   encoding-version tag 的 canonical JSON（UTF-8、键排序、无多余空白），对该字节串取
-  sha256。repo validator、doctor 与 host evidence provider 必须共享同一实现与固定
+  sha256。v1 hash-only 条目在 canonical 编码中把 `normalized_mode` 固定编码为 JSON
+  `null`：不得省略该字段，也不得从磁盘或扩展名推断 mode；v2 条目编码声明的
+  `"0644"|"0755"` 字符串。固定 test vectors 必须同时覆盖 v1（`null`）与 v2 两种
+  条目，证明 checker 与 provider 得到相同 `lock_manifest_sha256`。repo validator、
+  doctor 与 host evidence provider 必须共享同一实现与固定
   test vectors；对 raw lock bytes、非规范化 JSON 或派生字段（如 `expected_size`）哈希
   都不符合本契约。evidence 还包含按 skill/path 排序的
   `loaded_entries[{entry_role,skill,origin,resolved_path,sha256}]`。`origin` 是闭集
@@ -311,7 +328,13 @@ directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 
   descriptor 下精确等于 shared manifest 的 `skills/specrail-workflow/SKILL.md` source path，
   loaded sha256 与 lock source identity 相同；`implx` 与 queue entrypoint 必须为
   `installed_target`，resolved path 分别精确位于 doctor 选中 target 的对应 manifest path，
-  sha256 同时匹配 lock 与 disk doctor。所有 entry 共享同一个
+  sha256 同时匹配 lock 与 disk doctor。**required role set 按 invocation route 闭合
+  派生**：经 source router bootstrap 委派 `implx`/queue 时要求 router 加实际委派链上
+  已加载的 installed entrypoints；直接调用 `specrail-implement-queue` 时只要求 queue
+  entrypoint（`installed_target`）在场并匹配，未在该 route 加载的 router/`implx` 不作为
+  missing evidence。任何 route 下执行 queue 动作的 entrypoint 都必须在场，且 evidence 中
+  出现的每个 entry 无论是否 required 都必须满足上述 role/origin/path/hash 约束。所有
+  entry 共享同一个
   `lock_manifest_sha256`，evidence 的 session identity 必须等于 current host session。
   source router 不要求落在 installed target；其它 role 不得声明 `source_checkout`，也不得
   用 source checkout 的 matching bytes 替代 installed evidence。CLI flag、environment、
@@ -468,6 +491,12 @@ explicit --apply authorization
 - Runtime prerequisite: repo doctor 不能观察活动 agent context；host/runtime 必须提供
   current-session loaded-entrypoint evidence。缺该能力时 queue 明确 unavailable，而不是退回
   磁盘-only success。
+- Post-preflight asset load: doctor `match` 与 loaded-entrypoint evidence 都是 preflight
+  时点保证；长时 queue 在 preflight 之后按需 open/execute 的 `files[]` 分发资产（reference/
+  script）若在该间隙被 writable target 上的写者替换，本 issue 的 gate 不阻断。对每个
+  分发资产在实际 load/execute 边界绑定 runtime evidence 或 verified snapshot 需要 host
+  runtime 能力，与 loaded-entrypoint provider 同属外部 prerequisite，留待后续独立 issue；
+  本 issue 不得声称提供 load-time 逐资产连续保证。
 
 ## 测试计划
 
@@ -502,7 +531,9 @@ explicit --apply authorization
       安装，且安装副本降为 `0644` 后即使 hash 相同也由 doctor/post-check 判 drift；forged
       recovery path fixtures 在任何 open/cleanup 前失败并保持 outside sentinel 不变；
       kill-during-copy fixture 在 step 7 复制中途中断，证明 destination=old 加不完整
-      staging 会被下一次显式 apply 清理恢复，而不是永久 fail closed。
+      staging 会被下一次显式 apply 清理恢复，而不是永久 fail closed；kill-during-cleanup
+      fixture 在 exchange 后递归清理 old tree 中途中断，证明 destination=new 加部分删除的
+      staging 残留同样由下一次显式 apply 恢复清理并删除 record，不会被 catch-all 永久阻断。
 - [ ] Session binding: `python3 -m pytest -q tests/test_check_workflow.py
       -k "loaded_skill or session_restart"`；正例要求 runtime-owned current-session entrypoint
       hashes 与 doctor/lock 同一 manifest，并允许 source router 的 `source_checkout` path；
