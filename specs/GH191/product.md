@@ -74,6 +74,25 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
 16. B-016 每个用于时间判断的 ledger/remote evidence snapshot 必须包含可信来源的
     `as_of` 与覆盖完整输入的 snapshot digest；同一份绑定输入不会因稍后重跑而改变
     “未来时间”判定。
+17. B-017 每次公开 breaker 评估必须先以受保护 runtime 生成的单次 challenge，从
+    anchor provider 获取绑定 `repo_id`、issue、evaluation ID、challenge、当前
+    generation/event count/tail/ledger digest 与可信有效期的签名 current-state proof；
+    只提供历史 committed attestation、旧 proof、已消费 challenge 或调用方自报
+    “latest”时必须 fail closed，旧 ledger + 旧 attestation 不得一起回放为当前历史。
+18. B-018 `open-scope` 只能消费一次由可信 adapter 验证为 maintainer 的人工
+    rescope/unpark 授权；授权必须精确绑定 repo/issue、旧/新 epoch、旧 anchor
+    generation/tail、批准后的 scope/target digest、远端决定来源与一次性 authorization
+    ID。writer 权限本身不构成授权，缺失、伪造、错 scope 或重放授权必须失败，provider
+    必须在同一 CAS 中原子记录授权消费与 `scope_opened`。
+19. B-019 所有影响 progress、head、review、verification、coverage、terminal state
+    或 `as_of` 的 evidence snapshot 必须带 allowlisted issuer/adapter 身份、版本与
+    adapter-run provenance，绑定 repo/issue/head、完整查询/分页状态、canonical payload
+    digest，并由配置的 trust root 验证；调用方 JSON、自报 adapter、未知 issuer、签名
+    无效或不完整 collection 必须 fail closed。
+20. B-020 GH-191 实现只能在 fresh GitHub truth 证明 GH-172/PR #186、GH-174/PR #192、
+    GH-189/PR #193 已按 `GH-172 → GH-174 → GH-189` 串行合入目标 base，且 GH-191 已
+    逐步 rebase 后开始；任一依赖仍 open、未合并、head/base 漂移或跳序都必须阻断，
+    不得把“有 PR”或条件性 handoff 当作“已合并”。
 
 ## 验收标准
 
@@ -85,6 +104,14 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
 - [ ] start/terminal events 不可变，确定性 writer、外部 anchor 与并发/中断恢复测试
       证明 ledger append-only 且绑定 issue/head/run/tranche。
 - [ ] `as_of` 边界测试证明相同输入跨墙钟重跑结果不变。
+- [ ] old ledger + old committed attestation/proof 回放、错/已消费 challenge、过期 proof、
+      provider current generation 前移均阻断；fresh current-state proof 正例通过。
+- [ ] `open-scope` 缺少人工决定、非 maintainer、错 repo/issue/epoch/scope、授权重放与
+      CAS 竞态均阻断；成功路径在 provider 中原子留下 authorization consumption。
+- [ ] progress snapshot 的未知 issuer/adapter、伪造 `as_of`、签名/adapter digest 错误、
+      分页不全与 caller-authored JSON 均阻断，可信完整 adapter run 正例通过。
+- [ ] fresh dependency gate 证明 #186/#192/#193 任一仍 open 或跳过串行 rebase 时不得
+      开始 GH-191 实现，并覆盖三者按序合入后的正例。
 - [ ] 首次 baseline/migration 可启动；anchor 已存在但 ledger 丢失时不可伪装首次启用。
 - [ ] trip 在 lane/remote write 前阻断，外部写仍需授权。
 - [ ] compaction/resume forward test 不丢历史，full suite 全绿且无 GH-160 diff。
@@ -95,14 +122,14 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
 | --- | --- |
 | 空/缺失输入 | covered: B-001 B-002 B-009 B-013 B-015 |
 | 错误与失败路径 | covered: B-008 B-009 B-010 |
-| 授权/权限 | covered: B-010 B-011 |
-| 并发/竞态 | covered: B-002 B-009 B-013 B-014 |
-| 重试/幂等 | covered: B-002 B-011 B-012 B-014 |
-| 非法状态转换 | covered: B-002 B-009 B-010 B-011 B-015 |
-| 兼容/迁移 | covered: B-011 B-015 |
-| 降级/回退 | covered: B-009 B-010 B-013 |
-| 证据与审计完整性 | covered: B-001 B-002 B-003 B-004 B-008 B-012 B-013 B-016 |
-| 取消/中断 | covered: B-002 B-009 B-013 B-014 |
+| 授权/权限 | covered: B-010 B-011 B-018 B-019 |
+| 并发/竞态 | covered: B-002 B-009 B-013 B-014 B-017 B-018 |
+| 重试/幂等 | covered: B-002 B-011 B-012 B-014 B-017 B-018 |
+| 非法状态转换 | covered: B-002 B-009 B-010 B-011 B-015 B-018 B-020 |
+| 兼容/迁移 | covered: B-011 B-015 B-020 |
+| 降级/回退 | covered: B-009 B-010 B-013 B-017 B-019 B-020 |
+| 证据与审计完整性 | covered: B-001 B-002 B-003 B-004 B-008 B-012 B-013 B-016 B-017 B-018 B-019 |
+| 取消/中断 | covered: B-002 B-009 B-013 B-014 B-017 B-018 |
 
 ## 发布说明
 
