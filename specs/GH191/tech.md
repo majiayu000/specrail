@@ -6,12 +6,12 @@ GH-191
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":191,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/issue_attempt_collector.py","checks/pack_asset_validation.py","checks/issue_progress_gate.py","schemas/issue_attempt_ledger.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/issue_attempt_ledger.json","tests/test_check_workflow.py","tests/test_issue_attempt_collector.py","tests/test_pack_asset_validation.py","tests/test_issue_progress_gate.py"],"spec_refs":["specs/GH191/product.md","specs/GH191/tech.md","specs/GH191/tasks.md"]}
+{"version":1,"issue":191,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/issue_attempt_collector.py","checks/issue_attempt_writer.py","checks/pack_asset_validation.py","checks/issue_progress_gate.py","schemas/issue_attempt_anchor.schema.json","schemas/issue_attempt_ledger.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/issue_attempt_anchor.json","templates/issue_attempt_ledger.json","tests/test_check_workflow.py","tests/test_issue_attempt_collector.py","tests/test_issue_attempt_writer.py","tests/test_pack_asset_validation.py","tests/test_issue_progress_gate.py"],"spec_refs":["specs/GH191/product.md","specs/GH191/tech.md","specs/GH191/tasks.md"]}
 -->
 
 ## Product Spec
 
-见 `specs/GH191/product.md`。实现 B-001..B-012，是 GH-157 的确定性后续。
+见 `specs/GH191/product.md`。实现 B-001..B-016，是 GH-157 的确定性后续。
 
 ## Codebase Context
 
@@ -25,40 +25,85 @@ GH-191
 
 ## 设计方案
 
-### 1. append-only ledger
+### 1. 不可变事件 ledger
 
-路径 `.specrail/runtime/issue-attempts/GH<n>.json`，由 orchestrator 写，collector/gate
-只读。closed schema：
+路径 `.specrail/runtime/issue-attempts/GH<n>.json`。collector/gate 只读，queue 和
+orchestrator 也不得直接编辑；所有追加都经过 `checks/issue_attempt_writer.py`。
+closed schema：
 
 ```text
-version, repo_id, issue, scope_epoch, scope_epochs[], attempts[]
-scope_epoch_record = epoch, opened_at, rescope_evidence, opened_by
-attempt = id, run_id, fencing_token, tranche_id, scope_epoch,
-          started_at, ended_at?, before_head, after_head?,
-          target_ids[], work_fingerprint, commit_shas[],
-          evidence[], progress_delta[], outcome,
-          prev_entry_digest, entry_digest
+version, repo_id, issue, current_scope_epoch, events[]
+event = event_id, event_type, occurred_at, as_of, snapshot_digest,
+        scope_epoch, prev_event_digest, event_digest, payload
+event_type = baseline | scope_opened | attempt_started |
+             attempt_finished | attempt_interrupted
+attempt_started.payload = attempt_id, run_id, fencing_token, tranche_id,
+                          before_head, target_ids[], work_fingerprint
+terminal.payload = attempt_id, after_head, commit_evidence[],
+                   verification/review/coverage evidence,
+                   progress_delta[], outcome
+commit_evidence = sha, parent_shas[], work_fingerprint,
+                  durable_progress_evidence[]
 ```
 
-每个 attempt 自带 `scope_epoch`，另有 append-only `scope_epochs[]` 记录每次 rescope 的
-证据与时间。breaker 计数只统计 **当前 epoch** 的 attempts，历史 epoch 的证据保留可查：
-既不会让旧 attempt 混进新 scope 的计数，也不需要为了重置计数而删除历史。
+开始 round 前，writer 必须先落盘唯一 `attempt_started`；round 结束或中断时为同一
+`attempt_id` 追加且只追加一个 terminal event。terminal 不修改 start，重复 start、
+重复 terminal、terminal-before-start、字段跨 run/head/tranche 串线或没有 terminal 的
+陈旧 attempt 都 fail closed。显式 rescope 追加 `scope_opened`，breaker 只统计当前
+epoch，旧 epoch 的事件仍保留。
 
-`entry_digest` = 该 attempt 规范化 JSON（不含 `entry_digest`）的 sha256，
-`prev_entry_digest` = 前一条的 `entry_digest`（首条为 `null`）。哈希链随 ledger 一起
-持久化，因此离线 gate 可以在只读到最终文件时发现被截断或整体重写的历史（链断裂、
-首条 `prev_entry_digest` 非 null、或与 `repo_id/issue` 绑定不符即 fail closed），
-而不是接受一份"看起来合法"的新写 ledger。
+`event_digest` = 该事件规范化 JSON（不含 `event_digest`）的 sha256，
+`prev_event_digest` = 前一事件摘要（首条 baseline 为 `null`）。内部链只负责检测事件
+改写、重排与链断裂；它**不**被宣称能单独检测自洽的尾部截断或整体重写。
 
-每次更新必须提供 previous ledger digest；写 temp+fsync+atomic replace。validator 拒绝
-删除/reorder/改写既有 attempt、重复 ID、时间倒序和 run/head 串线。scope_epoch 只能由
-显式 rescope evidence 追加，旧 attempts 不删除。
+### 2. 可信外部尾锚点
 
-### 2. bounded collector
+runtime 必须提供位于 ledger 与 repo checkout 之外、worker 无法直接改写的 anchor
+provider。它以 `(repo_id, issue)` 为 key 单调保存：
+
+```text
+generation, event_count, tail_event_digest, ledger_digest,
+baseline_id, transaction_id, state = prepared | committed
+```
+
+provider 返回由配置的 trust root 可验证的 attestation；offline gate 接受显式
+attestation 输入并校验 trust root、repo/issue、单调 generation、`committed` 状态以及
+三个 digest/count 与 ledger 完全一致。复制在 ledger 内、工作树文件或 agent 可编辑的
+checkpoint 字段都不算可信 anchor。anchor 缺失、回退、pending、签名无效或不匹配一律
+`blocked`，从而检测内部链无法发现的尾部截断和整体重写。
+
+writer 使用两阶段协议：对 old generation/digest 执行 provider prepare/CAS，写
+canonical temp、`fsync` 文件、atomic replace、`fsync` 父目录，再 commit transaction
+并保存 attestation。任一步中断都会留下可识别 transaction；幂等 `recover` 只能用
+prepared 内容完成或回滚，gate 在恢复前 fail closed，禁止静默接受 ledger/anchor
+任一侧的较新值。
+
+### 3. 首次基线与迁移
+
+writer 提供 `init-baseline` 与 `migrate-baseline`。两者仅在 ledger 不存在且 provider
+确认该 key 从未创建时可执行，并要求：
+
+```text
+repo_id, issue, trusted_head, as_of, snapshot_digest,
+history_evidence_digest, authorization = {actor, source, decision_id}
+```
+
+baseline 的 history evidence 是 bounded remote inventory，覆盖启用前与 issue 关联的
+commit/PR/tranche，不能用空数组假装未知历史为零；`migrate-baseline` 还绑定 legacy
+source digest/count。命令通过同一两阶段 writer 同时创建首个不可变 baseline event 与
+generation 1 anchor。provider 已有 key 而 ledger 缺失表示 history loss，必须
+`blocked`，不得重新 init；授权缺失、repo/head 不匹配或 legacy evidence 不完整也失败。
+
+### 4. bounded collector 与可信 `as_of`
 
 `issue_attempt_collector.py` 接受显式 issue、base/head、checkpoint/run binding、spec task
 IDs、PR/review/verification evidence paths；它不扫描 session JSONL，也不做 GitHub write。
-输出候选 attempt JSON，由 orchestrator append。
+它输出 candidate event，不写 ledger。
+
+每份 remote/evidence snapshot 必须包含来源可验证的 `as_of` 与覆盖 canonical payload
+的 `snapshot_digest`，并由 ledger event 摘要继续绑定。所有 future-time、事件排序与
+head freshness 检查都只相对该 `as_of`，gate 不读取运行时墙钟。因此同一
+ledger+anchor attestation+snapshot+`as_of` 无论何时重跑，decision/exit code 都相同。
 
 work fingerprint 是 canonical JSON digest：
 
@@ -69,7 +114,16 @@ normalized failing/review fingerprints
 
 commit message 不参与。evidence 只允许受控 path/URL/digest/status，不嵌 raw logs。
 
-### 3. durable progress
+### 5. 确定性 writer
+
+`issue_attempt_writer.py` 是唯一 mutation boundary，提供 `init-baseline`、
+`migrate-baseline`、`append-start`、`append-terminal`、`open-scope` 与 `recover`。
+每次调用必须显式提供 expected ledger digest、expected anchor generation、candidate
+event 和 anchor attestation；helper 重算 canonical digest，拒绝旧事件的删除/改写、
+重复 ID/terminal/commit SHA、非法状态转换和 CAS 冲突。queue Skill 只能调用该 helper，
+不能拼装或直接写 JSON。其命令输出有界、错误非零且不静默降级。
+
+### 6. durable progress
 
 gate 重新计算 `progress_delta`：
 
@@ -80,16 +134,17 @@ gate 重新计算 `progress_delta`：
 
 新 commit/head 自身不是 progress。自报 delta 与重算不一致即失败。
 
-### 4. breaker decision
+### 7. breaker decision
 
 `issue_progress_gate.py` 返回：
 
 ```text
 decision = allowed | warn | needs_human | blocked      # 与 schemas/evaluation_result.schema.json 一致
-reason_ids = five_no_progress_commit_attempts |
-             three_same_work_fingerprint |
+reason_ids = five_no_progress_commits |
+             three_same_work_fingerprint_commits |
              three_no_progress_tranches |
-             ledger_unreadable | ledger_chain_broken | ledger_incomplete
+             ledger_unreadable | ledger_chain_broken | ledger_incomplete |
+             anchor_invalid | history_loss | baseline_required
 ```
 
 breaker trip 与非法 history 都编码为 `blocked` + 稳定 reason id（trip 用前三个，
@@ -97,9 +152,13 @@ history 缺陷用后三个），不引入 `tripped`/`invalid` 这类仓库共享
 （`checks/specrail_lib.py` 与 `schemas/evaluation_result.schema.json` 只允许四个值），
 以免通用 gate 校验、rejection persistence 与队列调用方误判。
 
-阈值在单次评估中全部计算。unreadable/incomplete history 为 invalid/fail closed。queue 在
-开 lane 前调用；trip/invalid 都不继续。gate 不 park/draft/comment，orchestrator 仅在
-当前用户已授权外部写时按 GH-157 行为执行。
+阈值在单次评估中全部计算。第一阈值统计当前 epoch 中引用 issue 且无 durable progress
+的 commit，达到 5 个即 trip；同一 attempt 的多个 commit 分别计数。第二阈值按 commit
+祖先/ledger 顺序统计连续 3 个相同规范化 work fingerprint 的无进展 commit，一个
+attempt 内也可触发；attempt 数量不参与这两个阈值。第三阈值仍按已结束 tranche。
+重复 commit SHA 或无法确定稳定顺序时 fail closed。unreadable/incomplete history 为
+invalid/fail closed。queue 在开 lane 前调用；trip/invalid 都不继续。gate 不
+park/draft/comment，orchestrator 仅在当前用户已授权外部写时按 GH-157 行为执行。
 
 GH-189 合并后 ledger/attempt 强制 run/fencing binding；GH-174 合并后主 Skill 保留
 breaker marker，详细操作进入 canonical runtime/recovery reference。
@@ -108,17 +167,21 @@ breaker marker，详细操作进入 canonical runtime/recovery reference。
 
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
-| B-001 B-002 B-009 B-011 | ledger schema/append | `python3 -m pytest -q tests/test_issue_progress_gate.py -k ledger` |
+| B-001 B-002 B-009 B-011 | event ledger/state validation | `python3 -m pytest -q tests/test_issue_progress_gate.py -k "ledger or event"` |
 | B-003 B-004 | progress recompute | `python3 -m pytest -q tests/test_issue_progress_gate.py -k progress` |
 | B-005 B-006 B-007 B-008 | thresholds | `python3 -m pytest -q tests/test_issue_progress_gate.py -k threshold` |
 | B-010 | queue decision boundary | `python3 -m pytest -q tests/test_issue_progress_gate.py -k authorization` |
-| B-012 | collector/gate purity | `python3 -m pytest -q tests/test_issue_attempt_collector.py tests/test_issue_progress_gate.py -k deterministic` |
+| B-012 B-016 | collector/gate purity and `as_of` | `python3 -m pytest -q tests/test_issue_attempt_collector.py tests/test_issue_progress_gate.py -k "deterministic or as_of"` |
+| B-013 | external anchor continuity | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k anchor` |
+| B-014 | deterministic writer/CAS/recovery | `python3 -m pytest -q tests/test_issue_attempt_writer.py -k "append or cas or recover"` |
+| B-015 | baseline/migration/history loss | `python3 -m pytest -q tests/test_issue_attempt_writer.py tests/test_issue_progress_gate.py -k "baseline or migration or history_loss"` |
 
 ## 数据流
 
 ```text
-bounded repo/GitHub artifacts → collector candidate → append-only ledger
-ledger + fresh terminal truth → offline progress gate → allowed/tripped/invalid
+bounded repo/GitHub artifacts → collector candidate → deterministic writer
+writer ↔ trusted anchor provider → immutable event ledger + anchor attestation
+ledger + attestation + bound as_of snapshot → offline gate → allowed/blocked
 ```
 
 ## 备选方案
@@ -127,22 +190,29 @@ ledger + fresh terminal truth → offline progress gate → allowed/tripped/inva
 - 存在 current checkpoint：会被覆盖且不能跨 session 审计，拒绝。
 - 让 gate 自动 park：混合判断与外部副作用，拒绝。
 - 读取 session transcript：高成本且违反 queue state 边界，拒绝。
+- 只用 ledger 内部哈希链：不能检测自洽的尾截断/整体重写，拒绝。
+- 让 queue/agent 直接编辑 JSON：绕过 CAS、fsync 与状态机，拒绝。
 
 ## 风险
 
 - Security: 路径/URL/digest allowlist，不收 raw log/session/secret。
-- Compatibility: 旧运行需显式 baseline；不能伪造历史。
+- Compatibility: 旧运行需显式 baseline/migration；anchor 已存在时不能伪装首次启用。
+- Availability: anchor provider/pending transaction 不可用时 fail closed，由 writer
+  `recover` 恢复，不降级成本地自报 anchor。
 - Performance: 每 issue 有界小 JSON 与 bounded evidence。
 - Maintenance: target IDs 与 scope epoch 需和 spec revision 对齐。
 
 ## 测试计划
 
-- [ ] Unit: schema、append-only、fingerprint、progress、阈值、错误聚合。
-- [ ] Integration: queue pre-lane、run lease binding、rescope epoch。
+- [ ] Unit: event schema、start/terminal、anchor、writer CAS/recovery、baseline/migration、
+      `as_of`、fingerprint、progress、commit 阈值与错误聚合。
+- [ ] Integration: queue pre-lane 只调用 writer、run lease binding、rescope epoch、
+      provider pending/history-loss fail closed。
 - [ ] Regression: full pytest、all-specs、depth/diff/hash。
-- [ ] Forward-use: 三 compaction/session resume 后仍从 ledger trip。
+- [ ] Forward-use: 三 compaction/session resume 后仍从 ledger+anchor trip。
 
 ## 回滚方案
 
-回滚 collector/gate/schema/template/queue/tests/docs/lock 同一提交。保留 ledger 为审计
-artifact，不自动删除；回滚期间不得声称 breaker 仍被确定性执行。
+回滚 collector/writer/gate/anchor+ledger schema/template/queue/tests/docs/lock 同一提交。
+保留 ledger 与外部 anchor 为审计 artifact，不自动删除或回退 anchor generation；
+回滚期间不得声称 breaker 仍被确定性执行。
