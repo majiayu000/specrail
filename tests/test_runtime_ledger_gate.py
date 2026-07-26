@@ -96,6 +96,66 @@ def test_runtime_ledger_gate_blocks_self_review_merged_without_authorization() -
     assert any("self_review_authorization" in error for error in result["errors"])
 
 
+def _fastlane_self_review_checkpoint() -> dict[str, object]:
+    fixture = ROOT / "examples" / "fixtures" / "runtime-self-review-merged-unauthorized.json"
+    checkpoint = json.loads(fixture.read_text(encoding="utf-8"))
+    item = checkpoint["items"][0]
+    item["lane_failures"] = []
+    item["pr_tier"] = "fastlane"
+    item["pr_tier_evidence"] = {
+        "changed_lines": 12,
+        "touched_paths": ["docs/notes.md"],
+    }
+    item["self_review_authorization"] = {
+        "basis": "fastlane_policy",
+        "scope": "PR #718 docs-only fastlane change",
+        "conversation_marker": "implx auto 2026-07-26",
+    }
+    return checkpoint
+
+
+def test_runtime_ledger_gate_allows_fastlane_self_review_without_lane_failures() -> None:
+    result = evaluate_checkpoint(_fastlane_self_review_checkpoint())
+
+    assert result["decision"] == "allowed"
+    assert result["errors"] == []
+
+
+def test_runtime_ledger_gate_blocks_fastlane_basis_on_standard_tier() -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    checkpoint["items"][0]["pr_tier"] = "standard"
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("requires pr_tier fastlane" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_fastlane_self_review_on_sensitive_item() -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    checkpoint["items"][0]["enforcement_sensitive"] = True
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "enforcement-sensitive item cannot use fastlane_policy" in error
+        for error in result["errors"]
+    )
+
+
+def test_runtime_ledger_gate_blocks_fastlane_self_review_without_tier_evidence() -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    checkpoint["items"][0].pop("pr_tier_evidence")
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "requires pr_tier_evidence" in error for error in result["errors"]
+    )
+
+
 def test_runtime_ledger_gate_blocks_lane_failure_without_downgrade_or_retry() -> None:
     checkpoint = clean_checkpoint()
     item = checkpoint["items"][0]  # type: ignore[index]
