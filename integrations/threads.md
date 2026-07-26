@@ -45,6 +45,9 @@ any task where all writable files overlap.
    - Map issues to existing PRs before opening new work.
    - Build a lane map with disjoint writable files.
 4. Execute lanes.
+   - Spawn every lane with a minimal context pack (task, diff or branch ref,
+     spec paths, compact carry) — never a fork of the coordinator's full
+     conversation history (`fork_turns: all` or equivalent), for any lane role.
    - Planners and reviewers are read-only.
    - Workers own explicit writable paths.
    - The coordinator owns shared verification and final synthesis.
@@ -55,6 +58,10 @@ any task where all writable files overlap.
    - Validate the spec packet when a spec changed.
    - Preserve human-facing locale rules.
 6. Run threads closure audit when GitHub queue or PR state changed.
+   - Run it once per tranche, at tranche end, covering every PR and issue the
+     tranche touched in one batch — not as a full re-check after each
+     individual merge. A mid-tranche re-check is justified only when the
+     agent's own action produced an unexpected merge-state outcome.
    - Re-check PR heads, CI, review threads, merge state, and issue closure.
    - Separate remote truth from local worktree state.
 
@@ -62,7 +69,11 @@ For GitHub PR merge work, native thread dispatch is mandatory when native
 subagents are available. A PR must have at least one independent read-only
 `reviewer` or `merge_reviewer` native lane before merge readiness can be
 reported. The coordinator lane is not a native reviewer, even when it performs
-the final synthesis.
+the final synthesis. Exception: a `fastlane`-tier, non-enforcement-sensitive
+PR may use coordinator self-review under `basis: fastlane_policy` per
+`skills/specrail-implement-queue/SKILL.md`; this is also the resolution of the
+"do not use threads for a small single-file change" rule above — small
+fastlane work neither requires nor justifies native lanes.
 
 ## Handoff Contract
 
@@ -80,16 +91,13 @@ specrail_threads_handoff:
   threads:
     mode:
     truth_level:
-    thread_dispatch_gate:
     queue_ledger:
     issue_to_pr_map:
     lanes:
     merge_policy:
     stop_conditions:
-    context_budget:
-    output_firewall:
   checkpoint:
-    path:
+    path:  # holds thread_dispatch_gate, context_budget, output_firewall
     runtime_gate:
 ```
 
@@ -121,34 +129,23 @@ Threads owns the orchestration side:
 - closure audit after PR or issue state changes
 - parent context budget and output firewall enforcement
 
-Record this queue handoff when both systems are active:
+The queue plan block is defined once, in
+`skills/specrail-implement-queue/SKILL.md` (`specrail_implementation_queue`);
+do not maintain a second field layout here. When threads orchestration is
+active, extend that block with one `orchestration` section:
 
 ```yaml
-specrail_implementation_queue:
-  issues:
-    - issue:
-      spec_dir:
-      existing_prs:
-      planned_prs:
-      completion_mode: partial | final
-      acceptance_evidence:
-  orchestration:
-    threads_mode:
-    lanes:
-    thread_dispatch_gate:
-    native_thread_evidence:
-    fallback_reason:
-    context_budget:
-    output_firewall:
-  checkpoint:
-    path:
-    runtime_gate:
-  gates:
-    route_gate:
-    pr_gate:
-    review_threads:
-    merge_authorization:
+# appended to the specrail_implementation_queue block from the queue skill
+orchestration:
+  threads_mode:
+  lanes:
+  fallback_reason:
 ```
+
+`thread_dispatch_gate` (with its `native_thread_evidence`) is recorded exactly
+once, in the runtime checkpoint; every other artifact — this handoff, the
+`implx` wrapper handoff, reports — references the checkpoint instead of
+copying the fields. The same goes for `context_budget` and `output_firewall`.
 
 This handoff must not grant approval or merge authority. It only preserves the
 evidence each system needs.
@@ -221,6 +218,13 @@ Bounded review contract (`manifest.version: 2`,
 For re-review after fixes, resume or message the existing reviewer lane. If it
 cannot resume, dispatch the next bounded `diff_only` lane with compact carry;
 never replay full history. See `skills/specrail-review-pr/SKILL.md`.
+
+One reviewer lane per PR is the default; do not stack mechanical-audit,
+cross-review, adversarial, and final-re-review lanes on one PR unless the item
+is `heavy` tier, a human asked for it, or a recorded lane failure forces a
+retry. An artifact formatting/metadata defect is repaired by regenerating the
+artifact from the existing review output — it does not open a new review
+round or re-collect evidence for an unchanged head.
 
 ## Fallback
 

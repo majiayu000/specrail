@@ -46,9 +46,16 @@ draining the rest of the queue.
 
 ## Spec Coverage Gate
 
-Before planning implementation work, classify every open issue and linked PR:
-use only the canonical `spec_status` values defined by
-`checks/specrail_lib.py` as `SPEC_STATUSES`.
+Before planning implementation work, classify issues by spec coverage using
+only the canonical `spec_status` values defined by `checks/specrail_lib.py`
+as `SPEC_STATUSES`. The classification scope follows the queue mode:
+
+- `full_queue_drain`: classify every open issue and linked PR — the drain
+  needs the whole map.
+- `bounded_tranche`: classify only the target issue(s) and their linked PRs.
+  Do not spend startup reads classifying the rest of the repository for a
+  scoped tranche; that cost is O(open issues) and buys nothing the tranche
+  uses.
 
 - `complete`: `product.md`, `tech.md`, and `tasks.md` all exist for the issue,
   and `product.md` does not declare `status: legacy` in its Linked Issue
@@ -152,8 +159,11 @@ Rules:
   check is the enforcing authority — never self-declare `fastlane`
   against it.
 - When in doubt between two tiers, pick the heavier one.
-- Tiering never weakens CI, reviewer-lane, review-thread, or pr_gate
-  evidence requirements.
+- Tiering never weakens CI, review-thread, or pr_gate evidence requirements.
+  The reviewer-lane requirement has exactly one tier-scoped substitution:
+  `fastlane` items may satisfy review via coordinator self-review under
+  `basis: fastlane_policy` (see Orchestration); the review artifact and all
+  other evidence classes stay mandatory.
 - The tier also decides the `auth_mode: review` merge authorization path
   (see Merge Authorization): `fastlane`/`standard` may qualify for
   `standard_auto`, `heavy` keeps per-PR human authorization, and the
@@ -274,7 +284,8 @@ Rules:
 Use `integrations/threads.md` and an available threads skill for parallel lanes,
 disjoint ownership, review/CI/merge gates, or closure audit. For GitHub queues,
 native dispatch is required when available. Before implementation, review,
-push, comment, or merge, record:
+push, comment, or merge, record — once, in the runtime checkpoint (handoffs
+and reports reference it rather than copying the fields):
 
 ```yaml
 thread_dispatch_gate:
@@ -293,8 +304,27 @@ PR merge work needs a real read-only `reviewer`/`merge_reviewer` thread with
 `agent_id_or_thread_id`, wait/close evidence, and output; the coordinator is not
 that reviewer.
 
+Fastlane exception: a `fastlane`-tier, non-enforcement-sensitive PR with valid
+`pr_tier_evidence` does not require a native reviewer thread. The coordinator
+may perform the review itself, recording `review_source: self_review`, a local
+review artifact, and `self_review_authorization` with
+`basis: fastlane_policy` (plus scope and conversation marker); no
+`lane_failures[]` precondition applies to this basis. For a tranche whose PR
+work is entirely fastlane, record `spawn_requirement: not_required` with
+`no_spawn_reason: fastlane_policy`. Any doubt about the tier means the PR is
+not fastlane; `standard` and `heavy` keep the native reviewer requirement.
+
 If threads is unavailable, record `fallback_mode: single_agent` and its reason,
 use the normal SpecRail flow, and report that no native threads launched.
+
+Spawn every lane — implementer, reviewer, audit, or merge — with a minimal
+context pack: the task statement, the exact diff or branch ref, the linked
+spec packet paths, and compact carry. Never fork the coordinator's
+conversation history into a lane (`fork_turns: all` or equivalent
+full-history forks are forbidden for every lane role). A lane that needs
+more context receives explicit file paths, not the parent transcript;
+forked history multiplies input-token cost per lane by the age of the
+session and accelerates coordinator compaction.
 
 Keep ownership boundaries explicit:
 
@@ -334,6 +364,22 @@ Bounded review contract (`manifest.version: 2`,
 
 ## Reviewer Lane Execution
 
+One reviewer lane per PR is the default. A single independent read-only
+reviewer/merge-reviewer lane satisfies the review requirement for `fastlane`
+and `standard` tiers; do not stack additional lanes (mechanical audit,
+cross-review, adversarial round, final read-only re-review) on the same PR.
+Multiple distinct review lanes are justified only for `heavy` tier items,
+an explicit human request, or a recorded lane failure that forces a retry
+lane. Each extra lane multiplies wait time and token cost without adding a
+required evidence class.
+
+Artifact-defect repair is not review: when a review artifact fails schema or
+manifest validation but the underlying review output exists, regenerate the
+artifact from that output and re-run `checks/review_json_gate.py` only. A
+formatting/metadata defect in the artifact does not open a new review round,
+does not re-run tests, and does not re-collect GitHub evidence for an
+unchanged head.
+
 Give the reviewer only the exact diff, linked spec packet, and compact carry, never
 coordinator history. Resume/message it first; otherwise dispatch the next bounded
 `diff_only` lane. One bounded wait plus one stop request precedes `zero_output`.
@@ -344,6 +390,15 @@ a different local lane or authorized local `self_review` recording actor, source
 quoted scope, and marker; generic authorization cannot substitute.
 Only two distinct recorded lane failures let `implx auto` authorize scoped
 self-review; one requires retry, review mode has no exception, and gates enforce it.
+The `basis: fastlane_policy` self-review path (fastlane tier only, see
+Orchestration) is separate from this failure-recovery path and needs no
+recorded lane failures.
+
+In `auth_mode: review`, a fastlane self-review item cannot qualify for
+`standard_auto` (no independent party): it keeps per-PR human merge
+authorization. In `auth_mode: auto`, the standing merge authorization covers
+it once all evidence is green. Choose per PR: spawn one reviewer lane to
+unlock `standard_auto`, or self-review and leave the merge to the human.
 
 ## Context Budget
 
@@ -540,18 +595,34 @@ Test layering, to avoid re-paying a full-suite wait on every fix round:
 
 - During iteration, run only the focused tests for the touched behavior.
 - Run the full suite plus clippy plus deterministic checks once, immediately
-  before claiming PR-ready — not after each individual fix.
+  before claiming PR-ready — not after each individual fix. This is the one
+  local full-suite run the `max_full_test_runs_per_head` budget dimension
+  counts; record its `full_test_head_sha`.
+- A review-fix commit that moves the PR head does NOT restart the local
+  full-suite obligation. For the new head, run the focused tests for the fix,
+  then let the PR's CI rollup provide the full-suite evidence — a green CI
+  rollup on the new head IS current full-coverage evidence for that head.
+  Re-run the local full suite only when CI does not cover the full suite for
+  this repository, or when the fix touched build/test configuration itself.
+- Exact-head evidence discipline applies to the evidence record (which head
+  a result belongs to), not to re-execution: never re-run an expensive check
+  on a new head when a gate-visible CI artifact already covers it.
 
 ## Runtime Checkpoint
 
-For long queues, create or update an optional local runtime checkpoint before:
+For long queues, create or update an optional local runtime checkpoint at
+three required points:
 
-- spawning writable lanes
-- pushing or opening PRs
-- waiting on CI or long local tests
-- requesting merge review
-- compacting, handing off, or closing the parent thread
-- selecting the next tranche in a full-queue drain loop
+- tranche start, before the first writable action (spawning writable lanes,
+  pushing, or opening PRs)
+- before claiming merge readiness for a PR (the ledger-gate evaluation point)
+- tranche end: compacting, handing off, closing the parent thread, or
+  selecting the next tranche in a full-queue drain loop
+
+Between these points, update the checkpoint only when material state changed
+(a new PR, a lane failure, a budget event) — not as a per-step ritual. The
+checkpoint mirrors GitHub truth for handoff; every extra write is copy work
+that GitHub already stores.
 
 Use `templates/tranche_checkpoint.md` as the shape and validate concrete JSON
 checkpoints with:
@@ -622,7 +693,9 @@ For each issue slice:
 
 Before readiness, run focused tests, repository deterministic checks, and
 `python3 checks/check_workflow.py --repo .`; when specs changed also use
-`--spec-dir specs/GH<issue>`. Compare the diff with the linked specs via
+`--spec-dir specs/GH<issue>`. Apply the Waiting Discipline test layering:
+one local full-suite run per PR bound to the merge-candidate head; review-fix
+heads rely on focused tests plus the CI rollup, not a fresh local full suite. Compare the diff with the linked specs via
 `skills/specrail-check-impl-against-spec/SKILL.md`, then use
 `skills/specrail-pr-gate/SKILL.md` before reporting merge readiness.
 
