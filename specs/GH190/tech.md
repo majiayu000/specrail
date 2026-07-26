@@ -196,7 +196,8 @@ python3 checks/goal_contract.py bind \
   --build <allowed-build.json> \
   --create-result-evidence <host-create-receipt.json> \
   --live-goal-evidence <host-live-snapshot.json> \
-  --github-evidence <fresh-adapter-artifact.json> --json
+  --github-evidence <fresh-adapter-artifact.json> \
+  --action-attestation <runtime-action.json> --json
 ```
 
 四个 build evidence reference 均是 closed `{artifact_id,path,sha256}`，CLI 分别加载并
@@ -223,7 +224,15 @@ create-result、bind-time live Goal evidence 与 bind-time fresh
 `github_goal_evidence` artifact，验证 host attestation、exact request
 digest、run/repo、goal ID、`live.goal_revision >= receipt.goal_revision`、active status
 和 transition tail 一致后，一次输出 closed
-`GoalCheckpointBinding`。`queue_current` 只能来自这份 bind-time fresh evidence，
+`GoalCheckpointBinding`。`--action-attestation` 是必需输入：初始 checkpoint write 是
+B-005/B-039 意义上的受保护 action，`bind` 消费本 run 首个 runtime-owned
+`ActionAttestation`（`action_sequence` 为 1，action_type 为 initial bind/checkpoint
+write，`target_request_digest` 绑定 exact `create_request_digest`，其 evidence refs
+绑定本次 create receipt、live snapshot 与 bind-time github artifact），并据此在
+bundle 中写入 sequence-1 的 `action_reanchors` entry。若存在 sequence-1 initial
+rebind，其 `action_sequence`/`action_attestation_ref` 引用同一 attestation——initial
+rebind 是 bind action 的原子组成部分，不是第二个受保护 action。attestation 缺失、
+stale 或 target 不匹配时 `bind` blocked，skill 不得手工补拼这些字段。`queue_current` 只能来自这份 bind-time fresh evidence，
 其 `as_of` 必须不早于 create receipt 的 `issued_at`；creation-time build snapshot
 只作为 immutable baseline。fresh evidence 与 baseline 字节一致时
 `queue_rebindings` 为空；同-scope 内 item state/head/集合漂移时，binder 追加
@@ -238,6 +247,7 @@ goal: ActiveGoalContract,
 queue_baseline + human_decisions_baseline,
 queue_current,
 queue_rebindings: [] | [sequence-1 initial rebind],
+action_reanchors: [sequence-1 initial bind re-anchor],
 goal_transitions: [sequence-0 active event],
 transition_anchor: attested live Goal tail,
 binding_digest
@@ -245,8 +255,8 @@ binding_digest
 
 为避免 sequence-0 自引用，binder 先构造 closed `InitialBindingProjection`，只包含
 routing/budget evidence、ActiveGoalContract、queue/human baseline、current queue、
-initial rebind（空或 sequence-1）、create receipt ref、live snapshot ref 与
-bind-time github evidence ref；它明确排除
+initial rebind（空或 sequence-1）、sequence-1 action re-anchor、create receipt ref、
+live snapshot ref 与 bind-time github evidence ref；它明确排除
 `goal_transitions`、`transition_anchor`、`binding_digest` 及所有由 sequence-0 派生字段。
 `initial_projection_digest` 固定为 ASCII
 `specrail.goal.initial-projection.v1\0` + projection RFC8785 bytes 的 SHA-256。
@@ -278,7 +288,14 @@ prev_event_digest, event_digest, external_tail_digest
 ```
 
 `evidence_digest` 必须由 loader 读取 `evidence_ref` 的 closed canonical object 后重算，
-不是仅检查非空。各分支 prerequisite：
+不是仅检查非空。`event_digest` 的摘要字节固定为 ASCII
+`specrail.goal.transition-event.v1\0` 加 closed 投影
+`{sequence, from, to, occurred_at, evidence_ref, evidence_digest, goal_revision,
+prev_event_digest}` 的 RFC8785 bytes，再取 SHA-256；投影明确排除 `event_digest`
+自身与 `external_tail_digest`（后者来自 provider tail，可能已覆盖本 event，纳入即
+自引用）。sequence-0 event 的 `prev_event_digest` 固定为 64 个 ASCII `0` 哨兵值，
+之后等于前一 event 的 `event_digest`。producer 与 offline gate 用同一公式独立重算，
+字节不等即 fail closed。各分支 prerequisite：
 
 - sequence 0 `active`: exact build envelope、attested create receipt、bind-time live snapshot
   与上一节的 `initial_projection_digest`；
@@ -380,7 +397,14 @@ python3 checks/goal_contract.py rebind \
 blocked 时为 null 且 exit 1。没有其它 transition/rebind command 名、隐式参数或
 skill-side event composition。
 
-第一次 `prior_digest` 等于 baseline，之后等于前一 event 的 current digest。loader
+第一次 `prior_digest` 等于 baseline，之后等于前一 event 的 current digest。rebind
+event 的 `event_digest` 摘要字节固定为 ASCII `specrail.goal.rebind-event.v1\0` 加
+closed 投影 `{sequence, prior_digest, current_digest, remote_evidence_ref,
+remote_artifact_digest, as_of, repo_id, run_id, fencing_token, scope_digest,
+action_sequence, action_attestation_ref, prev_event_digest}` 的 RFC8785 bytes，
+再取 SHA-256；投影排除 `event_digest` 自身。sequence-1 rebind 的
+`prev_event_digest` 固定为 64 个 ASCII `0` 哨兵值，之后等于前一 rebind 的
+`event_digest`。loader
 必须校验 `github_goal_evidence` collector/schema/file SHA，重算 artifact digest、
 records/current digest，并要求 repo/default-base 与 stable scope 匹配、完整分页且
 `as_of` 不早于前一 rebind。caller 自报 digest 或只有内部链一致性不算 remote truth。
@@ -392,11 +416,22 @@ snapshot digest 不匹配必须阻断并要求新 Goal/人工决策。
 remote write 前，受保护 runtime 必须出具单调 `ActionAttestation`：
 
 ```text
-action_sequence, action_id, action_type,
+action_sequence, action_id, action_type, target_request_digest,
 prior_checkpoint_digest, github_evidence_ref, live_goal_evidence_ref,
 repo_id, run_id, fencing_token, prior_action_digest, action_digest,
 issued_at, attestation
 ```
+
+`target_request_digest` 是该 action 唯一目标的 canonical digest：initial bind 绑定
+exact `create_request_digest`，rebind 绑定 fresh `remote_artifact_digest`，
+prepare-transition 绑定 exact update request digest（runtime terminal status 则为
+runtime terminal receipt 的 request/event digest），finalize-transition 绑定对应
+terminal receipt 的 canonical digest，resume/pre-lane/checkpoint write 绑定所读或
+所写 checkpoint 的 binding digest。`action_digest` 的签名 canonical object 覆盖除
+`attestation` 与 `action_digest` 自身外的全部 required 字段（含
+`target_request_digest`），摘要字节固定为 ASCII `specrail.goal.action.v1\0` 加该
+closed 投影的 RFC8785 bytes，再取 SHA-256。gate 将 `target_request_digest` 与实际
+request/receipt/checkpoint artifact 重算对账，不匹配 fail closed。
 
 queue binding 持久化完整 `action_reanchors[]`；sequence 从 1 连续递增，一个
 attestation 只能绑定一个 action/type/目标 digest。gate 不尝试数 chat turn，也不读
@@ -430,7 +465,7 @@ stop reason：
 
 | Goal status | checkpoint `status` | `budget.stop_reason` |
 | --- | --- | --- |
-| `active` | `planning` / `running` / `handoff` | `null` |
+| `active` | `planning` / `running` / `handoff` | `null`；`handoff` 另允许 `budget_exhausted`（仅 GH-160 tranche 预算耗尽且 attested `tokens_used` < `token_budget` 的跨 tranche handoff，Goal 保持 active 并由同一 `goal_id` resume） |
 | `complete` | `complete` | `queue_empty` / `queue_fully_blocked` / `only_human_decisions` |
 | `exhausted` | `handoff` | `budget_exhausted` |
 | `interrupted` | `handoff` | `user_interrupt` |
@@ -439,7 +474,9 @@ stop reason：
 disabled binding 不包含 Goal status，沿用 routing 对 checkpoint 的既有规则。
 `pending_transition` 在 local active + external terminal 的窗口只允许
 `finalize-transition` recovery，不按普通 active 行放行。terminal+running、
-complete+null、active+任一 stop reason、exhausted+complete 等所有表外组合稳定
+complete+null、active+表外 stop reason（含 attested `tokens_used` >=
+`token_budget` 时的 active+`budget_exhausted`，此时必须走 exhausted transition）、
+exhausted+complete 等所有表外组合稳定
 `blocked: goal_checkpoint_status_mismatch`。
 
 runtime gate 调用共享 `validate_goal_contract()`，一次性交叉校验：

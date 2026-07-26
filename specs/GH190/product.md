@@ -93,8 +93,11 @@ checkpoint，并在 compaction 后继续低产出长跑。
     不匹配不得生成 active contract。
 23. B-023 当 `bind` 成功时，必须一次输出 closed initial checkpoint bundle，至少包含
     trusted routing/budget evidence、immutable queue/human baseline、current queue
-    snapshot、零条 rebind、sequence-0 transition、external transition anchor 与 active
-    contract；queue/skill 不得补字段或把局部 bind output 拼成 checkpoint。
+    snapshot、queue rebind 链（bind-time fresh snapshot 与 immutable baseline 字节
+    一致时为零条；同-scope 漂移时恰好一条 content-bound sequence-1 initial rebind）、
+    绑定 bind action 的 sequence-1 action re-anchor、sequence-0 transition、external
+    transition anchor 与 active contract；queue/skill 不得补字段或把局部 bind output
+    拼成 checkpoint。
 24. B-024 当 Goal 状态 transition 被追加时，event 必须引用 versioned canonical
     evidence object，并绑定 artifact ID、source/type 与完整内容摘要；gate 必须按
     complete/exhausted/interrupted/blocked 分支重算并验证其 remote/tool/handoff/
@@ -155,13 +158,17 @@ checkpoint，并在 compaction 后继续低产出长跑。
     `allowed|needs_human` decision；untrusted routing 或 invalid budget 仍为 blocked 且不
     产出可写 binding。不存在“先 blocked/null 再由 skill 手工补 disabled”的路径。
 39. B-039 当任一受保护 queue action 被执行时，必须持久化 runtime-owned 单调
-    `action_sequence`，绑定 action type/ID、prior checkpoint digest、fresh GitHub/Goal
-    evidence、repo/run/fencing 与前序 action digest；缺号、复用 evidence 或 action 没有
+    `action_sequence`，绑定 action type/ID、唯一目标 request/receipt digest、prior
+    checkpoint digest、fresh GitHub/Goal evidence、repo/run/fencing 与前序 action
+    digest；缺号、复用 evidence 或 action 没有
     对应 re-anchor 时 gate 必须阻断，且无需读取 session transcript。
 40. B-040 当 checkpoint 与 Goal status 对账时，必须使用完整闭集映射并同时验证
-    `stop_reason`：active 仅对应 planning/running/handoff+null；complete 仅对应
-    complete+queue terminal reason；exhausted/interrupted/blocked 分别对应
-    handoff+budget_exhausted、handoff+user_interrupt、blocked+blocked。其它组合一律失败。
+    `stop_reason`：active 对应 planning/running/handoff+null，以及 GH-160 tranche
+    预算耗尽但 Goal token budget 未耗尽（attested `tokens_used` < `token_budget`）
+    时的 handoff+budget_exhausted——该跨 tranche handoff 保持 Goal active 并由同一
+    `goal_id` resume；complete 仅对应 complete+queue terminal reason；exhausted
+    （Goal token budget 耗尽）/interrupted/blocked 分别对应 handoff+budget_exhausted、
+    handoff+user_interrupt、blocked+blocked。其它组合一律失败。
 41. B-041 当 GH-174 contract 或其 runtime implementation 尚未合并到 target default
     branch、GH-190 尚未在其后 rebase，或七个共享 queue/lock planned paths 的 ownership
     overlap 尚未消解时，GH-190 implementation route 与 SP190-T4 必须 blocked。集成顺序
