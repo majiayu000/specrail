@@ -2,11 +2,12 @@ from pathlib import Path
 
 
 REPO = Path(__file__).resolve().parents[1]
-CONTRACT_FILES = (
+CANONICAL_FILE = "skills/specrail-review-pr/SKILL.md"
+REFERENCING_FILES = (
     "review/agent_first_review.md",
-    "skills/specrail-review-pr/SKILL.md",
     "skills/implx/SKILL.md",
     "integrations/threads.md",
+    "skills/specrail-implement-queue/SKILL.md",
 )
 START = "<!-- specrail-bounded-review-contract-v1:start -->"
 END = "<!-- specrail-bounded-review-contract-v1:end -->"
@@ -50,24 +51,22 @@ def _contract_block(text: str) -> str:
     return text[start:end]
 
 
-def test_bounded_review_contract_is_identical_in_every_authoritative_doc() -> None:
-    for relative_path in CONTRACT_FILES:
+def test_bounded_review_contract_is_canonical_in_review_pr_skill_only() -> None:
+    text = (REPO / CANONICAL_FILE).read_text(encoding="utf-8")
+    assert _contract_block(text) == EXPECTED_BLOCK, CANONICAL_FILE
+
+
+def test_referencing_docs_point_to_canonical_contract_without_copies() -> None:
+    for relative_path in REFERENCING_FILES:
         text = (REPO / relative_path).read_text(encoding="utf-8")
-        assert _contract_block(text) == EXPECTED_BLOCK, relative_path
+        assert START not in text, f"{relative_path}: duplicated contract block"
+        assert END not in text, f"{relative_path}: duplicated contract block"
+        assert CANONICAL_FILE in text, f"{relative_path}: missing contract reference"
+        assert "do not copy it here" in text, relative_path
 
 
 def test_authoritative_docs_reject_legacy_full_review_escape_hatches() -> None:
-    for relative_path in CONTRACT_FILES:
+    for relative_path in (CANONICAL_FILE, *REFERENCING_FILES):
         text = (REPO / relative_path).read_text(encoding="utf-8").lower()
         for phrase in FORBIDDEN_LEGACY_PHRASES:
             assert phrase not in text, f"{relative_path}: forbidden legacy phrase: {phrase}"
-
-
-def test_queue_skill_references_canonical_bounded_review_contract() -> None:
-    text = (REPO / "skills/specrail-implement-queue/SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    assert "skills/specrail-review-pr/SKILL.md" in text
-    assert "do not copy it here" in text
-    assert START not in text
-    assert END not in text
