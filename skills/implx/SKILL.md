@@ -47,6 +47,16 @@ Use `queue_mode: bounded_tranche` only when the prompt explicitly limits scope,
 for example one issue, one PR, the current tranche, plan-only, status-only, or
 review-only work.
 
+Single-issue short circuit: when the prompt targets exactly one issue whose
+spec coverage is already `complete` (or `exception_allowed`) and the change is
+plausibly `fastlane`/`standard` tier, skip the queue skill entirely — run the
+startup checks above, then route straight to
+`skills/specrail-implement/SKILL.md` plus
+`skills/specrail-pr-gate/SKILL.md`. Do not build the full-queue coverage
+classification, queue-planning YAML, or tranche budget for one scoped issue.
+Fall back to the queue skill only when the short circuit discovers multi-issue
+coupling, a `heavy` tier surface, or missing spec coverage.
+
 ## Authorization Mode
 
 Two modes. Record the selected mode at startup and pass it downstream.
