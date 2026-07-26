@@ -143,7 +143,13 @@ direct route 不再被无条件 artifact 要求阻断，也不需要绕过 core 
   `approved_review.submittedAt < spec_approved_event.timestamp <
   ready_to_implement_event.timestamp`。对同一 exact head 有多个 APPROVED review 时，按
   `(submittedAt, review_id)` 稳定选择满足 maintainer policy 且早于 accepted
-  `spec_approved` event 的最新一条；不存在这样的 review 时拒绝。仅仅在 approval 之后
+  `spec_approved` event 的最新一条；不存在这样的 review 时拒绝。被接受的 approval 还必须在
+  采集与每次 `--verify-result` 复验时都保持该 PR 当前最新的有效 review decision：collector
+  必须枚举同一 PR 上晚于 accepted approval `submittedAt` 的全部 review（不限 commit OID），
+  只要存在任一 `CHANGES_REQUESTED`，或 accepted `APPROVED` review 已被 dismiss/撤回，即以
+  `approval_superseded_by_change_request` fail closed——同一 exact head 上后续的阻断性
+  review 表示当前评审状态已不再是 approved，早先的 approval 不得继续授权实现；该检查在
+  consumer 消费/复验时必须重新执行，不能只依赖采集时刻的快照。仅仅在 approval 之后
   重新采集一个早已存在的 readiness label 必须以 `readiness_precedes_spec_approval` 拒绝；
   先打 `spec_approved`/`ready_to_implement`、后补 exact-head review 必须以
   `approval_review_after_lifecycle` 拒绝，不能追溯授权。
