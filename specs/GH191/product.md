@@ -93,6 +93,39 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
     GH-189/PR #193 已按 `GH-172 → GH-174 → GH-189` 串行合入目标 base，且 GH-191 已
     逐步 rebase 后开始；任一依赖仍 open、未合并、head/base 漂移或跳序都必须阻断，
     不得把“有 PR”或条件性 handoff 当作“已合并”。
+21. B-021 当 provider 为一次 breaker evaluation 签发 current-state proof 时，必须原子
+    建立绑定该 evaluation、generation 与 ledger digest 的短期独占 reservation；在
+    offline result 生成后，受保护 runtime 必须以同一 reservation 对 provider current
+    generation 执行 compare-and-finalize，并返回绑定 result digest 的签名 decision
+    receipt。只有 receipt 成功的 result 才可开 lane；签发后 generation 前移、reservation
+    过期/取消/重放、writer 与 evaluation 竞态或 finalize CAS 失败都必须阻断。
+22. B-022 当 `issue_progress_gate.py` 返回 evaluation result 时，输出必须是
+    `schemas/evaluation_result.schema.json` 的完整闭合投影：包含 `decision`、`route`、
+    `mode`、`current_state`、`issue`、`pr`、`reasons`、`satisfied`、`missing`、
+    `required_artifacts`、`human_gates`、`allowed_actions`、`blocked_actions` 与
+    `verification_commands`，且不得以 `reason_ids` 代替 `reasons`；任一 decision 分支
+    缺字段、额外字段或动作集合与 decision 矛盾时必须被调用方拒绝。
+23. B-023 当 baseline/migration 覆盖启用前的 tranche history 时，必须使用受信 runtime
+    history adapter 从受保护 checkpoint archive 与可验证的 tracked checkpoint history
+    生成 closed、签名且完整性有界的 evidence；每条 tranche 必须绑定 source path/blob
+    digest、repo/issue/run/tranche/head/status 与 coverage window。archive 缺段、git
+    history 不可达、checkpoint schema/gate 失败、重复/冲突 tranche 或调用方自报 history
+    必须 fail closed，不得按零次 tranche 迁移。
+24. B-024 当 gate 判断 commit 是否进入 B-005/B-006 计数时，trusted adapter 必须对每个
+    commit SHA 使用仓库稳定 issue-reference 谓词派生 `references_issue`，并把 issue、
+    commit message digest、predicate ID/version、布尔结果与 evidence digest 一起签名；
+    ledger 只持久化该 provenance digest，gate 必须与同一可信 envelope 重新关联。缺失、
+    错 issue/SHA、predicate 漂移或 provenance digest 不匹配的 commit 不得被猜测计数，
+    而应使 history fail closed。
+25. B-025 current-state proof、evaluation reservation 与 decision receipt 必须分别受
+    closed schema 和 pack ownership 校验；proof/receipt 缺少 repo/issue/evaluation、
+    generation、ledger/result digest、有效期、provider/trust-root 或签名字段，出现未知
+    字段，或 schema 未在 pack validator 注册时，公开 gate 必须失败。
+26. B-026 GH-191 的 PR 编号、串行依赖与 planned-path overlap 必须只存在于本仓库显式
+    dependency overlay，由 read-only repository preflight helper 以 fresh GitHub evidence
+    评估；通用 `check_workflow.py` 与 consumer 安装包不得硬编码、查询或阻断
+    #186/#192/#193。overlay 缺失/非法、fresh 查询不完整或 B-020 任一条件不满足时只阻断
+    本仓库 GH-191 implementation preflight。
 
 ## 验收标准
 
@@ -105,13 +138,23 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
       证明 ledger append-only 且绑定 issue/head/run/tranche。
 - [ ] `as_of` 边界测试证明相同输入跨墙钟重跑结果不变。
 - [ ] old ledger + old committed attestation/proof 回放、错/已消费 challenge、过期 proof、
-      provider current generation 前移均阻断；fresh current-state proof 正例通过。
+      proof 签发后 provider generation 前移、reservation 过期/重放与 finalize CAS 失败均
+      阻断；fresh proof + reservation + decision receipt 正例通过。
+- [ ] allowed/blocked evaluation fixtures 都完整匹配共享 `evaluation_result`，使用
+      `reasons`，缺字段、额外字段、`reason_ids` 替代或动作矛盾均被拒绝。
+- [ ] 迁移从可信 checkpoint archive/tracked history 恢复完整 tranche；缺段、浅历史、
+      schema/gate 失败、重复/冲突记录与 caller-authored history 均阻断。
+- [ ] mixed commit fixture 证明只有可信 `references_issue: true` 的 SHA 进入 commit
+      阈值，prefix collision、错 issue/SHA、predicate/version/digest 漂移均 fail closed。
+- [ ] current-state proof、reservation、decision receipt closed schemas 均在 pack
+      ownership manifest 注册，并有 unknown/missing-field 负例。
 - [ ] `open-scope` 缺少人工决定、非 maintainer、错 repo/issue/epoch/scope、授权重放与
       CAS 竞态均阻断；成功路径在 provider 中原子留下 authorization consumption。
 - [ ] progress snapshot 的未知 issuer/adapter、伪造 `as_of`、签名/adapter digest 错误、
       分页不全与 caller-authored JSON 均阻断，可信完整 adapter run 正例通过。
 - [ ] fresh dependency gate 证明 #186/#192/#193 任一仍 open 或跳过串行 rebase 时不得
-      开始 GH-191 实现，并覆盖三者按序合入后的正例。
+      开始 GH-191 实现，并覆盖三者按序合入后的正例；PR 编号只出现在 repo overlay，
+      consumer 的通用 workflow check 不受影响。
 - [ ] 首次 baseline/migration 可启动；anchor 已存在但 ledger 丢失时不可伪装首次启用。
 - [ ] trip 在 lane/remote write 前阻断，外部写仍需授权。
 - [ ] compaction/resume forward test 不丢历史，full suite 全绿且无 GH-160 diff。
@@ -120,16 +163,16 @@ git/checkpoint 后主观判断，runtime schema 没有逐 issue attempt history�
 
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
-| 空/缺失输入 | covered: B-001 B-002 B-009 B-013 B-015 |
-| 错误与失败路径 | covered: B-008 B-009 B-010 |
+| 空/缺失输入 | covered: B-001 B-002 B-009 B-013 B-015 B-022 B-023 B-024 B-025 B-026 |
+| 错误与失败路径 | covered: B-008 B-009 B-010 B-021 B-022 B-023 B-024 B-025 B-026 |
 | 授权/权限 | covered: B-010 B-011 B-018 B-019 |
-| 并发/竞态 | covered: B-002 B-009 B-013 B-014 B-017 B-018 |
-| 重试/幂等 | covered: B-002 B-011 B-012 B-014 B-017 B-018 |
-| 非法状态转换 | covered: B-002 B-009 B-010 B-011 B-015 B-018 B-020 |
-| 兼容/迁移 | covered: B-011 B-015 B-020 |
-| 降级/回退 | covered: B-009 B-010 B-013 B-017 B-019 B-020 |
-| 证据与审计完整性 | covered: B-001 B-002 B-003 B-004 B-008 B-012 B-013 B-016 B-017 B-018 B-019 |
-| 取消/中断 | covered: B-002 B-009 B-013 B-014 B-017 B-018 |
+| 并发/竞态 | covered: B-002 B-009 B-013 B-014 B-017 B-018 B-021 B-024 |
+| 重试/幂等 | covered: B-002 B-011 B-012 B-014 B-017 B-018 B-021 B-023 B-024 |
+| 非法状态转换 | covered: B-002 B-009 B-010 B-011 B-015 B-018 B-020 B-021 B-022 B-026 |
+| 兼容/迁移 | covered: B-011 B-015 B-020 B-023 B-026 |
+| 降级/回退 | covered: B-009 B-010 B-013 B-017 B-019 B-020 B-021 B-022 B-023 B-024 B-025 B-026 |
+| 证据与审计完整性 | covered: B-001 B-002 B-003 B-004 B-008 B-012 B-013 B-016 B-017 B-018 B-019 B-021 B-022 B-023 B-024 B-025 B-026 |
+| 取消/中断 | covered: B-002 B-009 B-013 B-014 B-017 B-018 B-021 B-023 |
 
 ## 发布说明
 
