@@ -6,7 +6,7 @@ GH-189
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":189,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/active_run_lease.py","checks/active_run_takeover_authorization.py","checks/check_workflow.py","checks/pack_asset_validation.py","checks/runtime_budget_dimensions.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/session_telemetry.py","examples/fixtures/runtime-active-run-lease-v4.json","schemas/active_run_fencing_counter.schema.json","schemas/active_run_lease.schema.json","schemas/active_run_takeover_audit.schema.json","schemas/active_run_takeover_authorization.schema.json","schemas/runtime_checkpoint.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","templates/implx_checkpoint_v4.md","templates/zh-CN/implx_checkpoint_v4.md","tests/runtime_ledger_test_support.py","tests/test_active_run_lease.py","tests/test_active_run_takeover_authorization.py","tests/test_check_workflow.py","tests/test_pack_asset_validation.py","tests/test_runtime_gate_rules.py","tests/test_runtime_ledger_budget.py","tests/test_runtime_ledger_gate.py","tests/test_runtime_ledger_queue.py","tests/test_session_telemetry.py","tests/test_specrail_schema.py"],"spec_refs":["specs/GH189/product.md","specs/GH189/tech.md","specs/GH189/tasks.md"]}
+{"version":1,"issue":189,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/active_run_lease.py","checks/active_run_takeover_authorization.py","checks/check_workflow.py","checks/pack_asset_validation.py","checks/runtime_active_run_gate.py","checks/runtime_active_run_rules.py","checks/runtime_budget_dimensions.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/session_telemetry.py","examples/fixtures/runtime-active-run-lease-v4.json","schemas/active_run_fencing_allocation.schema.json","schemas/active_run_fencing_counter.schema.json","schemas/active_run_fencing_witness.schema.json","schemas/active_run_lease.schema.json","schemas/active_run_takeover_audit.schema.json","schemas/active_run_takeover_authorization.schema.json","schemas/active_run_takeover_consumption.schema.json","schemas/runtime_checkpoint.schema.json","schemas/runtime_checkpoint_v4.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement-queue/references/active-run-lease.md","templates/implx_checkpoint_v4.md","templates/zh-CN/implx_checkpoint_v4.md","tests/runtime_ledger_test_support.py","tests/test_active_run_lease.py","tests/test_active_run_schema.py","tests/test_active_run_takeover_authorization.py","tests/test_check_workflow.py","tests/test_pack_asset_validation.py","tests/test_review_runtime_schema.py","tests/test_runtime_gate_rules.py","tests/test_runtime_ledger_budget.py","tests/test_runtime_ledger_gate.py","tests/test_runtime_ledger_queue.py","tests/test_session_telemetry.py","tests/test_specrail_schema.py"],"spec_refs":["specs/GH189/product.md","specs/GH189/tech.md","specs/GH189/tasks.md"]}
 -->
 
 ## Product Spec
@@ -24,6 +24,7 @@ GH-189
 | goal budget rules | `checks/runtime_gate_rules.py:510-530` | v3 只检查可选 goal_id。 | run/token 只在第一个 lease-aware 版本 v4 成为强制字段；v1–v3 保持兼容。 |
 | generic checkpoint templates | `templates/tranche_checkpoint.md:27`, `templates/zh-CN/tranche_checkpoint.md:16` | 两份模板实际都输出 `checkpoint_version: 2`。 | 必须按 v2 保持不变，不能在 manifest 排除模板时声称 v3。 |
 | external role evidence precedent | `checks/github_review_evidence.py:236-272`, `checks/github_review_evidence.py:294-395` | maintainer role map 与一次性 round authorization 由 adapter 独立加载、规范化。 | takeover 必须复用“外部 role-mapped evidence，不信请求者自报 marker”的边界。 |
+| U-16 split pressure | `tests/test_specrail_schema.py:1`, `skills/specrail-implement-queue/SKILL.md:1`, `checks/runtime_ledger_gate.py:1`, `checks/runtime_gate_rules.py:1`, `schemas/runtime_checkpoint.schema.json:1` | 写作时分别为 1092、799、788、785、778 行，均在 hard ceiling 之上或无安全增量空间。 | complete manifest 必须包含每个拆分目标，新增 active-run 合同不能继续堆入这些文件。 |
 
 ## 设计方案
 
@@ -61,24 +62,60 @@ takeover_audit_id, remote_operation, goal_id?
 `operation_id, operation_kind, run_id, fencing_token, started_monotonic_ns,
 deadline_monotonic_ns, remote_precondition_digest`，用于 §4 的同步远端调用 guard。
 
-`fencing_token` 来自
-`<git-common-dir>/specrail/active-run-fencing-counter.json`。新增 closed
-`schemas/active_run_fencing_counter.schema.json`，只允许
-`version, repo_id, last_allocated_token`。counter parent 从已持有的 canonical common-dir
-descriptor 用 `openat(..., O_NOFOLLOW|O_DIRECTORY)` 打开；counter final component 用
-`O_RDONLY|O_NOFOLLOW|O_CLOEXEC` 打开并 immediate `fstat` regular file，读取前后及
-pathname lstat/fstat 的 device+inode/type/size/mtime identity 必须稳定。symlink、
-非普通文件、越界 mode、identity swap 或内容/schema 损坏均 `unsafe/corrupt`，不得读取
-symlink target。counter 值必须不小于 canonical lease 与 retained audit 中观察到的最大
-token；更小即 detected rollback 并 fail closed。
+`fencing_token` 由三项 canonical 资产共同证明：
 
-token allocation 在 mutex 内把 `last_allocated_token + 1` 写入同一 parent dirfd 下的
-create-only temp，fsync temp、dirfd-relative atomic replace、fsync parent，再 no-follow
-重开并确认 exact value/identity 后才返回 allocated token。acquire/resume/takeover 一旦
-durable 分配，后续任何失败都不得 decrement/reuse；counter 超前于 lease/audit 的 gap 定义为
-合法 `skipped_token`（burned，不代表 mutation 成功）。acquire 必须同时成功创建
-lock dir、fsync 其 parent、写 temp、fsync、rename 并 fsync lease parent；异常留下的
-无效目录被 inspect 判为 corrupt，不自动删除。`checkpoint_bound` 是 required boolean；
+```text
+<git-common-dir>/specrail/active-run-fencing-counter.json
+<git-common-dir>/specrail/active-run-fencing-witness.json
+<git-common-dir>/specrail/active-run-fencing-allocation.json
+```
+
+新增三个 closed schema：
+
+- `active_run_fencing_counter.schema.json` 只允许
+  `version, repo_id, last_allocated_token`；
+- 不随正常 release 或 audit retention prune 删除的
+  `active_run_fencing_witness.schema.json` 只允许
+  `version, repo_id, high_water_token, last_allocation_digest,
+  last_allocation_kind, last_allocation_outcome, updated_at`，其中 kind 闭集为
+  `acquire | resume | takeover`，outcome 闭集为 `reserved | issued | skipped`；
+- 临时但 durable 的 `active_run_fencing_allocation.schema.json` 只允许
+  `version, repo_id, state, operation, previous_token, allocated_token,
+  previous_counter_digest, previous_witness_digest, run_id, created_at`；
+  `state` 只能为 `prepared`，且 `allocated_token = previous_token + 1`。
+
+三项 parent 都从已持有的 canonical common-dir descriptor 逐段
+`openat(..., O_NOFOLLOW|O_DIRECTORY)` 打开；final component 使用
+`O_RDONLY|O_NOFOLLOW|O_CLOEXEC` 并 immediate `fstat` regular file，读取前后及 pathname
+lstat/fstat 的 device+inode/type/size/mtime identity 必须稳定。fresh repo 只允许在
+counter/witness/journal 全部缺失且不存在 lease/audit 时，于 mutex 内初始化 token 0 的
+counter+witness pair；只缺一项即 `corrupt`。无 allocation journal 时 counter
+`last_allocated_token` 必须精确等于 witness `high_water_token`，且不小于 canonical
+lease/retained audit token；任一单独回滚、symlink、非普通文件、越界 mode、identity swap
+或内容/schema 损坏均 `unsafe/corrupt`。只有协调回滚 counter+witness 及相关资产才属于
+product non-goal。
+
+每次 acquire/resume/takeover 都在 mutex 内执行同一 allocation transaction：
+
+1. no-follow 读取并验证 counter+witness exact high-water 相等；
+2. create-only 写 `prepared` allocation journal，fsync file+parent；该 durable reservation
+   已永久 burn `allocated_token`；
+3. dirfd-relative atomic replace counter 到新 token，fsync parent，再 replace witness 到
+   同一 high-water 与 journal digest，fsync parent；
+4. no-follow 重开并确认 counter/witness exact equality 与 journal binding 后，unlink
+   journal 并 fsync parent；此后 token 才可用于 lease/takeover mutation。
+
+任一步失败均不得返回 allocation success。若崩溃留下 schema-valid journal，下一次 modifying
+allocation 必须先逐项匹配 old digests 与允许的 `{old/old, new/old, new/new}` durable state，
+将两项推进到 journal 的新 token、把 outcome 记为 `skipped`、删除 journal并 fsync，然后以
+`conflict`/reason=`allocation_recovered_token_skipped` 返回并要求 fresh retry；其它组合
+`corrupt`。正常 journal close 先把 outcome 记为 `reserved`，后续 lease mutation 成功可
+durable 改为 `issued`、失败可改为 `skipped`；`reserved` 本身已经 burned，terminal outcome
+更新失败也不得授权复用。因此 normal release 后 lease 已删除、resume 后旧 lease 已替换、takeover audit
+已 prune 或步骤失败时，witness 仍覆盖所有 acquire/resume/takeover 及 skipped token，下一次
+allocation 必须严格大于 high-water。acquire 必须同时成功创建 lock dir、fsync 其 parent、
+写 temp、fsync、rename 并 fsync lease parent；异常留下的无效目录被 inspect 判为 corrupt，
+不自动删除。`checkpoint_bound` 是 required boolean；
 当它为 `false` 时 `checkpoint_digest` 必须为 `null`，为 `true` 时必须匹配
 `^sha256:[0-9a-f]{64}$`；schema 用条件分支关闭其他组合。
 `takeover_audit_id` 是 required nullable field：普通 acquire/resume 为 `null`，takeover
@@ -174,12 +211,32 @@ lease 与请求的新 identity。caller 自带 artifact/role map、artifact 内�
 `implx auto` standing authorization、merge authorization 或 adapter 无法证明 role 时均
 不能替代。
 
-验证成功后，core 在 canonical common-dir fd 下的
-`specrail/active-run-authorizations/<sha256(authorization_id)>.json` create-only 写入
-closed consumption tombstone，绑定 authorization digest、repo、old digest/token、new
-run/owner 与 consumed timestamp，并 fsync file+directory；已存在、错绑或不可安全创建即
-replay/conflict。tombstone 不随 256 条 takeover audit retention prune；消费后任一后续
-失败仍保持 consumed，重试必须取得新的 exact-bound authorization。
+验证成功后，core 从已验证的 canonical common-dir fd 逐段
+`openat("specrail", O_NOFOLLOW|O_DIRECTORY)` 与
+`openat("active-run-authorizations", O_NOFOLLOW|O_DIRECTORY)`，持有最终 parent dirfd，并在
+lookup/create 前后比较 pathname lstat 与 fd fstat 的 device+inode/type identity。预置或竞态
+替换的 parent symlink、非 directory、identity swap 或 common-dir escape 均
+`unsafe/corrupt`，不得读取或创建外部 target。
+
+final basename 只能是 `<sha256(authorization_id)>.json`，并仅以该 parent dirfd 执行
+`openat(O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC, 0600)`；immediate `fstat` 必须证明 regular
+file、exact mode 与 single link。新增 closed
+`schemas/active_run_takeover_consumption.schema.json`，只允许：
+
+```text
+version, authorization_id, authorization_id_sha256, authorization_digest,
+repo_id, expected_stale_lease_digest, old_run_id, old_fencing_token,
+new_run_id, new_owner_marker, reason_digest, actor, source,
+conversation_evidence_id, consumed_at
+```
+
+schema 必须复核 basename hash、authorization artifact digest 与所有 old/new exact binding。
+写入后 fsync file+parent；若 final 已存在，只能通过同一 no-follow parent dirfd 安全打开、
+fstat regular file 并按该 closed schema 读取：exact match 仍返回 replay，malformed/错绑返回
+conflict/corrupt，任何情况都不得覆盖。tombstone 不随 256 条 takeover audit retention prune；
+消费后任一后续失败仍保持 consumed，重试必须取得新的 exact-bound authorization。测试必须
+预置 parent/file symlink、在 lookup/create barrier 交换 parent identity，并用 common-dir 外
+sentinel 证明没有外部读写。
 
 #### durable takeover audit
 
@@ -207,16 +264,19 @@ created_at, completed_at
 terminal state 必须有 timestamp。takeover 在同一 mutex 内按固定顺序执行：
 
 1. 独立复核 exact-bound authorization 并 durable create consumption tombstone。
-2. durable 增加 counter 并取得新 token；从此即使后续失败也永久 burn。基于该 token
-   构造 new lease bytes，计算 `new_lease_digest`，此后 prepared audit 才有完整输入。
+2. 通过 counter+witness+prepared allocation journal transaction durable 分配新 token；
+   journal close 且 pair exact high-water 一致前不得计算或使用 token，从此即使后续失败也
+   永久 burn。基于该 token 构造 new lease bytes，计算 `new_lease_digest`，此后 prepared
+   takeover audit 才有完整输入。
 3. 若 terminal record 已达 256，先按 fencing token 删除最旧 committed/aborted record
    并 fsync audit dir；任何 non-terminal record 先进入 recovery，不能被 prune。
 4. 以新 token 命名，create-only 写 prepared record，fsync file、rename、fsync audit dir。
 5. durable replace canonical lease，使其引用 `takeover_audit_id`，fsync lease parent。
 6. replace audit 为 committed，fsync audit dir；只有此后才返回 takeover success。
 
-若步骤 2 后、步骤 4 前失败，counter 中的新 token 是没有对应 audit/lease 的
-`skipped_token`；inspect/下一次 allocation 接受该 gap 但永不复用。若 prepared 已存在，
+若步骤 2 后、步骤 4 前失败，counter+witness high-water 中的新 token 是没有对应
+audit/lease 的 `skipped_token`；normal release、resume replacement 与 audit prune 都不得删除
+该 witness，下一次 allocation 必须从更大 token 开始。若 prepared takeover audit 已存在，
 recovery 必须使用 record 的 exact new token/digest，不得再分配或回收 token。
 
 崩溃留下 prepared record 时，inspect/gate 返回 `takeover_recovery_required` 并阻断所有
@@ -353,9 +413,13 @@ evidence 时，只报告 Goal continuity 未验证，不得削弱 checkpoint+lea
 `templates/zh-CN/implx_checkpoint_v4.md`，只有 startup acquire 成功并取得 repo/run/token
 后才可选择；其 JSON 示例强制 v4 `run_lease`，不能作为普通运行的默认模板。
 
-普通 `check_workflow.py` 只校验 checker 与 counter/lease/takeover-audit/
-takeover-authorization schema 是 pack assets，不读取 common dir counter/lease/audit/
-authorization consumption/remote-operation 状态。
+普通 `check_workflow.py` 只校验 checker 与 fencing-counter/fencing-witness/
+fencing-allocation/lease/takeover-audit/takeover-authorization/takeover-consumption 七个
+active-run closed schema 及 `runtime_checkpoint_v4.schema.json` 是 pack assets，不读取
+common dir counter/witness/journal/lease/audit/authorization consumption/remote-operation
+状态。`tests/test_active_run_schema.py` 独占七个 active-run schema 的 valid/malformed/
+unknown-field/conditional binding 测试；`tests/test_pack_asset_validation.py` 对每个 schema
+路径和 owner 建立 exact 集合断言，任何漏注册或错误 owner 均失败。
 
 ### 5. 无 polling 生命周期
 
@@ -368,24 +432,44 @@ mutation mutex busy 都不触发轮询；第二 run 立即报告并停止。
 inspect 与 pack check 可继续。`remote_operation_unknown` 还必须阻断 takeover/resume/
 release 与新的 remote write，且没有 TTL 驱动的本地 force-clear。
 
+### 6. U-16 hard-ceiling 拆分计划
+
+实现不得把 active-run 内容继续堆入已到 hard ceiling 的文件。以下拆分路径已 search-first
+确认不存在，并纳入 complete manifest；每项由对应 owner 在写新增行为前完成：
+
+| 当前文件与写作时行数 | 拆分目标 | 强制边界 |
+| --- | --- | --- |
+| `tests/test_specrail_schema.py` (1092) | `tests/test_review_runtime_schema.py` | 迁出现有 review-result/runtime-checkpoint/content-binding schema 区段，使原文件与新文件都 `<800`；active-run 七 schema 新断言只能写入 `tests/test_active_run_schema.py`。 |
+| `skills/specrail-implement-queue/SKILL.md` (799) | `skills/specrail-implement-queue/references/active-run-lease.md` | SKILL 只保留 startup/stop-boundary 摘要与“lease-protected queue 必须先读取该 reference”的路由；CLI、renew、resume、takeover、remote guard 过程写入 reference，二者都 `<800`。 |
+| `checks/runtime_ledger_gate.py` (788) | `checks/runtime_active_run_gate.py` | v4 canonical lease/checkpoint binding、no-follow load 与 boundary validation 进入新模块；原 gate 只保留稳定 facade/import 与组合 decision。 |
+| `checks/runtime_gate_rules.py` (785) | `checks/runtime_active_run_rules.py` | active-run state/reason、v4 `run_lease` 与 fencing rule table/normalizer 进入新模块；原 rules 不复制第二份常量。 |
+| `schemas/runtime_checkpoint.schema.json` (778) | `schemas/runtime_checkpoint_v4.schema.json` | v4-only `run_lease` closed conditional 与字段定义进入新 schema；主 schema 以同目录 local `$ref` 组合并保留 v1–v3，不内联复制。 |
+
+`SP189-T5` 必须从 manifest 动态枚举所有 planned text assets，在 exact implementation head 对每个
+现存路径执行 `wc -l` 并断言结果 `<800`；同时明确断言上述五个 split target 存在。缺文件、任一 source 或
+split target 达到 800 行、SKILL 未路由读取 reference、schema `$ref`/pack ownership 不可解析
+均阻断，不允许 grandfather 既有 1092 行文件或把新增测试留在原文件。
+
 ## Product-to-Test Mapping
 
 | Behavior invariant | Implementation area | Verification |
 | --- | --- | --- |
 | B-001 B-002 | remote-independent common-dir identity + atomic acquire/mutation mutex | `python3 -m pytest -q tests/test_active_run_lease.py -k "worktree or upstream or remote_change or concurrent or mutex"` |
 | B-003 B-004 B-010 B-015 | fencing、bounded TTL、serialized compare-and-replace、remote-operation begin/end guard | `python3 -m pytest -q tests/test_active_run_lease.py -k "fencing or ttl or replace_race or fsync or remote_operation or provider_timeout"` |
-| B-005 B-006 B-009 B-016 | stale/takeover unbound rebind、external exact authorization、no-follow durable audit、boot/monotonic evidence | `python3 -m pytest -q tests/test_active_run_lease.py tests/test_active_run_takeover_authorization.py -k "stale or takeover or authorization or replay or role_map or rebind or audit or clock or boot"` |
+| B-005 B-006 B-009 B-016 | stale/takeover unbound rebind、external exact authorization、no-follow consumption/audit、boot/monotonic evidence | `python3 -m pytest -q tests/test_active_run_lease.py tests/test_active_run_takeover_authorization.py tests/test_active_run_schema.py -k "stale or takeover or authorization or replay or role_map or consumption or parent_swap or audit or clock or boot"` |
 | B-007 | canonical lease + 单向 digest resume binding、token rotation（含 Goal 非安全边界与首租阻断） | `python3 -m pytest -q tests/test_runtime_ledger_gate.py tests/test_active_run_lease.py -k "lease or canonical or resume or goal or first_acquire or digest"` |
-| B-008 B-011 B-014 B-017 | unsafe/corrupt/failure/unsupported、counter dirfd identity/rollback、allocate-before-audit/skipped token | `python3 -m pytest -q tests/test_active_run_lease.py tests/test_runtime_ledger_gate.py -k "unsafe or corrupt or failure or unsupported or recovery or counter or rollback or skipped_token or allocate_before_audit"` |
+| B-008 B-011 B-014 B-017 | unsafe/corrupt/failure/unsupported、counter+witness+journal dirfd identity/rollback、allocation recovery、allocate-before-audit/skipped token | `python3 -m pytest -q tests/test_active_run_lease.py tests/test_active_run_schema.py tests/test_runtime_ledger_gate.py -k "unsafe or corrupt or failure or unsupported or recovery or counter or witness or allocation_journal or normal_release or audit_prune or skipped_token or allocate_before_audit"` |
 | B-012 B-013 B-018 | pure pack/inspect + queue-facing closed JSON/nullability/exit contract | `python3 -m pytest -q tests/test_check_workflow.py tests/test_active_run_lease.py -k "workflow or inspect or cli or exit_code or nullability or argument_error or redaction"` |
-| B-019 | generic v2 compatibility + queue-only v4 template selection | `python3 -m pytest -q tests/test_specrail_schema.py tests/test_runtime_ledger_queue.py -k "tranche_template_v2 or implx_template_v4 or version"` |
+| B-019 | generic v2 compatibility + queue-only v4 template selection | `python3 -m pytest -q tests/test_specrail_schema.py tests/test_review_runtime_schema.py tests/test_runtime_ledger_queue.py -k "tranche_template_v2 or implx_template_v4 or version"` |
 
 ## 数据流
 
 ```text
 git common dir → canonical no-follow lease → mutation mutex → inspect/acquire
+      allocation journal → counter + non-prunable high-water witness → token
       resume → rotated fencing token → checkpoint rebind
-      takeover authorization → one-time consumption → durable counter allocation
+      takeover authorization → no-follow closed one-time consumption
+               → durable counter+witness allocation
                → prepared audit → new unbound lease → committed audit
                → new-owner v4 checkpoint → renew bind
       checkpoint identity → lease checkpoint_digest → runtime gate
@@ -412,28 +496,34 @@ git common dir → canonical no-follow lease → mutation mutex → inspect/acqu
 ## 风险
 
 - Security: canonical no-follow 路径、remote-independent repo identity、owner 输出、
-  clock evidence、counter/audit/auth dirfd identity、一次性外部授权与原子文件操作
+  clock evidence、counter/witness/allocation/audit/consumption dirfd identity、一次性外部
+  授权与原子文件操作
   fail closed；不记录 session 正文。
 - Compatibility: v1–v3 保留离线校验但不能授权 lease-aware resume；通用模板保持实际 v2，
   成功 acquire 的 implx 新 run 使用 queue-only v4 模板。
 - Performance: 每个关键写边界一次小文件验证，无轮询。
 - Maintenance: lease 与 checkpoint 两方 binding 必须共享 validator；Goal 不进入安全边界。
+  U-16 拆分后原 facade、split module/schema/reference 只能有一份规则真值，pack/hash/line-count
+  gate 防止重新内联漂移。
   remote operation timeout 可能留下无法自动清除的 guard，这是不具备 provider-side fencing
   时保守换取安全的明确 liveness 成本。
 
 ## 测试计划
 
-- [ ] Unit: 派生状态（lease schema 不持久化 `status`）、counter/lease/audit/authorization
-      四个 active-run closed schema、TTL 上限、
+- [ ] Unit: 派生状态（lease schema 不持久化 `status`）、counter/witness/allocation/
+      lease/audit/authorization/consumption 七个 active-run closed schema、TTL 上限、
       mutex、directory fsync、原子失败、boot/monotonic clock、canonical no-follow 路径、
-      remote-independent repo identity、resume/takeover rotation+rebind、counter
-      symlink/identity/rollback、token-before-audit/skipped token、audit
-      symlink/identity/recovery/retention、exact one-time authorization、CLI
+      remote-independent repo identity、resume/takeover rotation+rebind、counter/witness/journal
+      symlink/identity/single-file rollback、normal-release/audit-prune high-water retention、
+      prepared allocation recovery、token-before-audit/skipped token、audit
+      symlink/identity/recovery/retention、authorization consumption parent/file symlink 与
+      identity swap、closed tombstone/replay、exact one-time authorization、CLI
       JSON/nullability/exit/redaction、remote-operation guard/ambiguous response。
 - [ ] Integration: 不同 upstream 的两 worktree 并发、运行中 remote 变化、serialized
       replace race、稳定的单向 digest binding、v1–v4 compatibility、通用 v2 与 queue-only
       v4 template 选择、queue boundary fixture。
-- [ ] Regression: full pytest、all-specs、depth/diff/pack checks。
+- [ ] Regression: full pytest、all-specs、depth/diff/pack checks，以及 manifest 动态 `<800`
+      行 gate；1092 与 778–799 行五个源文件全部完成指定拆分。
 - [ ] Forward-use: 两个真实临时 worktree 竞争、resume、stale authorized takeover。
 
 ## 回滚方案

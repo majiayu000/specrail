@@ -26,8 +26,9 @@ token 消耗在同一队列上。
 - 不声称本地 fencing token 能撤回或取消已被 GitHub 接收的请求；远端结果不确定时
   fail closed，不能以本地 lease turnover 伪装成 provider-side fencing。
 - 不替代 GitHub truth、runtime checkpoint、Goal 或 SpecRail gate。
-- 不防御同一 OS principal 协调回滚整个 Git common dir 的全部 lease/counter/audit
-  资产；单一 counter 路径替换、symlink、非普通文件或与 canonical witness 的回退必须检测。
+- 不防御同一 OS principal 协调回滚整个 Git common dir 的全部 lease/counter/witness/audit
+  资产；单独回滚或替换 counter、allocation witness、symlink、非普通文件或二者 high-water
+  不一致必须检测。
 - 不处理 GH-160。
 
 ## Behavior Invariants
@@ -58,10 +59,10 @@ token 消耗在同一队列上。
    checkpoint digest 与磁盘 checkpoint 完全一致，才可在 mutation mutex 内轮换
    owner marker 与 fencing token、重写 checkpoint identity 并重新绑定；旧 session
    的 token 必须立即失效。Goal 只提供连续性与预算上下文，不参与安全授权。
-8. B-008 当 lease、mutex 或 takeover audit 路径/JSON 缺失字段、损坏、部分写入、
-   符号链接、identity 不一致、权限错误或路径逃逸时，inspect 必须返回
-   `corrupt/unsafe` 并 fail closed；audit create/replace/prune/recovery 不得跟随
-   common dir 外的路径。
+8. B-008 当 lease、mutex、fencing allocation 资产、authorization consumption 或 takeover
+   audit 路径/JSON 缺失字段、损坏、部分写入、符号链接、identity 不一致、权限错误或路径
+   逃逸时，inspect 必须返回 `corrupt/unsafe` 并 fail closed；allocation/consumption/audit
+   inspect/create/replace/prune/recovery 不得跟随 common dir 外的路径。
 9. B-009 lease expiry 必须绑定持久化的 boot identity 与同一 boot 内跨进程可比较的
    monotonic deadline；wall-clock 前跳/回拨、PID 被复用或进程不存在不得单独据此
    释放或接管 lease。boot identity 变化只将 lease 判为 `stale`，仍需显式 takeover；
@@ -95,15 +96,20 @@ token 消耗在同一队列上。
     授权必须精确绑定
     authorization ID、repo ID、旧 lease digest/run/token、新 run/owner、reason digest、
     decision=`takeover_once`、actor/source 和短时有效期。core 必须独立重载/复核 role、
-    exact binding 与 freshness，并在 canonical common dir 内 durable 标记该 ID 已消费；
+    exact binding 与 freshness，并在 canonical common dir 内通过逐段 no-follow、稳定 parent
+    dirfd 与 closed consumption tombstone durable 标记该 ID 已消费；
     缺失、adapter 不可用、请求者自报/自带 artifact 或 role map、actor 非 maintainer、
     错绑、过期、重复消费或 auto/merge 授权替代均 fail closed。
-17. B-017 当 acquire/resume/takeover 分配 fencing token 时，counter parent 与 counter
-    必须从 canonical common-dir descriptor 逐段 no-follow 打开，counter 必须是 closed
-    schema regular file 且 lstat/fstat identity 稳定；symlink、非普通文件、竞态替换或
-    counter 小于 canonical lease/audit witness 的已用 token 均 `unsafe/corrupt`。takeover
-    必须先 durable 增加 counter，再计算新 lease digest/写 prepared audit；之后任一步失败
-    时该 token 永久 skipped、不得回收复用，token gap 是合法 burned evidence 而非成功。
+17. B-017 当 acquire/resume/takeover 分配 fencing token 时，counter、永久 high-water
+    allocation witness、prepared allocation journal 及各自 parent 必须从 canonical common-dir
+    descriptor 逐段 no-follow 打开，并是 closed-schema regular file 且 lstat/fstat identity
+    稳定。每次 allocation 必须先 durable reserve journal，再按固定顺序推进 counter 与
+    witness；token 只有在二者 exact high-water 一致且 journal durable close 后才可使用。
+    witness 不随正常 release 或 takeover audit retention prune 删除，因此单独回滚任一文件、
+    symlink、非普通文件、竞态替换或无 exact prepared journal 的 high-water 不一致均
+    `unsafe/corrupt`。崩溃恢复必须把 journal 已保留的 token 推进为 burned/skipped 后要求
+    fresh retry，不得回收。takeover 必须在该 allocation durable 完成后才计算新 lease
+    digest/写 prepared takeover audit；之后任一步失败时该 token 同样永久 skipped。
 18. B-018 当 queue-facing CLI 输出 closed envelope 时，base keys 必须始终出现并使用
     明确 nullable 表示：`operation` 仅在无法解析 subcommand 时为 null；`repo_id` 在参数
     错误或 identity 尚未/无法解析时为 null；`lease_digest` 在 `free`、未安全读取 lease、
@@ -143,15 +149,20 @@ token 消耗在同一队列上。
       state-to-exit-code 回归；`free`/`unsupported`/argument error 的 identity/digest
       nullability 有闭集用例；通用长运行 checkpoint 模板保持实际的非 lease v2，只有成功
       acquire 的 implx queue 使用专用 v4 模板。
-- [ ] counter 与 parent 的 dirfd/no-follow/type/identity、counter rollback witness 与
-      “先 durable 分配 token、再 prepared audit”有 barrier/crash 回归；后续失败只留下
-      永不复用的 skipped token。
+- [ ] counter/witness/allocation journal 与各自 parent 的 dirfd/no-follow/type/identity、
+      counter↔witness high-water 一致性及“先 durable 分配 token、再 prepared audit”有
+      barrier/crash 回归；normal release、resume、audit prune 与后续失败后 witness 仍覆盖
+      所有已分配 token，journal 恢复只留下永不复用的 skipped token。
 - [ ] takeover 缺独立 role-mapped authorization、错 stale digest/new owner、过期、复用
       authorization ID、以 auto/merge authorization 替代时均阻断；exact `takeover_once`
-      只消费一次。
+      只消费一次；consumption parent/file symlink、identity swap、非普通文件与 malformed
+      closed tombstone 均 fail closed，且不得写入 common dir 外 sentinel。
 - [ ] 每个远端写入先 durable begin guard、确定响应后 compare-and-clear；stalled/timeout
       调用留下 `remote_operation_unknown` 并使 stale takeover 阻断，测试不声称 GitHub
       provider 会解释本地 fencing token。
+- [ ] planned implementation 中当前 1092 行及 778–799 行的文件均按 tech manifest 的
+      明确目标拆分；exact-head 验证证明每个 planned text asset 都少于 800 行，不能以新增
+      内容继续推高或只豁免既有超限文件。
 - [ ] full tests 与跨 worktree forward test 全绿，diff 不含 GH-160。
 
 ## 边界情况清单
@@ -159,9 +170,9 @@ token 消耗在同一队列上。
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
 | 空/缺失输入 | covered: B-002 B-008 B-018 |
-| 错误与失败路径 | covered: B-003 B-004 B-008 B-011 B-014 B-015 B-017 B-018 |
-| 授权/权限 | covered: B-005 B-006 B-010 B-015 B-016 |
-| 并发/竞态 | covered: B-001 B-002 B-004 B-010 B-011 B-014 B-015 B-017 |
+| 错误与失败路径 | covered: B-003 B-004 B-008 B-011 B-014 B-015 B-016 B-017 B-018 |
+| 授权/权限 | covered: B-005 B-006 B-008 B-010 B-015 B-016 |
+| 并发/竞态 | covered: B-001 B-002 B-004 B-008 B-010 B-011 B-014 B-015 B-016 B-017 |
 | 重试/幂等 | covered: B-004 B-007 B-010 B-013 B-016 B-017 |
 | 非法状态转换 | covered: B-003 B-005 B-006 B-007 B-010 B-015 B-016 B-017 |
 | 兼容/迁移 | covered: B-001 B-012 B-014 B-019 |
