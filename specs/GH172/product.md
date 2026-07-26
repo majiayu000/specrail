@@ -49,7 +49,9 @@ GH-160 与 GH-174 的安全拆分。
 4. B-004 当安装根目录存在，但任一被锁定 skill 或受分发文件缺失时，结果必须标记
    `missing`、列出期望哈希和目标路径，并以非零状态结束；其他缺陷仍须一并报告。
 5. B-005 当文件存在但内容哈希与 lock 不一致时，结果必须标记 `drift`，同时披露期望哈希、
-   实际哈希和目标路径，并以非零状态结束；不得用时间戳、文件大小或目录存在替代哈希。
+   已安全完成时的实际哈希和目标路径，并以非零状态结束；不得用时间戳、文件大小或目录存在
+   替代哈希。若 B-031 的 size/read-work 边界在哈希前已确定失败，则实际哈希必须为显式
+   `null` 并附稳定的 `hash_status`/size/read-work 证据，不得为填充字段继续读取。
 6. B-006 当且仅当所有声明的 skill 文件都存在、路径安全且哈希匹配，并且安装 skill
    目录中除这些文件及其必要、安全的严格父目录外不存在任何未声明项时，doctor 才能返回
    整体 `match`；单个入口文件匹配不能掩盖引用文件/脚本漂移或 stale undeclared content。
@@ -154,6 +156,31 @@ GH-160 与 GH-174 的安全拆分。
     返回 `traversal_truncated=true`、`undeclared_total_exact=false` 与固定空 sample，并整体
     `invalid`。未触发 cap 时才返回 exact total 与 raw-byte 稳定排序样本；显式 artifact
     复用同一 traversal 结果，不能为了“完整清单”继续无界扫描。
+29. B-029 当源侧 router 启动 queue preflight 时，runtime-owned `loaded_skill_evidence`
+    必须以闭集 origin 区分 `source_checkout` router 与 `installed_target` entrypoint：
+    `source_checkout` 只允许唯一 router role，其 path/bytes 必须绑定当前源仓库同一 lock
+    manifest 中的精确 source entry；`implx`/queue 等 installed role 必须绑定 doctor 选中的
+    installed target 及同一 manifest。不得要求 source router 位于 installed target，也不得
+    允许 installed entrypoint 冒充 source origin；role/origin/path/hash/manifest 任一矛盾均以
+    `session_restart_required` 阻断。
+30. B-030 当 doctor 开始 inspection 时，target root、skill root 与所有 structural directory
+    必须通过 stable anchor 取得 no-follow descriptor 并记录 pathname/inode 与 namespace
+    snapshot；namespace 枚举和 declared-file open 必须只沿这些所持 descriptor 完成。完整
+    inspection 结束前必须逐项复核 descriptor snapshot 及当前 pathname binding；任一目录被
+    rename/rebind/替换或原位 namespace metadata 变化时整体返回 `unstable`，不得把旧目录的
+    枚举结果与替代 tree 的 declared-file 结果组合成 `match`。
+31. B-031 当 validator/doctor/installer 对声明文件读取或哈希时，必须使用 repo-owned、调用方
+    不可提高的逐文件 byte cap，并从 stable source snapshot 携带 `expected_size`。source 超限、
+    installed initial size 超限或与 `expected_size` 不同必须在哈希前 fail closed；size mismatch
+    返回 actual hash `null`、稳定 `hash_status` 与零 read bytes。允许哈希时也只能读取
+    `expected_size + 1` bytes 以内，并结合 final same-fd snapshot 拒绝 short read、额外 byte、
+    append/growth 或其它变化；持续追加的大文件不能让 preflight 无界读取。
+32. B-032 当显式 `--apply` 读取 durable recovery record 时，必须在任何 open、分类、exchange、
+    rollback 或 cleanup 前验证 `destination` 恰为当前 locked skill 的单一规范 basename，
+    `staging` 恰为该 transaction id 生成的单一规范 basename；二者禁止空值、`.`、`..`、路径
+    分隔符、绝对路径、非规范编码、互相相等或与 record basename 相等。后续只允许在所持
+    target-root descriptor 下以 no-follow beneath-root 语义打开；伪造/矛盾 record 必须保留现场
+    并 fail closed，对 target root 外对象零读取、零写入、零删除。
 
 ## 验收标准
 
@@ -167,7 +194,9 @@ GH-160 与 GH-174 的安全拆分。
 - [ ] queue/`implx` 在 runtime 安装不匹配时被阻断，普通 CI 不访问本机安装目录。
 - [ ] queue/`implx` 还必须验证 runtime-owned current-session loaded entrypoint identity；
       `--apply` 后同一旧 session 即使磁盘 doctor 为 `match` 也返回
-      `session_restart_required`，新 session fresh matching evidence 才能继续。
+      `session_restart_required`，新 session fresh matching evidence 才能继续；源侧 router
+      以 `source_checkout` 绑定 repo manifest，installed entrypoints 以 `installed_target`
+      绑定 doctor target，不能互相冒充或被同一 installed-path 规则误拒。
 - [ ] 既有单文件 lock 保持兼容，多文件 skill 的 validator/installer/doctor 语义一致；
       installer 不使用会跟随 source race 的 whole-directory copy。
 - [ ] installer 的 target root/parent 在 preflight 与 staging/commit 间被替换为 symlink 或
@@ -183,6 +212,12 @@ GH-160 与 GH-174 的安全拆分。
       stable no-follow parent descriptor 创建，queue 不产生该 artifact。
 - [ ] declared source/installed hard link 在读取前被拒绝；外部 inode 即使 hash/mode 匹配也
       不能产生 `match`。
+- [ ] structural directory 在枚举后被 rename/rebind/原位修改时整体 `unstable`；declared
+      file 检查不能切换到 replacement tree。size mismatch/超限与持续 append fixture 都在固定
+      byte budget 内结束，未安全哈希时 actual hash 明确为 `null`。
+- [ ] forged recovery record 的 `destination="../outside"`、含 separator 的 staging、错误
+      skill basename 或非规范 transaction basename 全部在任何 recovery open/cleanup 前被拒绝，
+      outside sentinel 保持 byte-for-byte 不变。
 - [ ] 新增无 `specrail-*` 前缀的顶层 skill fixture 会因未入 lock 被拒绝，既有 `implx`
       明确属于 completeness discovery 集合。
 - [ ] GH-160 的功能文件、状态和行为不在本变更范围内，但其 multi-file lock 迁移明确
@@ -193,15 +228,15 @@ GH-160 与 GH-174 的安全拆分。
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
 | 空/缺失输入 | covered: B-003 B-004 B-008 B-014 |
-| 错误与失败路径 | covered: B-004 B-005 B-008 B-009 B-016 B-018 B-021 B-022 B-023 B-024 B-025 B-026 B-027 B-028 |
-| 授权/权限 | covered: B-010 B-011 B-012 B-021 B-022 B-023 B-024 B-025 |
-| 并发/竞态 | covered: B-011 B-016 B-017 B-019 B-021 B-022 B-024 B-025 B-027 |
-| 重试/幂等 | covered: B-007 B-017 B-018 B-025 B-028 |
-| 非法状态转换 | covered: B-003 B-006 B-012 B-023 B-025 |
-| 兼容/迁移 | covered: B-013 B-014 B-015 B-020 B-022 B-023 B-026 |
-| 降级/回退 | covered: B-003 B-011 B-012 B-013 B-023 B-025 B-028 |
-| 证据与审计完整性 | covered: B-001 B-005 B-006 B-007 B-011 B-014 B-019 B-020 B-021 B-022 B-023 B-024 B-025 B-026 B-027 B-028 |
-| 取消/中断 | covered: B-016 B-018 B-025 B-028 |
+| 错误与失败路径 | covered: B-004 B-005 B-008 B-009 B-016 B-018 B-021 B-022 B-023 B-024 B-025 B-026 B-027 B-028 B-029 B-030 B-031 B-032 |
+| 授权/权限 | covered: B-010 B-011 B-012 B-021 B-022 B-023 B-024 B-025 B-029 B-032 |
+| 并发/竞态 | covered: B-011 B-016 B-017 B-019 B-021 B-022 B-024 B-025 B-027 B-030 B-031 |
+| 重试/幂等 | covered: B-007 B-017 B-018 B-025 B-028 B-032 |
+| 非法状态转换 | covered: B-003 B-006 B-012 B-023 B-025 B-029 B-032 |
+| 兼容/迁移 | covered: B-013 B-014 B-015 B-020 B-022 B-023 B-026 B-029 |
+| 降级/回退 | covered: B-003 B-011 B-012 B-013 B-023 B-025 B-028 B-029 B-031 B-032 |
+| 证据与审计完整性 | covered: B-001 B-005 B-006 B-007 B-011 B-014 B-019 B-020 B-021 B-022 B-023 B-024 B-025 B-026 B-027 B-028 B-029 B-030 B-031 B-032 |
+| 取消/中断 | covered: B-016 B-018 B-025 B-028 B-030 B-031 B-032 |
 
 ## 发布说明
 
@@ -211,4 +246,6 @@ fail closed。维护者仍需显式运行带 `--apply` 的安装命令并重启�
 会话；queue 会以 runtime-owned loaded identity 确定性执行这项 restart 边界，doctor 本身不会
 自动修复。v2 multi-file lock 还会固定每个文件的 `0644|0755`
 mode；target pathname 在安装事务中发生 symlink/inode rebinding 时安装会安全失败，不能改写
-替代路径。hard link、非 UTF-8 name、超出 traversal cap 和中断恢复记录都会显式 fail closed。
+替代路径。source router 与 installed entrypoint 使用不同、闭合的 loaded-origin 校验；directory
+rebind、size/read-work 超限、hard link、非 UTF-8 name、超出 traversal cap 和不安全中断恢复
+记录都会显式 fail closed。
