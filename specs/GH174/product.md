@@ -89,6 +89,19 @@ readiness、review、authorization、merge 或 fail-closed 合同。
     artifact path，并禁止 raw CI log、full-suite log、session JSONL 或 broad generated-tree
     search 进入 parent context。该合同不得只存在于 `evidence-and-recovery.md`；startup
     planning reference 可以补充操作细节，但未加载 recovery reference 也不得使 firewall 失效。
+19. B-019 当任一 phase 在 startup 之后首次加载映射引用时，loader 必须在该 phase 首个动作前
+    以 startup 固定的 source root、source-lock digest 与逐文件 digest 重新校验实际路径和
+    bytes，并直接消费同一份已校验 bytes；startup 曾通过、旧缓存或重新打开文件均不得替代
+    这次 load-time 校验。任一路径、类型、containment、source-lock 或 bytes 漂移都必须在引用
+    内容生效前 fail closed。
+20. B-020 当 merge 获得远端确认后，无论该项是否发生 handoff 或 retry，queue 都必须进入稳定
+    `post_merge_closure` phase，在第一项 closure-audit 动作前加载其全部映射引用；正常成功
+    路径不得因没有进入 `runtime_handoff`/`retry_recovery` 而缺失 closure-audit 详细合同。
+21. B-021 当 origin preflight 判定 `repo_copy` 时，必须按 attested `skill_id` 使用闭集 canonical
+    repo path：direct queue 校验实际 queue entrypoint；`implx` outer 同时校验实际 implx
+    entrypoint 与 loader-resolved queue dependency。两条路径必须处于同一 canonical source
+    root 并绑定同一 source-lock chain；只校验 queue canonical path、混用 root/lock 或存在未知
+    skill ID 均 fail closed。
 
 ## 验收标准
 
@@ -99,7 +112,8 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 - [ ] repo copy 不要求本机安装即可启动；installed copy 必须 doctor `match`；两种路径及
       `implx` 外层都在任何远端状态读取前完成 origin-aware preflight。
 - [ ] 每个 phase 只加载自己声明的引用：startup 仅 planning，runtime_handoff 恰为
-      planning+evidence，review 仅 review，recovery 仅 evidence；跨 phase 复用不算重复。
+      planning+evidence，review 仅 review，post-merge closure 仅 evidence，recovery 仅
+      evidence；跨 phase 复用不算重复。
 - [ ] startup 不接受 caller-selected origin/path：fresh loader-owned descriptor 精确绑定
       current invocation、direct loaded queue 或 loaded implx + resolved queue dependency 的
       path/bytes/delegation 与 canonical roots；repo copy 正例不依赖
@@ -108,6 +122,12 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 - [ ] output firewall 的最小 normative contract 保留在主入口，并在 preflight 与任何 remote
       list/map 前生效；只加载 startup planning reference 的正例也必须把大输出导向 artifact，
       不得等待 runtime_handoff/retry_recovery。
+- [ ] 每个 phase 在首次使用引用前按 startup 固定的 root/lock/digest 校验并消费同一份 bytes；
+      startup 后引用发生任何漂移的负例都在 phase 动作前失败。
+- [ ] 正常 merge 成功路径进入 `post_merge_closure` 并加载 `evidence-and-recovery.md`，无需借道
+      handoff 或 retry 即可取得 closure-audit 详细合同。
+- [ ] `repo_copy` 对 direct queue 校验 queue canonical path，对 `implx` outer 同时校验 implx
+      与 delegated queue canonical paths，且两者属于同一 source/root/lock chain。
 - [ ] lock、installer、installed doctor 对多文件闭集语义一致。
 - [ ] 现有行为测试与全量测试全绿，且不含 GH-160 diff。
 - [ ] 合并后的真实注入指标作为独立、非阻断 follow-up 记录，不属于本 issue Done-When、
@@ -117,16 +137,16 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
-| 空/缺失输入 | covered: B-003 B-005 B-008 B-013 |
-| 错误与失败路径 | covered: B-005 B-008 B-009 B-014 |
-| 授权/权限 | covered: B-002 B-009 B-010 B-017 |
-| 并发/竞态 | covered: B-014 |
-| 重试/幂等 | covered: B-011 B-012 B-014 |
-| 非法状态转换 | covered: B-004 B-005 B-010 B-017 B-018 |
-| 兼容/迁移 | covered: B-002 B-006 B-010 B-015 B-017 |
-| 降级/回退 | covered: B-005 B-009 B-013 B-014 B-017 B-018 |
-| 证据与审计完整性 | covered: B-006 B-008 B-012 B-016 B-017 B-018 |
-| 取消/中断 | covered: B-014 |
+| 空/缺失输入 | covered: B-003 B-005 B-008 B-013 B-019 B-021 |
+| 错误与失败路径 | covered: B-005 B-008 B-009 B-014 B-019 B-020 B-021 |
+| 授权/权限 | covered: B-002 B-009 B-010 B-017 B-021 |
+| 并发/竞态 | covered: B-014 B-019 |
+| 重试/幂等 | covered: B-011 B-012 B-014 B-019 |
+| 非法状态转换 | covered: B-004 B-005 B-010 B-017 B-018 B-019 B-020 B-021 |
+| 兼容/迁移 | covered: B-002 B-006 B-010 B-015 B-017 B-020 B-021 |
+| 降级/回退 | covered: B-005 B-009 B-013 B-014 B-017 B-018 B-019 B-020 B-021 |
+| 证据与审计完整性 | covered: B-006 B-008 B-012 B-016 B-017 B-018 B-019 B-020 B-021 |
+| 取消/中断 | covered: B-014 B-019 |
 
 ## 发布说明
 
@@ -134,4 +154,6 @@ queue 的入口和行为保持不变，详细规则改为按 phase 一跳加载�
 必须在 GH-172 多文件完整性能力可用后显式更新；活动会话可能需要重启。真实 token
 改善作为合并后观测，不替代结构和行为验证。loaded-entrypoint resolver 是 origin-aware
 startup 的 host prerequisite；不可用时 queue 明确 fail closed。output firewall 仍由主入口
-在 startup 首条命令前生效，不因 reference 拆分延后。
+在 startup 首条命令前生效，不因 reference 拆分延后。phase loader 以 invocation 固定的
+root/lock/digest 对每次首次加载闭锁 bytes；正常 merge 后通过第五个
+`post_merge_closure` phase 加载 closure-audit 细节。
