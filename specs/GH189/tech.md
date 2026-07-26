@@ -78,7 +78,12 @@ deadline_monotonic_ns, remote_precondition_digest`，用于 §4 的同步远端�
   `active_run_fencing_witness.schema.json` 只允许
   `version, repo_id, high_water_token, last_allocation_digest,
   last_allocation_kind, last_allocation_outcome, updated_at`，其中 kind 闭集为
-  `acquire | resume | takeover`，outcome 闭集为 `reserved | issued | skipped`；
+  `acquire | resume | takeover`，outcome 闭集为 `reserved | issued | skipped`。
+  `high_water_token: 0` 的 genesis witness 是唯一条件分支：此时不存在可引用的
+  allocation，`last_allocation_digest`/`last_allocation_kind`/`last_allocation_outcome`
+  必须同时为 `null`；`high_water_token >= 1` 时三者必须同时非 null。schema 用条件
+  分支关闭其他组合，`tests/test_active_run_schema.py` 必须覆盖 genesis 与非 genesis
+  两个分支的 valid/invalid case；
 - 临时但 durable 的 `active_run_fencing_allocation.schema.json` 只允许
   `version, repo_id, state, operation, previous_token, allocated_token,
   previous_counter_digest, previous_witness_digest, run_id, created_at`；
@@ -89,7 +94,8 @@ deadline_monotonic_ns, remote_precondition_digest`，用于 §4 的同步远端�
 `O_RDONLY|O_NOFOLLOW|O_CLOEXEC` 并 immediate `fstat` regular file，读取前后及 pathname
 lstat/fstat 的 device+inode/type/size/mtime identity 必须稳定。fresh repo 只允许在
 counter/witness/journal 全部缺失且不存在 lease/audit 时，于 mutex 内初始化 token 0 的
-counter+witness pair；只缺一项即 `corrupt`。无 allocation journal 时 counter
+counter+genesis witness pair（witness 三个 `last_allocation_*` 字段为 `null`）；只缺一项
+即 `corrupt`。无 allocation journal 时 counter
 `last_allocated_token` 必须精确等于 witness `high_water_token`，且不小于 canonical
 lease/retained audit token；任一单独回滚、symlink、非普通文件、越界 mode、identity swap
 或内容/schema 损坏均 `unsafe/corrupt`。只有协调回滚 counter+witness 及相关资产才属于
@@ -297,7 +303,7 @@ python3 checks/active_run_lease.py --repo <repo> --json release --expected-diges
 python3 checks/active_run_lease.py --repo <repo> --json resume --expected-digest <sha256> --run-id <id> --old-owner-marker <digest> --new-owner-marker <digest> --token <n> --checkpoint-digest <sha256> --ttl-seconds <n>
 python3 checks/active_run_lease.py --repo <repo> --json takeover --expected-stale-digest <sha256> --new-run-id <id> --new-owner-marker <digest> --authorization-ref <opaque-id> --ttl-seconds <n>
 python3 checks/active_run_lease.py --repo <repo> --json recover --audit-id <20-digit-token>
-python3 checks/active_run_lease.py --repo <repo> --json begin-remote --expected-digest <sha256> --run-id <id> --owner-marker <digest> --token <n> --operation-id <id> --operation-kind <push|comment|label|pr_write> --remote-precondition-digest <sha256> --ttl-seconds <n>
+python3 checks/active_run_lease.py --repo <repo> --json begin-remote --expected-digest <sha256> --run-id <id> --owner-marker <digest> --token <n> --operation-id <id> --operation-kind <push|comment|label|pr_write|issue_write> --remote-precondition-digest <sha256> --ttl-seconds <n>
 python3 checks/active_run_lease.py --repo <repo> --json end-remote --expected-digest <sha256> --run-id <id> --owner-marker <digest> --token <n> --operation-id <id> --provider-result <succeeded|definitive_failure>
 ```
 
@@ -313,9 +319,30 @@ python3 checks/active_run_lease.py --repo <repo> --json end-remote --expected-di
   `""`、`"unknown"`、全零 digest 等 sentinel。
 - `ok` 仅在 exit 0 时为 true。仅在适用时增加 closed 集合内的
   `run_id, fencing_token, owner_marker, expires_at, checkpoint_bound,
-  takeover_audit_id, remote_operation_id`。
+  takeover_audit_id, remote_operation_id, remote_operation_kind,
+  remote_operation_deadline_monotonic_ns`。三个 `remote_operation_*` 摘要字段
+  只能同时出现且同时非 null：当且仅当安全读取的 canonical lease 携带非 null
+  `remote_operation`（含 `remote_operation_unknown` 状态）时输出，其余情况整体缺省，
+  不允许 null 占位。
 
-同一 state/reason 必须产生唯一 nullability 组合；例如 inspect `free` 为
+成功（exit 0）的 mutation 必须输出以下固定 state/reason 映射，不允许实现自造字符串：
+
+| Operation (exit 0) | `state` | `reason_code` |
+| --- | --- | --- |
+| acquire | `held` | `acquired` |
+| renew | `held` | `renewed` |
+| release | `free` | `released` |
+| resume | `held` | `resumed` |
+| takeover | `held` | `taken_over` |
+| recover (commit) | `held` | `recovery_committed` |
+| recover (abort) | `stale` | `recovery_aborted` |
+| begin-remote | `held` | `remote_operation_begun` |
+| end-remote | `held` | `remote_operation_cleared` |
+
+inspect `free` 输出 `state:"free"`/`reason_code:"free"`。退出码表中 "0=mutation 成功或
+inspect `free`" 优先于 state→exit 映射：recover abort 成功时 exit 0、state `stale`，
+后续 inspect 才按 `stale`/3 报告。T3 的 closed-schema 测试必须对每个成功 operation
+断言上表映射。同一 state/reason 必须产生唯一 nullability 组合；例如 inspect `free` 为
 `operation:"inspect", repo_id:<digest>, lease_digest:null`，identity `unsupported` 与
 argument error 都是两项 identity null，但各有不同 state/reason/exit。未知 base/conditional
 字段一律 schema error。输出不含绝对 common-dir/home path、PID、environment、session
@@ -363,8 +390,10 @@ queue 在 Startup acquire；在 spawn lane 与 checkpoint replace 前 renew/vali
 checkpoint replace 成功但 lease bind 失败时不得宣称 checkpoint 可 resume，下一次 gate
 会因 digest mismatch 阻断。
 
-PR/comment/label/push 等 provider mutation 采用持久 remote-operation guard，而不是把一次
-preflight 描述为 provider-side fencing：
+PR/issue/comment/label/push 等 provider mutation 采用持久 remote-operation guard，而不是把一次
+preflight 描述为 provider-side fencing。`operation_kind` 闭集为
+`push | comment | label | pr_write | issue_write`；auto queue 合并后 closure audit 的
+issue close/update 属于 `issue_write`，不得标记为 `pr_write` 或绕过该 guard：
 
 1. 调用 `begin-remote`，在 mutex 内 renew/validate 当前 bound lease，并 durable replace
    为含 exact repo/run/owner/token、唯一 operation ID、operation kind、provider
