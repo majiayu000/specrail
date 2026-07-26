@@ -58,6 +58,13 @@ maintainers unless the user explicitly asks for that action.
 For small mechanical fixes, test-only changes, doc-only corrections, or
 approved-spec work, direct implementation is still appropriate.
 
+Queue execution uses risk-weighted verification. Fastlane work needs focused
+tests, repository-required CI, one independent exact-head review, and clean
+merge state; it does not create structured review manifests, hosted reviews,
+PR-gate artifacts, GraphQL thread evidence, or runtime checkpoints by default.
+Standard work adds linked-spec comparison and the PR gate. Heavy work retains
+the complete evidence chain.
+
 ## Optional Local Skill Installation
 
 Repository adoption does not require installing SpecRail skills into `$HOME`.

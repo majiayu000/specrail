@@ -141,6 +141,17 @@ def _validate_tier_authorization(
         )
 
     substantiated: list[str] = []
+    review = raw_item.get("review")
+    review = review if isinstance(review, dict) else {}
+    if (
+        pr_tier == "fastlane"
+        and not item_is_self_review
+        and str(review.get("status") or "").lower() in {"passed", "approved", "clean"}
+        and review.get("head_sha") == raw_item.get("head_sha")
+        and _nonempty_string(review.get("reviewer_lane"))
+        and _nonempty_string(review.get("review_completed_at"))
+    ):
+        substantiated.append("independent exact-head fastlane review")
     if ci_tier_check_declared and ci_tier_check is not None:
         ci_status = str(
             ci_tier_check.get("status") or ci_tier_check.get("conclusion") or ""

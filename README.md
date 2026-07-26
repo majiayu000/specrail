@@ -162,6 +162,11 @@ Review artifacts are advisory evidence only. They do not grant final approval or
 merge authority. Their body must include `## Summary` and `## Verdict`; inline
 comments may use validated multi-line ranges and RIGHT-side suggestion blocks.
 
+The full review artifact and PR-gate chain is required for standard and heavy
+queue work. Fastlane work uses focused tests, repository-required CI, one
+independent exact-head review, and clean merge state without generating the
+heavier evidence bundle.
+
 Evaluate a spec packet and adoption smoke evidence:
 
 ```sh

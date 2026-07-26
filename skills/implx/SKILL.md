@@ -57,9 +57,8 @@ baseline; it never selects or authorizes auto mode.
 `implx review`, `implx 审核`, and `implx 人工`:
 
 - Tiered merge authorization (GH-143): a PR whose `pr_tier` is `fastlane` or
-  `standard`, with full green evidence (CI rollup passing, review threads all
-  resolved with zero unresolved, pr_gate `allowed`, independent reviewer-lane
-  verdict `clean` or `non_blocking`) AND independent tier substantiation (a
+  `standard`, with the selected queue verification profile green, AND
+  independent tier substantiation (a
   gate-verifiable CI tier-check artifact or a reviewer-lane
   `tier_attestation` in a schema-valid review artifact whose own
   `review_source` is `independent_lane`), is authorized to merge without
@@ -75,8 +74,8 @@ baseline; it never selects or authorizes auto mode.
   the checkpoint `pr_tier` is a dispute: standard_auto is blocked until a
   human decides. Only the reviewer/merge-reviewer lane (or a human) may set
   or clear the dispute marker.
-- Tier authorization never replaces or fills any evidence gap; any non-green
-  evidence means wait or route to a human, exactly as before.
+- Tier authorization never replaces a profile requirement. Do not require
+  heavier-profile evidence from fastlane work.
 - Route `needs_spec` / `needs_tasks` to spec-writing skills but wait for
   human confirmation before implementing from a freshly drafted spec.
 

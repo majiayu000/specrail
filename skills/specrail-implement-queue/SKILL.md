@@ -130,8 +130,7 @@ spec, or a human gate prevents spec creation.
 ## PR Tier Lanes
 
 Classify every implementation candidate into a `pr_tier` before planning PRs.
-The tier decides process weight — how many PRs carry the work — while the
-verification gates themselves stay identical for every tier.
+The tier selects both PR shape and verification profile:
 
 - `heavy`: architecture changes, schema or migration changes, security
   surfaces, cross-module rewrites, or anything the spec marks high risk.
@@ -145,6 +144,14 @@ verification gates themselves stay identical for every tier.
   `exception_allowed` class, the spec content may live in the PR
   description; otherwise include the minimal spec delta in the same PR.
 
+Verification profiles:
+
+| Tier | Required | Not required by default |
+| --- | --- | --- |
+| `fastlane` | focused tests, repository-required CI, one independent exact-head review, clean merge state | structured review manifest, hosted review, GraphQL thread collection, `pr_gate`, runtime checkpoint |
+| `standard` | focused/relevant tests, repository-required CI, one independent exact-head review, linked-spec comparison, `pr_gate` | hosted review, runtime checkpoint outside a long-run milestone |
+| `heavy` | full repository verification plus every standard gate, structured review manifest, thread evidence, and milestone checkpoint | none |
+
 Rules:
 
 - Record `pr_tier` with its evidence (changed-line count, touched paths) on
@@ -152,8 +159,10 @@ Rules:
   check is the enforcing authority — never self-declare `fastlane`
   against it.
 - When in doubt between two tiers, pick the heavier one.
-- Tiering never weakens CI, reviewer-lane, review-thread, or pr_gate
-  evidence requirements.
+- A protected path or enforcement-sensitive change is always `heavy`.
+- A missing or disputed tier fails closed to `heavy`.
+- Do not collect evidence excluded by the selected profile merely because a
+  heavier profile supports it.
 - The tier also decides the `auth_mode: review` merge authorization path
   (see Merge Authorization): `fastlane`/`standard` may qualify for
   `standard_auto`, `heavy` keeps per-PR human authorization, and the
@@ -612,13 +621,13 @@ For each issue slice:
 
 ## Review And Verification
 
-Before readiness, run focused tests, repository deterministic checks, and
-`python3 checks/check_workflow.py --repo .`; when specs changed also use
-`--spec-dir specs/GH<issue>`. Compare the diff with the linked specs via
-`skills/specrail-check-impl-against-spec/SKILL.md`, then use
-`skills/specrail-pr-gate/SKILL.md` before reporting merge readiness.
+Before readiness, run the verification profile selected under PR Tier Lanes.
+`standard` and `heavy` compare the diff with linked specs via
+`skills/specrail-check-impl-against-spec/SKILL.md` and use
+`skills/specrail-pr-gate/SKILL.md`. `fastlane` does not invoke those gates.
+All tiers still run checks explicitly required by the consumer repository.
 
-For GitHub PRs, current evidence must include:
+For `standard` and `heavy` GitHub PRs, current evidence must include:
 
 - PR head, CI/check rollup, review decision, merge state, and linked issue/closing intent
 - independent reviewer evidence and native reviewer-thread evidence when
@@ -630,11 +639,11 @@ For GitHub PRs, current evidence must include:
 - `pr_tier`, changed-line/path evidence, optional `authorization_tier`, and
   merge authorization for the selected `auth_mode`
 
-The runtime checkpoint must not mark a PR item `complete`, `merged`,
-`merge_ready`, or `ready_to_merge` unless `checks/runtime_ledger_gate.py` accepts
-the checkpoint. When the gate is evaluating a merged or merge-ready PR, local
-`pr_gate.evidence` must exist and either be an allowed PR gate result JSON or a
-raw PR evidence JSON that re-evaluates to `allowed`.
+When a milestone checkpoint is present, it must not mark a `standard` or
+`heavy` PR item `complete`, `merged`, `merge_ready`, or `ready_to_merge` unless
+`checks/runtime_ledger_gate.py` accepts it. Fastlane readiness remains remote
+truth and is summarized at the next milestone; do not create a checkpoint only
+to duplicate that state.
 
 ### Merge Authorization
 
@@ -643,9 +652,10 @@ raw PR evidence JSON that re-evaluates to `allowed`.
 - The current user message must explicitly say `implx auto` / `implx 自动`.
   That invocation is the standing merge authorization for the run. Do not ask
   per-PR merge questions.
-- Merge when ALL current evidence is green: CI/check rollup passing, PR gate
-  passed, review threads resolved, reviewer-lane evidence present, merge state
-  clean. Any evidence gap means skip the PR, record the gap in
+- Merge when the selected profile's current evidence is green. Fastlane needs
+  CI, one independent exact-head review, and clean merge state. Standard and
+  heavy additionally need their declared PR/thread gates. Any required evidence
+  gap means skip the PR, record the gap in
   `remaining_queue`, and keep draining.
 - Use closing keywords on final slices; after merge, close issues whose
   acceptance criteria are fully merged. Merged-but-open issues found during
@@ -654,9 +664,9 @@ raw PR evidence JSON that re-evaluates to `allowed`.
   or time-window gates, conflicting review feedback, destructive or
   irreversible actions) never block the queue: skip, continue, and report them
   once in a final `human_decisions` list with a recommended action each.
-- Auto mode does not weaken reviewer-lane requirements, the self-review
-  authorization rules, the Bounded Tranche Hard Stop, or the runtime ledger
-  gate. Standing merge authorization is not self-review authorization.
+- Auto mode does not weaken the selected profile, self-review authorization,
+  or the Bounded Tranche Hard Stop. Standing merge authorization is not
+  self-review authorization.
 
 `auth_mode: review` — tiered authorization (GH-143 decision B):
 
@@ -664,9 +674,9 @@ raw PR evidence JSON that re-evaluates to `allowed`.
   following hold —
   - `pr_tier` is `fastlane` or `standard`, recorded with its evidence
     (`pr_tier_evidence`: changed-line count and touched paths);
-  - all four green evidence classes are current: CI rollup passing, review
-    threads all resolved with `unresolved_count: 0`, pr_gate decision
-    `allowed`, independent reviewer-lane verdict `clean` or `non_blocking`;
+  - the selected profile's evidence is current: fastlane requires CI,
+    independent exact-head review, and clean merge state; standard additionally
+    requires resolved review threads and `pr_gate: allowed`;
   - the item is not enforcement-sensitive;
   - at least one independent tier endorsement beyond the self-reported
     `pr_tier_evidence` exists: (a) a gate-verifiable CI tier-check artifact

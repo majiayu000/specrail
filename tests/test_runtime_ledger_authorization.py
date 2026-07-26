@@ -81,6 +81,30 @@ def test_standard_auto_merge_ready_allowed(tmp_path: Path) -> None:
     assert result["errors"] == []
 
 
+def test_fastlane_standard_auto_accepts_lite_exact_head_review(tmp_path: Path) -> None:
+    checkpoint = _standard_auto_checkpoint(tmp_path)
+    checkpoint.pop("thread_dispatch_gate")
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["pr_tier"] = "fastlane"
+    item["pr_tier_evidence"] = {
+        "changed_lines": 20,
+        "touched_paths": ["src/format.py", "tests/test_format.py"],
+    }
+    item.pop("review_threads")
+    item.pop("pr_gate")
+    review = item["review"]
+    assert isinstance(review, dict)
+    review["evidence"] = "https://github.com/example/reviews/1"
+    review.pop("manifest")
+    review.pop("artifact_id")
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "allowed"
+    assert result["errors"] == []
+
+
 def test_standard_auto_allowed_via_ci_tier_check_artifact(tmp_path: Path) -> None:
     checkpoint = _standard_auto_checkpoint(tmp_path)
     item = checkpoint["items"][0]  # type: ignore[index]

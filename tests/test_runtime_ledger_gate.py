@@ -138,6 +138,47 @@ def test_runtime_ledger_gate_blocks_merge_ready_without_thread_dispatch_gate() -
     assert any("thread_dispatch_gate" in error for error in result["errors"])
 
 
+def test_fastlane_merge_ready_uses_lite_profile() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint.pop("thread_dispatch_gate")
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["pr_tier"] = "fastlane"
+    item["enforcement_sensitive"] = False
+    item.pop("review_threads")
+    item.pop("pr_gate")
+    review = item["review"]
+    assert isinstance(review, dict)
+    review["evidence"] = "https://github.com/example/reviews/1"
+    review.pop("manifest")
+    review.pop("artifact_id")
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "allowed"
+    assert result["errors"] == []
+
+
+def test_fastlane_review_must_bind_exact_head() -> None:
+    checkpoint = clean_checkpoint()
+    checkpoint.pop("thread_dispatch_gate")
+    item = checkpoint["items"][0]  # type: ignore[index]
+    assert isinstance(item, dict)
+    item["pr_tier"] = "fastlane"
+    item["enforcement_sensitive"] = False
+    item.pop("review_threads")
+    item.pop("pr_gate")
+    review = item["review"]
+    assert isinstance(review, dict)
+    review["evidence"] = "https://github.com/example/reviews/1"
+    review["head_sha"] = "f" * 40
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("fastlane review must bind the exact head" in error for error in result["errors"])
+
+
 def test_runtime_ledger_gate_blocks_pr_merge_states_without_pr_identifier() -> None:
     for state in ["merge_ready", "ready_to_merge", "merged"]:
         checkpoint = clean_checkpoint()

@@ -624,7 +624,11 @@ def evaluate_checkpoint(
             state == "complete" and bool(raw_item.get("pr"))
         )
         if merge_evidence_required:
-            if not thread_gate:
+            fastlane = (
+                raw_item.get("pr_tier") == "fastlane"
+                and raw_item.get("enforcement_sensitive") is not True
+            )
+            if not fastlane and not thread_gate:
                 errors.append(f"{label}: merge-ready PR item requires thread_dispatch_gate")
             if raw_item.get("truth_level") != "A":
                 errors.append(f"{label}: merge-ready state requires truth_level A")
@@ -661,22 +665,25 @@ def evaluate_checkpoint(
                     auth_mode=str(data.get("auth_mode") or ""),
                 )
             review_artifact = load_review_artifact_payload(
-                raw_item, label, errors, repo=repo, required=True
+                raw_item, label, errors, repo=repo, required=not fastlane
             )
-            _validate_terminal_review_summary(
-                review,
-                artifact=review_artifact,
-                expected_pr=raw_item.get("pr"),
-                head_sha=head_sha,
-                review_source=review_source,
-                allow_component_reuse=(
-                    raw_item.get("content_binding_version") == 1
-                    and isinstance(review_artifact, dict)
-                    and review_artifact.get("content_binding_version") == 1
-                ),
-                label=label,
-                errors=errors,
-            )
+            if not fastlane:
+                _validate_terminal_review_summary(
+                    review,
+                    artifact=review_artifact,
+                    expected_pr=raw_item.get("pr"),
+                    head_sha=head_sha,
+                    review_source=review_source,
+                    allow_component_reuse=(
+                        raw_item.get("content_binding_version") == 1
+                        and isinstance(review_artifact, dict)
+                        and review_artifact.get("content_binding_version") == 1
+                    ),
+                    label=label,
+                    errors=errors,
+                )
+            elif review.get("head_sha") != head_sha or not review.get("review_completed_at"):
+                errors.append(f"{label}: fastlane review must bind the exact head and completion time")
 
             if review_status not in {"passed", "approved", "clean"}:
                 if review_source == "self_review":
@@ -687,7 +694,7 @@ def evaluate_checkpoint(
                 errors.append(f"{label}: merge-ready state requires review evidence")
             if review_source != "self_review" and not review.get("reviewer_lane"):
                 errors.append(f"{label}: merge-ready state requires reviewer_lane")
-            if native_required and review_source != "self_review":
+            if not fastlane and native_required and review_source != "self_review":
                 _validate_native_review_evidence(review, spawned_agents, label, errors)
 
             review_threads = (
@@ -696,28 +703,28 @@ def evaluate_checkpoint(
                 else {}
             )
             review_threads_status = str(review_threads.get("status") or "").lower()
-            if review_threads_status not in REVIEW_THREAD_CLEAN_STATUSES:
+            if not fastlane and review_threads_status not in REVIEW_THREAD_CLEAN_STATUSES:
                 errors.append(f"{label}: merge-ready state requires clean review_threads status")
-            if review_threads.get("unresolved_count") != 0:
+            if not fastlane and review_threads.get("unresolved_count") != 0:
                 errors.append(f"{label}: merge-ready state requires zero unresolved review threads")
-            if not review_threads.get("evidence"):
+            if not fastlane and not review_threads.get("evidence"):
                 errors.append(f"{label}: merge-ready state requires review_threads evidence")
-            if not review_threads.get("checked_at"):
+            if not fastlane and not review_threads.get("checked_at"):
                 errors.append(f"{label}: merge-ready state requires review_threads checked_at")
 
             pr_gate = raw_item.get("pr_gate") if isinstance(raw_item.get("pr_gate"), dict) else {}
             pr_gate_status = str(pr_gate.get("status") or "").lower()
-            if pr_gate_status not in PR_GATE_PASSED_STATUSES:
+            if not fastlane and pr_gate_status not in PR_GATE_PASSED_STATUSES:
                 errors.append(f"{label}: merge-ready state requires passed pr_gate status")
-            if not pr_gate.get("evidence"):
+            if not fastlane and not pr_gate.get("evidence"):
                 errors.append(f"{label}: merge-ready state requires pr_gate evidence")
-            else:
+            elif pr_gate.get("evidence"):
                 _validate_pr_gate_artifact(
                     raw_item, pr_gate.get("evidence"), label, errors, repo, config
                 )
-            if not pr_gate.get("checked_at"):
+            if not fastlane and not pr_gate.get("checked_at"):
                 errors.append(f"{label}: merge-ready state requires pr_gate checked_at")
-            if pr_gate.get("head_sha") != head_sha:
+            if not fastlane and pr_gate.get("head_sha") != head_sha:
                 errors.append(f"{label}: pr_gate head_sha must match item head_sha")
 
             merge_state = str(raw_item.get("merge_state") or "").lower()
