@@ -6,8 +6,9 @@ GH-197
 
 ## 用户问题
 
-GH-167 引入的 bounded review manifest v2 要求 round 1 的 `base_head_sha` 与
-`diff_sha256` 均为 null，并从实际 artifact 集合派生连续 `1..N` 轮次。真实队列中的
+GH-167 引入的 bounded review manifest v2 要求 round 1 派生的 `base_head_sha` 与
+`diff_sha256` 均为 null（artifact 可缺失对应可选字段），并从实际 artifact 集合派生
+连续 `1..N` 轮次。真实队列中的
 PR #181、#186、#193 已持久化 round-1 artifact：这些 artifact 携带
 `round_policy_version: 1`，但至少一个 bounded 字段为非 null（#181/#193 的
 `base_head_sha` 与 `diff_sha256` 非 null，#186 的 `diff_sha256` 非 null）。后续
@@ -24,9 +25,11 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 
 - 定义 `legacy_round1_normalization_v1` 迁移合同：仅覆盖 round-1、
   `round_policy_version: 1`、至少一个 bounded 字段非 null 的存量 artifact。
-- 提供确定性 CLI 与闭集迁移记录 schema，把旧 artifact 转换为 v2 可消费的派生证据，
-  并绑定 source 摘要、派生摘要、目标 policy/version、迁移原因与 actor/source。
-- 白名单只允许把 round-1 的 `base_head_sha`、`diff_sha256` 规范化为 null；finding、
+- 提供确定性 CLI、闭集迁移记录与外部 role-mapped 授权 schema，把旧 artifact 转换为
+  v2 可消费的派生证据，并绑定迁移前 Git commit/blob、source/派生摘要、目标 policy 与
+  exact 人工决定。
+- 白名单只允许把 round-1 的 `base_head_sha` 规范化为 null，并删除
+  `diff_sha256`；finding、
   head、时间戳、verdict、content binding 等其余字段永久禁止改动。
 - 验证方从原始字节确定性重放派生结果；重放摘要不一致即视为伪造并 block。
 - `review_result_semantics.py`、`review_json_gate.py`、`pr_gate.py` 对迁移前后给出
@@ -51,23 +54,29 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
    任何其他形态（round >= 2、非 bounded、字段已全 null、未来新 artifact）必须
    拒绝并给出定位错误，不存在兜底通道。
 2. B-002 WHEN 迁移执行 THEN 原始 artifact 文件字节必须保持不变；迁移只能新增
-   派生 artifact 与迁移记录两个文件，验证方检测到原文件缺失或摘要变化必须 block。
+   派生 artifact 与迁移记录两个文件。`source_sha256` 必须由受保护 adapter 绑定到迁移前
+   已存在且可达的 exact Git commit/path/blob bytes；当前 source、Git blob 或授权摘要任一
+   不一致必须 block，同一提交内自报或重算的摘要不能充当独立锚点。
 3. B-003 迁移记录必须是闭集结构，至少绑定：`migration_version: 1`、
    `source_artifact_path`、`source_sha256`、`derived_artifact_path`、
    `derived_sha256`、目标 `{manifest_version: 2, round_policy: {name:
    "bounded_diff_v1", cap: 3}}`、逐字段 `normalizations[]`（含原值）、闭集
-   `reason`、`actor`、`source`、`migrated_at`；缺失或额外字段必须 block。
+   `reason`、`authorization_id` 与 `migrated_at`；迁移前 Git commit/blob identity 及
+   exact authorization 的 cross-binding 缺失、额外或不一致必须 block。
 4. B-004 WHEN 验证迁移 THEN 必须从原始字节按白名单确定性重放派生结果，并要求
    重放摘要与 `derived_sha256`、派生文件实际摘要三者一致；任何白名单之外的
    字段增删改（含 findings、head_sha、时间、verdict、prior_findings、
    content binding、artifact_id）都会导致重放不一致并 block。
-5. B-005 `normalizations[]` 每项的 `field` 只允许 `base_head_sha` 或
-   `diff_sha256`，且目标值只能是 null；WHEN 源字段本就是 null 却声明了对应
-   normalization，或非 null 字段未声明 normalization THEN 必须 block。
+5. B-005 `normalizations[]` 每项只允许
+   `{field: base_head_sha, operation: set_null}` 或
+   `{field: diff_sha256, operation: delete}`，并记录 non-null 原值；WHEN 源字段本就是
+   null/缺失却声明 normalization，或非 null 字段未声明对应 operation THEN 必须 block。
 6. B-006 WHEN manifest v2 引用派生 artifact THEN manifest 必须在闭集
    `migrations[]` 中为该 artifact 声明恰好一条 `{artifact_id, record_path}`；
-   记录缺失、重复、指向不存在的 artifact_id、或派生 artifact 未声明迁移记录，
-   均必须 block。
+   派生 artifact 自身也必须携带 closed `migration_provenance` marker。受保护 adapter
+   必须提供 exact legacy identity evidence；凡 repo/PR/artifact/head 命中该 evidence 的
+   round-1 artifact，即使换路径、手工复制或省略 marker/migrations 条目，也必须 block。
+   记录缺失、重复、未知 artifact_id、marker/record/evidence 不一致均必须 block。
 7. B-007 一条迁移记录只能绑定一个 source/derived 对；WHEN 同一记录被复用到其它
    artifact、其它 PR 或其它 manifest 声明的路径 THEN 摘要与路径绑定必须使其
    失败，不得作为通用豁免。
@@ -82,13 +91,18 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
     （`review_json_gate.py`）声明非 null `base_head_sha` 或 `diff_sha256` THEN
     必须在产出时即 block，防止继续铸造需要迁移的 legacy 形态；该规则不追溯
     已持久化的存量文件。
-11. B-011 迁移 CLI 默认 dry-run，只输出完整计划与将写入的摘要；WHEN 未收到显式
-    `--apply` THEN 不得写任何文件；`actor`/`source` 必须显式提供并写入记录，
-    auto 流程不得代填人工授权。
+11. B-011 迁移 CLI 默认 dry-run，只输出完整候选计划与 source/derived/policy digests；
+    WHEN 未收到显式 `--apply` THEN 不得写任何文件。apply 必须消费一次性 closed
+    `migration_authorization` 与显式 maintainer role map：授权精确绑定 repo immutable ID、
+    PR、fresh base/head、source path + pre-migration commit/blob/digest、derived path/digest、
+    target policy digest、`decision: migrate_legacy_round1_once`、actor/source/time。
+    CLI 字符串、自报角色、auto/merge/cap 授权均不能替代或代填。
 12. B-012 WHEN 回滚 THEN 删除派生 artifact、迁移记录与 manifest `migrations[]`
     条目即可回到迁移前的 fail-closed 状态；原始 artifact 不受影响，重复执行
-    迁移对相同输入必须产出逐字节相同的派生结果与记录内容（`migrated_at`、
-    `actor`、`source` 除外）。
+    迁移对相同输入与同一授权必须产出逐字节相同的派生结果与记录内容；同一
+    authorization ID 只能标识这一组 exact bytes，response-loss retry 或 rollback 后的
+    exact reapply 可复用，跨 PR/base/head/artifact/source/derived scope 或不同 bytes
+    复用必须 block。
 
 ## 验收标准
 
@@ -96,13 +110,18 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
   非 null）三种真实 round-1 形态各有 fixture：迁移前 manifest v2 被稳定拒绝且
   rejection 指向迁移合同；迁移后全链路通过（B-001/B-008/B-009）。
 - [ ] 篡改派生 artifact 任一非白名单字段、伪造 `derived_sha256`、替换 source
-  文件、复用迁移记录到其它 artifact 均被拒（B-002/B-004/B-007）。
+  文件、source 与 pre-migration Git blob 不一致、复用迁移记录到其它 artifact 均被拒
+  （B-002/B-004/B-007）。
 - [ ] 迁移记录缺字段、多字段、`reason` 越界、normalization 声明与源值不符均被拒
   （B-003/B-005）。
-- [ ] manifest `migrations[]` 缺条目、重复条目、指向未知 artifact 均被拒（B-006）。
+- [ ] manifest `migrations[]` 缺条目、重复条目、指向未知 artifact、
+  `migration_provenance` 缺失/伪造，以及命中 trusted legacy identity 后手工复制或改路径
+  规避记录均被拒（B-006）。
 - [ ] round >= 2 或字段已合规的 artifact 请求迁移被拒；新产出的 round-1 bounded
   artifact 带非 null base/diff 在 `review_json_gate.py` 即 block（B-001/B-010）。
-- [ ] CLI dry-run 不落盘、apply 幂等、缺 actor/source 拒绝执行（B-011/B-012）。
+- [ ] CLI dry-run 不落盘；apply 缺授权/role map、错 actor role、错 repo/PR/head/
+  commit/blob/source/derived digest、重复 authorization ID 均拒绝；exact 授权幂等
+  （B-011/B-012）。
 - [ ] `python3 -m pytest -q`、`python3 checks/check_workflow.py --repo .
   --all-specs`、`python3 tools/spec_depth_audit.py --spec-dir specs/GH197 --gate`
   全绿。
@@ -113,7 +132,7 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 | --- | --- |
 | 空/缺失输入 | covered: B-002 B-003 B-006（source/记录/manifest 条目缺失均 block） |
 | 错误与失败路径 | covered: B-004 B-005 B-008（重放不一致、声明不符、未迁移均给出定位错误） |
-| 授权/权限 | covered: B-011（显式 actor/source；auto 不得代授权） |
+| 授权/权限 | covered: B-011（外部 role-mapped exact authorization；auto/CLI 字符串不得代授权） |
 | 并发/竞态 | covered: B-002 B-004（验证按只读摘要比对，检查中源文件变化即失配 block） |
 | 重试/幂等 | covered: B-012（重复迁移逐字节确定；重复验证结论一致） |
 | 非法状态转换 | covered: B-001 B-010（round>=2 或新 artifact 走迁移通道非法） |
@@ -124,6 +143,6 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 
 ## 发布说明
 
-存量 round-1 review artifact 可通过一次性、人工授权的确定性迁移进入 bounded v2
-manifest；原始证据字节永久保留，迁移记录绑定摘要与授权，未迁移或被篡改的形态
-继续 fail closed。
+存量 round-1 review artifact 可通过一次性、role-mapped 人工授权的确定性迁移进入
+bounded v2 manifest；原始证据由迁移前 Git blob 锚定并永久保留，迁移记录、派生 marker
+与 trusted legacy identity 共同绑定，未迁移、手工复制或被篡改的形态继续 fail closed。
