@@ -41,16 +41,22 @@ readiness、review、authorization、merge 或 fail-closed 合同。
    必须在执行该阶段首个动作前加载全部映射引用。
 5. B-005 当引用文件缺失、未锁定、hash 漂移、非普通文件、符号链接或路径逃逸时，
    workflow/installed doctor/queue preflight 必须 fail closed，不能 warning 后继续。
+   `implx` 外层必须在任何远端状态读取前完成 origin-aware preflight：使用 repo-distributed
+   copy 时校验当前 repo copy 且不得要求本机已安装；实际使用 installed copy 时才额外要求
+   GH-172 installed doctor `match`。直接调用 queue 主入口必须重复同一 preflight。
 6. B-006 当 queue Skill 目录新增、删除或修改引用时，GH-172 定义的 lock、installer
    与 installed doctor 必须消费同一完整文件闭集。
 7. B-007 当引用 A 指向引用 B、指回主文件或形成任何多跳/循环图时，确定性引用检查
    必须拒绝；所有引用只能由主文件一跳到达。
-8. B-008 当主文件声明未知 phase、重复 phase、重复路径、空路由或未使用引用时，
-   检查必须一次报告全部缺陷并稳定排序。
+8. B-008 当主文件声明未知 phase、重复 phase、同一 phase 内重复路径、空路由或未使用引用时，
+   检查必须一次报告全部缺陷并稳定排序；同一引用服务多个不同 phase 是合法复用，不得按
+   全局 duplicate path 拒绝。
 9. B-009 当主文件与引用出现**可判定的**冲突 normative contract 时，检查必须失败：
    判定范围是两类——(a) 引用中出现主文件同一 `contract_id` 的规范性句子却未逐字复用
-   主文件短版文本；(b) 命中显式封闭的 weakening pattern 清单。引用不得放宽主文件的
-   MUST/禁止项或声明自己具有更高优先级；检查器不承诺检出清单之外的任意自然语言矛盾。
+   主文件短版文本；(b) 引用中由稳定 marker 显式标记的 normative block 命中封闭的
+   weakening pattern 清单。清单不得扫描示例、说明或未标记的普通文本，因此合法的
+   “optional local runtime checkpoint”等非规范描述不会误报。引用不得放宽主文件的
+   MUST/禁止项或声明自己具有更高优先级；检查器不承诺检出上述范围之外的自然语言矛盾。
 10. B-010 当现有 queue 行为测试运行时，拆分前的 readiness、planning、review、
     CI、authorization、merge、checkpoint 与 rejection 语义必须保持通过。
 11. B-011 当 queue/implx 入口引用已拆分资产时，入口不得递归整篇重读 queue 主文件；
@@ -69,10 +75,16 @@ readiness、review、authorization、merge 或 fail-closed 合同。
 
 - [ ] 主 Skill 同时满足 ≤500 行与 ≤28 KiB。
 - [ ] 关键运行合同全部保留在主文件，阶段细节按稳定 phase ID 一跳加载。
-- [ ] 引用图检查拒绝缺失、未锁定、漂移、越界、循环、未使用与冲突引用。
+- [ ] 引用图检查拒绝缺失、未锁定、漂移、越界、循环、未使用与可判定冲突引用；required
+      header 中唯一的 `SKILL.md` token 被窄豁免，其他裸主文件/引用路径仍被拒绝。
+- [ ] repo copy 不要求本机安装即可启动；installed copy 必须 doctor `match`；两种路径及
+      `implx` 外层都在任何远端状态读取前完成 origin-aware preflight。
+- [ ] 每个 phase 只加载自己声明的引用：startup 仅 planning，runtime_handoff 恰为
+      planning+evidence，review 仅 review，recovery 仅 evidence；跨 phase 复用不算重复。
 - [ ] lock、installer、installed doctor 对多文件闭集语义一致。
 - [ ] 现有行为测试与全量测试全绿，且不含 GH-160 diff。
-- [ ] 合并后的真实注入指标单独记录，不作为关闭硬门。
+- [ ] 合并后的真实注入指标作为独立、非阻断 follow-up 记录，不属于本 issue Done-When、
+      spec approval、merge 或关闭硬门。
 
 ## 边界情况清单
 
