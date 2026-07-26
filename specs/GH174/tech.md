@@ -11,7 +11,7 @@ GH-174
 
 ## Product Spec
 
-见 `specs/GH174/product.md`。本设计实现 B-001..B-016，并以 GH-172 合并为实现前置。
+见 `specs/GH174/product.md`。本设计实现 B-001..B-018，并以 GH-172 合并为实现前置。
 
 ## Codebase Context
 
@@ -21,6 +21,8 @@ GH-174
 | runtime controls | `skills/specrail-implement-queue/SKILL.md:250-606` | 编排、review、budget、breaker、wait、checkpoint、Goal 混在主文件。 | 需要压缩主合同并按 planning/runtime、review/merge 路由详细步骤。 |
 | implementation/merge | `skills/specrail-implement-queue/SKILL.md:607-799` | 实现、review、授权、merge、输出和 rejection 全在主文件。 | merge/authorization 摘要留主文件，证据与恢复细节按需加载。 |
 | implx router | `skills/implx/SKILL.md:13-29`, `skills/implx/SKILL.md:224-227` | 直接委托 queue 主 Skill 并引用其中多个章节。 | 拆分后必须只指向主入口，不自行猜引用路径。 |
+| loaded entrypoint origin | search-first 未发现 loader-owned current-entrypoint descriptor/resolver 或可由 repo checker 验证的 loaded-byte binding | 现有 Python CLI 只能看到 caller 传入的 repo/skill；Markdown Skill 本身没有可信 `$0`。 | 单纯增加 `--entrypoint` 仍可伪造；startup 必须定义 host resolver prerequisite 与 fail-closed client API。 |
+| startup output firewall | `skills/specrail-implement-queue/SKILL.md:481-495`, `integrations/threads.md:177-188` | firewall 目前在 queue 主文件中覆盖大输出 artifact-first；remote fetch/list/map 发生在 startup。 | 拆分后不能只移动到 recovery reference，否则 startup 尚未加载规则就可能污染 parent context。 |
 | current lock | `skills-lock.json:21-23` | queue 只锁 `SKILL.md`。 | GH-172 完成后为三个引用加入多文件 hash 闭集。 |
 | installer | `tools/install_codex_skills.py:61-101` | 复制整个目录但只验证入口 hash。 | 由 GH-172 改为按同一 manifest post-check 全部引用。 |
 | pack check | `checks/check_workflow.py:485-512` | 校验 required files、pack 与 lock，没有 phase/reference graph。 | 接入独立确定性引用图检查。 |
@@ -63,7 +65,8 @@ B-008 要求的"重复 phase 声明必须被拒绝并报告"就无法实现（�
 - wait contract；
 - authorization/merge gate/human boundary；
 - checkpoint/Goal 不替代 GitHub truth；
-- rejection repeat stop。
+- rejection repeat stop；
+- output firewall 的 artifact-first、禁止 raw high-volume output 与有界 parent summary。
 
 ### 2. 三个单层引用
 
@@ -77,12 +80,13 @@ GH-160 自己的 manifest 里同时更新 phase manifest、lock 与闭集检查�
 本 issue 必须先把该文件纳入 phase manifest 与 planned paths 再实现，不得在 manifest
 之外删改它。
 
-- `planning-and-runtime.md`：tier 细节、queue ledger、spec/impl mix、context/runtime
-  budget、checkpoint/Goal 字段与操作顺序。
+- `planning-and-runtime.md`：startup output-firewall 操作顺序、tier 细节、queue ledger、
+  spec/impl mix、context/runtime budget、checkpoint/Goal 字段与操作顺序。
 - `review-and-merge.md`：bounded review artifact、reviewer failure、CI/PR gate、
   graded reconfirmation 与 safe merge 的详细步骤。
-- `evidence-and-recovery.md`：output firewall、验证层次、handoff、closure audit、
-  rejection persistence 与 retry evidence。
+- `evidence-and-recovery.md`：post-startup artifact 命名/摘要、验证层次、handoff、
+  closure audit、rejection persistence 与 retry evidence；它不得成为 startup firewall
+  唯一规范来源。
 
 引用不含 frontmatter，不声明其他引用，不出现 `../` 或绝对路径。每个引用第一条非空行
 必须逐字声明 `Reference only; the main SKILL.md contract wins`，并列出自己服务的 phase ID。
@@ -94,10 +98,11 @@ fallback 语句。
 
 ### 3. 引用图 validator
 
-新增 `checks/skill_reference_graph.py`：
+新增 `checks/skill_reference_graph.py`，区分 pack/CI 静态校验与 startup authorization：
 
 ```text
 validate_skill_reference_graph(repo, skill_name) -> list[str]
+bootstrap_loaded_skill(skill_name, loader_resolver) -> preflight_result
 ```
 
 处理顺序：
@@ -129,28 +134,74 @@ validate_skill_reference_graph(repo, skill_name) -> list[str]
 installed doctor 继续负责安装字节/hash；reference graph 负责仓库结构/路由，两者都通过
 才可启动 queue。
 
-仅靠"某次 doctor 或 CI 跑过"不满足 B-005。preflight 先从实际加载的 main entrypoint
-descriptor 与 canonical repo root 判定 `execution_origin = repo_copy | installed_copy`；
-调用方不得用 flag 自报 origin。两条入口都必须在 fetch/list/map remote state、写
-checkpoint 或 spawn lane 前执行：
+`validate_skill_reference_graph(repo, skill_name)` 是 pack/CI 的纯静态 API；其
+caller-selected `repo` 不能产生 queue startup authorization。仅靠"某次 doctor 或 CI 跑过"
+同样不满足 B-005。
 
-```sh
-python3 checks/skill_reference_graph.py --repo <specrail-source> --skill specrail-implement-queue --json
+startup 必须调用 `bootstrap_loaded_skill()`。该 client 不接受 `--repo`、
+`--entrypoint`、`--origin`、descriptor file、endpoint 或 trust-root 参数，也不从 environment、
+repository、checkpoint 或 agent text 读取这些值；它向 host 固定、authenticated
+`specrail.runtime.loaded-entrypoint.v1` resolver 发出 fresh unpredictable challenge。resolver
+必须从当前 runtime invocation 的 skill-loader state 返回闭合 attestation：
+
+```text
+protocol_version, request_id, challenge, current_invocation_id,
+loaded_entrypoint{skill_id, realpath, sha256},
+delegated_entrypoint{skill_id, realpath, sha256, dependency_binding} | null,
+canonical_bundle_root, source_repository_root, source_lock_manifest_sha256,
+installed_root_binding, issued_at, expires_at, attestation
 ```
 
-- `repo_copy`：graph checker 的 `<specrail-source>` 必须是当前加载 repo copy 所属
-  canonical source root；`allowed` 即可继续，**不得**要求 `$CODEX_HOME`/`~/.codex`
-  存在或运行 `--require-installed`。
-- `installed_copy`：除 source graph `allowed` 外，还必须运行
+host owner 独占 resolver、current-invocation loader registry、peer identity、attestation key 与
+trust root；SpecRail client owner 独占 request、closed response validation、path/digest
+recomputation、origin derivation、graph/doctor dispatch 与 tests。client 必须验证 authenticated
+peer、fresh challenge/request/invocation 与短时效。direct queue 只接受
+`loaded_entrypoint.skill_id=specrail-implement-queue` 且 `delegated_entrypoint=null`；
+`implx` outer 只接受 `loaded_entrypoint.skill_id=implx`，并要求 loader registry 返回
+`delegated_entrypoint.skill_id=specrail-implement-queue` 及其不可由 caller 添加的
+dependency binding。client 读取所有 attested realpath 的实际 bytes 重算 SHA，验证 implx
+与 queue descriptor 属于同一 origin/source-lock chain，并 realpath/canonicalize 所有 roots
+后才推导
+`execution_origin = repo_copy | installed_copy`：
+
+- entrypoint 精确等于 canonical repo layout
+  `<source_repository_root>/skills/specrail-implement-queue/SKILL.md` 时才是 `repo_copy`；
+- entrypoint 位于 resolver 证明的 runtime-owned installed root、且 installed bundle/source-lock
+  binding 与同一 source repository manifest 相等时才是 `installed_copy`；
+- 同时匹配、均不匹配、symlink/path escape、bytes/root/manifest 漂移或字段缺失均 fail closed。
+
+resolver/peer/verifier 不可用时 queue 明确 unavailable，不得回退到 caller-selected repo/path。
+两条入口都必须在 fetch/list/map remote state、写 checkpoint、产生潜在大输出或 spawn lane 前执行：
+
+```sh
+python3 checks/skill_reference_graph.py --bootstrap-loaded \
+  --skill specrail-implement-queue --json
+```
+
+- `repo_copy`：graph checker 只能使用 attestation 推导出的 canonical source root；
+  `allowed` 即可继续，**不得**要求 `$CODEX_HOME`/`~/.codex` 存在或运行
+  `--require-installed`。
+- `installed_copy`：除对同一 attested source root 的 source graph `allowed` 外，还必须运行
   `python3 tools/check_installed_codex_skills.py --repo <specrail-source>
-  --require-installed --json` 并得到 `match`，证明实际加载的 installed bytes 与同一
-  manifest 一致；无法定位 source/loaded origin 或不匹配均停止。
+  --require-installed --json` 并得到 `match`；其中 `<specrail-source>` 只能来自已验证
+  attestation，不能由 invoking agent 传入，且 doctor result 必须绑定同一
+  `source_lock_manifest_sha256`，证明实际加载的 installed bytes 与同一 manifest 一致。
 
 正常 `implx` wrapper 当前在加载 queue 主 Skill 前就 fetch/map remote state，因此
 `skills/implx/SKILL.md` 自己必须先执行上述 origin-aware bootstrap，再做任何远端读取，
 随后才委派 queue。直接调用 `specrail-implement-queue` 时，queue Startup 第一步重复该
 bootstrap，不能信任 wrapper 曾执行。两层都须 fail closed；repo copy 不依赖本机安装，
 installed copy 不得跳过 doctor。
+
+output firewall 不等待 phase reference：`implx` 与 queue main `SKILL.md` 都保留相同 stable
+`output_firewall_v1` contract，并在各自 bootstrap 前生效，至少要求所有潜在大输出 raw
+stdout/stderr 进入 artifact，
+parent 只接收 exit status、≤150 行 bounded tail、targeted summary 与 artifact path，并禁止
+raw `gh ... --log`、full-suite output、session JSONL 或 broad generated-tree search。随后
+`startup_planning` 在第一项 startup action 前只加载 `planning-and-runtime.md`，取得 artifact
+目录、截断/summary 格式与 batched remote-query 细节；未加载
+`evidence-and-recovery.md` 不影响 firewall enforcement。phase exact-isolation 仍保持
+startup=planning，不能为取得 firewall 而预读 recovery reference。
 
 ### 4. 机械等价与尺寸门禁
 
@@ -172,11 +223,17 @@ manifest API 实现并最后刷新 queue/implx hash。
 | B-007 B-008 B-009 | graph/safety/conflict rules | `python3 -m pytest -q tests/test_skill_reference_graph.py -k "cycle or path or conflict"` |
 | B-012 | deterministic repeat | `python3 -m pytest -q tests/test_skill_reference_graph.py -k deterministic` |
 | B-016 | post-merge observation boundary | 人工复核报告不作为结构 PR gate |
+| B-017 | loader-owned current-entrypoint resolver + bootstrap client + implx/direct queue preflight | `python3 -m pytest -q tests/test_skill_reference_graph.py tests/test_install_codex_skills.py -k "loaded_entrypoint or attestation or repo_copy or installed_copy or stale or spoof"` |
+| B-018 | main output-firewall contract inventory + startup planning behavior | `python3 -m pytest -q tests/test_skill_reference_graph.py tests/test_check_workflow.py -k "output_firewall or startup_planning or large_output"` |
 
 ## 数据流
 
 ```text
-main SKILL bytes → phase manifest → current phase → selected one-hop references
+runtime skill loader → fresh authenticated loaded-entrypoint attestation
+          ↓
+origin/path/bytes/source binding → graph + conditional installed doctor
+          ↓
+main SKILL output firewall → phase manifest → current phase → selected one-hop references
           └──────→ reference graph validator ← normalized GH-172 lock manifest
 installed files  → GH-172 doctor ────────────┘
 ```
@@ -192,21 +249,29 @@ installed files  → GH-172 doctor ────────────┘
 
 ## 风险
 
-- Security: 路径逃逸/symlink 必须在读取前拒绝，引用不得包含可执行自动化。
+- Security: 路径逃逸/symlink 必须在读取前拒绝，引用不得包含可执行自动化；loaded origin
+  只能来自 authenticated loader resolver，caller/env/repo 不能注入 path/origin/root。
 - Compatibility: 实现等待 GH-172；旧 installer/lock 不能安全分发引用。
+- Availability: host loaded-entrypoint resolver 是 queue startup prerequisite；不可用时在任何
+  remote read 前 fail closed，不得回退到 caller-selected metadata。
 - Performance: phase 路由减少默认注入，但当前阶段首次读取会增加一次小文件读取。
-- Maintenance: critical marker inventory 与 phase enum 需测试，避免后续规则只写进引用。
+- Maintenance: critical marker inventory、phase enum 与 main output firewall 需测试，避免后续
+  规则只写进引用；startup planning reference 只承载操作细节。
 
 ## 测试计划
 
 - [ ] Unit: 尺寸、manifest、phase 内重复/跨 phase 合法复用、required-header 窄豁免、
-      normative-block weakening、闭集、循环、路径、冲突与稳定错误。
+      normative-block weakening、闭集、循环、路径、冲突、loader attestation
+      spoof/stale/path/digest/root 漂移与稳定错误。
 - [ ] Integration: workflow + GH-172 lock/installer/doctor 多文件 fixture。
 - [ ] Regression: 全量 pytest、all-specs、depth audit、diff/hash/line/byte checks。
 - [ ] Forward-use: 临时安装目录加载 startup_planning、runtime_handoff、review_merge、
   retry_recovery 四条 phase 路径（`runtime_handoff` 同时需要 planning 与 evidence 两个
   引用），并逐 phase 断言 exact isolation：startup 仅 planning、runtime_handoff 恰为
   planning+evidence、review 仅 review、recovery 仅 evidence。
+- [ ] Startup firewall: main-only bootstrap 与 startup-planning 正例在任何 remote query 前
+      激活 artifact-first；大 GitHub listing/diagnostic 的 raw output 不进入 parent，
+      recovery reference 未加载也保持 enforceable。
 
 ## 回滚方案
 
