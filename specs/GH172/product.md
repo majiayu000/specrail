@@ -100,6 +100,19 @@ GH-160 与 GH-174 的安全拆分。
 20. B-020 当 GH-160、GH-174 等后续变更使用多文件 skill 时，installer、doctor 与 lock
     validator 必须消费同一文件清单语义并迁移到 v2 lock；任一组件只处理入口文件都视为
     合同不完整。GH-160 与 GH-174 的 multi-file 实现都必须在 GH-172 合并后再开始。
+21. B-021 当授权 `--apply` 对安装目标 staging、替换、回滚或清理时，installer 必须先从
+    稳定 trust anchor 逐段 no-follow 打开目标父目录/根目录 descriptor，并只用该 descriptor
+    的 dirfd-relative 操作完成事务；pathname precheck、`resolve()` 结果或随后重新按路径打开
+    不能充当写入授权。若 target root/任一 parent 在 preflight、staging 或 commit 期间被换成
+    symlink、移出原 namespace、重新绑定到不同 inode，或无法证明当前 pathname 仍绑定所持
+    descriptor，必须 fail closed、经同一安全 descriptor 清理 staging/回滚，并保证替代
+    symlink 指向的目录及其它授权根外对象零写入、零删除。
+22. B-022 当 v2 lock 声明分发文件时，入口与每个 `files[]` 项都必须显式绑定规范化
+    `mode`（闭集 `0644 | 0755`）以及内容哈希；source validator、installer same-fd snapshot、
+    staging copy 和 installed doctor 必须保留并逐项验证 exact mode。可执行脚本以 `0755`
+    分发后若变成 `0644`，即使 bytes/hash 未变也必须报告 drift、post-check 失败并阻断 queue；
+    缺失/越界 mode、setuid/setgid/sticky、group/world-write bits、umask 导致的偏差或检查期间
+    mode 变化均 fail closed，不得按扩展名、shebang 或调用方式猜测执行权限。
 
 ## 验收标准
 
@@ -113,6 +126,11 @@ GH-160 与 GH-174 的安全拆分。
 - [ ] queue/`implx` 在 runtime 安装不匹配时被阻断，普通 CI 不访问本机安装目录。
 - [ ] 既有单文件 lock 保持兼容，多文件 skill 的 validator/installer/doctor 语义一致；
       installer 不使用会跟随 source race 的 whole-directory copy。
+- [ ] installer 的 target root/parent 在 preflight 与 staging/commit 间被替换为 symlink 或
+      重新绑定时，事务 fail closed；所有 staging/backup/replace/rollback/cleanup 均为
+      no-follow descriptor/dirfd-relative 操作，外部 sentinel 保持 byte-for-byte 不变。
+- [ ] v2 lock 对入口和每个分发文件显式声明 `0644 | 0755`；installer 不受 umask 影响地保留
+      exact mode，doctor 对“hash 相同但 executable bit 丢失”返回 drift，queue/preflight 阻断。
 - [ ] 未声明项标准输出固定包含总数、省略数和不超过 50 项/8192 bytes 的稳定样本；
       完整相对路径仅可写入显式、create-only artifact，queue 不产生该 artifact。
 - [ ] 新增无 `specrail-*` 前缀的顶层 skill fixture 会因未入 lock 被拒绝，既有 `implx`
@@ -125,14 +143,14 @@ GH-160 与 GH-174 的安全拆分。
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
 | 空/缺失输入 | covered: B-003 B-004 B-008 B-014 |
-| 错误与失败路径 | covered: B-004 B-005 B-008 B-009 B-016 B-018 |
-| 授权/权限 | covered: B-010 B-011 B-012 |
-| 并发/竞态 | covered: B-011 B-016 B-017 B-019 |
+| 错误与失败路径 | covered: B-004 B-005 B-008 B-009 B-016 B-018 B-021 B-022 |
+| 授权/权限 | covered: B-010 B-011 B-012 B-021 B-022 |
+| 并发/竞态 | covered: B-011 B-016 B-017 B-019 B-021 B-022 |
 | 重试/幂等 | covered: B-007 B-017 B-018 |
 | 非法状态转换 | covered: B-003 B-006 B-012 |
-| 兼容/迁移 | covered: B-013 B-014 B-015 B-020 |
+| 兼容/迁移 | covered: B-013 B-014 B-015 B-020 B-022 |
 | 降级/回退 | covered: B-003 B-011 B-012 B-013 |
-| 证据与审计完整性 | covered: B-001 B-005 B-006 B-007 B-011 B-014 B-019 B-020 |
+| 证据与审计完整性 | covered: B-001 B-005 B-006 B-007 B-011 B-014 B-019 B-020 B-021 B-022 |
 | 取消/中断 | covered: B-016 B-018 |
 
 ## 发布说明
@@ -140,4 +158,6 @@ GH-160 与 GH-174 的安全拆分。
 该变更新增显式、只读的 runtime 安装完整性检查。普通仓库/CI 校验行为保持不变；queue
 与 installer 会在实际运行前披露安装状态。安装根存在但内容漂移或缺失时将从静默继续改为
 fail closed。维护者仍需显式运行带 `--apply` 的安装命令并重启需要重新加载 skill 的活动
-会话；doctor 本身不会写入或自动修复。
+会话；doctor 本身不会写入或自动修复。v2 multi-file lock 还会固定每个文件的 `0644|0755`
+mode；target pathname 在安装事务中发生 symlink/inode rebinding 时安装会安全失败，不能改写
+替代路径。

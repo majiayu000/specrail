@@ -11,7 +11,7 @@ GH-172
 
 ## Product Spec
 
-见 `specs/GH172/product.md`。本设计实现 B-001..B-020；GH-160 的功能行为仍排除在本
+见 `specs/GH172/product.md`。本设计实现 B-001..B-022；GH-160 的功能行为仍排除在本
 issue 外，但其 multi-file skill/lock 实现明确依赖 GH-172。
 
 ## Codebase Context
@@ -45,14 +45,28 @@ issue 外，但其 multi-file skill/lock 实现明确依赖 GH-172。
   "name": "specrail-implement-queue",
   "path": "skills/specrail-implement-queue/SKILL.md",
   "computedHash": "sha256:...",
+  "mode": "0644",
   "files": [
     {
       "path": "references/runtime.md",
-      "computedHash": "sha256:..."
+      "computedHash": "sha256:...",
+      "mode": "0644"
+    },
+    {
+      "path": "scripts/check-runtime",
+      "computedHash": "sha256:...",
+      "mode": "0755"
     }
   ]
 }
 ```
+
+v2 的 skill entry 和每个 `files[]` item 都必须有 `mode`，使用四字符字符串闭集
+`"0644" | "0755"`：文档/数据/仅由 interpreter 读取的文件显式用 `0644`，需要直接执行的
+脚本显式用 `0755`。禁止根据扩展名或 shebang 推断；缺失/其它字符串、JSON number、setuid/
+setgid/sticky、group/world-write 或 source actual mode 与声明不符均 fail closed。v1 单入口
+条目继续沿用既有 hash-only 兼容语义，不追溯新增 mode；一旦使用 `files[]` 就必须升级 v2，
+并为入口和全部 file 显式声明 mode。
 
 `files[].path` 必须是相对于该 skill 目录的 POSIX 路径，禁止绝对路径、空路径、
 `.`、`..`、反斜线、重复路径和 `SKILL.md` 重复声明。仓库 validator 枚举 skill
@@ -78,7 +92,8 @@ skill root 内的真实目录、逐段 no-follow containment 检查通过，且�
 fail closed，而不是只检查已被 lock 点名的目录内部闭集。
 
 在 `checks/specrail_lib.py` 提供共享的不可变 lock manifest 数据结构和 loader。
-`validate_skills_lock()`、installer 与 installed doctor 都消费同一规范化结果，
+`validate_skills_lock()`、installer 与 installed doctor 都消费同一规范化结果；v2 manifest
+把每个文件的 identity 定义为 `(relative_path, sha256, normalized_mode)`，
 不再各自解析 JSON。错误聚合保持稳定排序。
 
 ### 2. 只读完整性 library
@@ -91,14 +106,16 @@ fail closed，而不是只检查已被 lock 点名的目录内部闭集。
   manifest 文件构造安装目标；
 - 安装根不存在时返回整体 `not_installed`，不创建目录；
 - 安装根存在时，每个文件返回 `match | drift | missing | unsafe | unstable`，
-  结果包含 skill、相对文件、目标路径、expected/actual hash 和非敏感 reason；
+  结果包含 skill、相对文件、目标路径、expected/actual hash、v2 的 expected/actual
+  normalized mode 和非敏感 reason；hash 相同但 mode 不同仍是 `drift`；
 - 路径检查使用 `lstat` 与受控根边界，拒绝 skill 目录、父组件或文件符号链接；
   读取必须用 no-follow 描述符：逐段
   `openat(..., O_RDONLY|O_NOFOLLOW|O_DIRECTORY|O_CLOEXEC)` 打开目录成分，最终文件用
   `openat(..., O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC)` 打开。final open 后必须立即
   `fstat`，只有 `S_ISREG` 才能开始哈希；FIFO、socket、device 或其它 special file 直接
   `unsafe`/`unstable`，不得等待 writer 或读取内容。哈希只对该 fd 计算，并用同一 fd 的
-  前后 `fstat` 比较。仅靠读取前后的 `lstat` 不够：文件可能被换成 symlink，或换成 FIFO
+  前后 `fstat` 比较，snapshot identity 包含 inode/device/type/size/mtime_ns 与
+  `stat.S_IMODE(st_mode)`。仅靠读取前后的 `lstat` 不够：文件可能被换成 symlink，或换成 FIFO
   令阻塞式 open 永远到不了 fstat。fd 与 lstat 的 inode/device 不一致，或前后 fstat 的
   inode/device/size/mtime 变化，返回 `unstable` 且不输出内容；
 - 只读取 lock 声明的 regular files；同时递归枚举每个受锁 skill 安装目录的 namespace。
@@ -121,7 +138,7 @@ fail closed，而不是只检查已被 lock 点名的目录内部闭集。
 整体状态规则：
 
 - 目标根不存在：`not_installed`；
-- 根存在、全部文件匹配且 namespace 除安全 structural directories 外无 undeclared 项：
+- 根存在、全部文件 hash 与 v2 exact mode 匹配，且 namespace 除安全 structural directories 外无 undeclared 项：
   `match`；
 - 根存在且出现其他状态（含 `undeclared`）：`invalid`。
 
@@ -155,20 +172,44 @@ manifest 与 integrity library：
    返回非零并给出 `--apply` 需要人工授权的说明；
 4. `--apply` 只有在用户显式传入时执行同步写入；pre-install drift 是待修复状态，
    不阻止已授权 apply。不得再用 `shutil.copytree(..., symlinks=False)` 或任何会在验证后
-   按路径重开并跟随 source symlink 的 whole-directory copy。installer 按 shared manifest
-   创建 staging skill tree 与派生 structural directories，并从已打开的 repo/skill directory
-   fd 逐段 no-follow 打开每个声明 source：final component 使用
+   按路径重开并跟随 source symlink 的 whole-directory copy；
+5. apply 开始时从 stable filesystem root/home anchor descriptor 逐段处理目标路径：已有
+   component 只用 `openat(..., O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)`，仅在已授权 apply 下才可
+   用 `mkdirat` 创建缺失 component，并立即从同一 parent fd no-follow 打开；每一级保存
+   `(st_dev, st_ino)`，最终持有 target root fd。`Path.resolve()`、`exists()`、pathname
+   `mkdir/rmtree/replace` 只能用于非安全展示，不参与写入或 containment 判定。source/target
+   重叠检查也以已打开 descriptor 的 inode ancestry 为权威；
+6. installer 在 target root fd 下以不可预测名称、create-exclusive 建立 staging，并生成
+   尚不存在的不可预测 backup component，
+   只用 dirfd-relative `mkdirat/openat/unlinkat/renameat`（Python 等价 API 必须显式传
+   `dir_fd`/`src_dir_fd`/`dst_dir_fd`）创建 skill tree、替换 destination、回滚与清理。
+   commit 必须在 destination 已存在时先用 `renameat2(RENAME_NOREPLACE)` 或等价的原子
+   no-replace dirfd API 把它移到该 backup component，再把 staging 原子 rename 到
+   destination；递归 cleanup 每一层都从已打开 directory fd
+   no-follow 枚举并用 `unlinkat`/`rmdir`，不得退回 pathname `rmtree`。
+   commit 前后都从 stable anchor no-follow 重走 target pathname，并要求每一级 inode 与持有
+   descriptor chain 一致；root/parent 被换成 symlink、rename/rebind、任一 component/type
+   漂移或 rewalk 失败时，必须通过原 target-root fd 清理 staging/恢复 backup 后 fail closed。
+   替代 symlink 指向的 external sentinel 以及任何 target-root 外路径必须保持零写入/零删除；
+7. installer 按 shared manifest 创建 staging skill tree 与派生 structural directories，并从
+   已打开的 repo/skill directory fd 逐段 no-follow 打开每个声明 source：final component 使用
    `O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC`，立即 `fstat` 且确认 regular file 后，直接从
-   **同一 fd** 复制到 staging file 并同步计算/核对 lock hash，最后再次 `fstat`。source
-   symlink/special file、hash 不匹配或 pre/post snapshot 变化时删除 staging 并失败，不得读取
-   escape target，也不得替换现有 destination。所有 source 完整稳定后才按既有授权 apply
-   语义替换目标；复制对象只来自 manifest，不从未声明目录枚举推断；
-5. apply 后重新运行完整 inspect，只有整体 `match` 才成功。
+   **同一 source fd** 复制到由 staging-dir fd create-exclusive 打开的 destination fd 并同步
+   计算/核对 lock hash。v2 file 随后在同一 destination fd 上 `fchmod` 为声明的
+   `0644|0755`、`fsync`、`fstat` 并校验 exact mode；文件创建时的 umask 不得改变最终 mode。
+   source final `fstat` 还须确认 mode 未改变。source symlink/special file、hash/mode 不匹配
+   或 pre/post snapshot 变化时通过 target-root fd 清理 staging 并失败，不得读取 escape
+   target，也不得替换现有 destination。所有 source 完整稳定后才进入 descriptor-relative
+   commit；复制对象只来自 manifest，不从未声明目录枚举推断；
+8. apply 后沿所持 target-root fd 重新运行完整 inspect，再完成 anchor-to-path identity rewalk；
+   只有整体 `match`、所有 v2 mode 精确、pathname 仍绑定同一 descriptor chain 才成功。失败时
+   用 dirfd-relative backup 回滚；rollback/cleanup 失败必须显式报错，不能把部分安装表述为成功。
 
 逻辑安装单位仍是整个 skill，但物理 copy 是 manifest-declared files + derived structural
 directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 skill 分发且 source race 不会
-读取/落盘逃逸内容；post-check 仍只信 shared manifest。本 issue 不扩大 apply 授权，也不自动
-调用 apply。
+读取/落盘逃逸内容；target race 也不能把 staging/replacement 重定向到授权根外。post-check
+只信 shared manifest 的 hash + v2 mode，并使用同一 stable target descriptor chain。本 issue
+不扩大 apply 授权，也不自动调用 apply。
 
 ### 5. queue/install Skill 接线
 
@@ -212,11 +253,11 @@ multi-file skill；两者都依赖 GH-172，并必须在各自实现中把该 sk
 | B-001 B-006 B-007 B-020 | shared manifest structural-parent derivation + integrity result aggregation | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "all_files or nested_parent or undeclared or mixed or ordering"` |
 | B-002 | `resolve_codex_skills_dir()` + CLI target reporting | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "target or codex_home or default"` |
 | B-003 B-012 | `not_installed` status + `--require-installed` caller policy | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "not_installed or require_installed"` |
-| B-004 B-005 | missing/drift result and exit status | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "missing or drift"` |
-| B-008 B-014 B-015 | `validate_skills_lock()` compatible multi-file contract + all top-level skill discovery | `python3 -m pytest -q tests/test_evaluate.py -k "skills_lock or unprefixed_skill"` |
+| B-004 B-005 B-022 | missing/hash-or-mode drift result and exit status | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "missing or drift or mode"` |
+| B-008 B-014 B-015 B-022 | `validate_skills_lock()` compatible multi-file/hash/mode contract + all top-level skill discovery | `python3 -m pytest -q tests/test_evaluate.py -k "skills_lock or mode or unprefixed_skill"` |
 | B-009 B-019 | repository/install containment + no-follow/nonblocking regular-file open | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "escape or symlink or fifo or special or unsafe or undeclared_artifact"` |
 | B-010 B-017 | read-only/idempotent inspection, bounded output and explicit artifact export | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "read_only or target_snapshot_no_write or idempotent or output or undeclared_artifact"` |
-| B-011 | installer preflight + manifest-only no-follow source copy + post-check | `python3 -m pytest -q tests/test_install_codex_skills.py -k "apply or source_race or symlink or special"` |
+| B-011 B-021 B-022 | descriptor-anchored installer transaction + manifest-only same-fd copy/mode + post-check | `python3 -m pytest -q tests/test_install_codex_skills.py -k "apply or source_race or target_parent_swap or target_root_swap or symlink or special or mode or umask"` |
 | B-013 | ordinary workflow check remains repo-only | `python3 -m pytest -q tests/test_check_workflow.py -k installed_skill` |
 | B-016 | before/after stat snapshot consistency | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k unstable` |
 | B-018 | incomplete/error result cannot pass CLI | `python3 -m pytest -q tests/test_installed_skill_integrity.py -k "unreadable or interrupted or invalid"` |
@@ -224,18 +265,24 @@ multi-file skill；两者都依赖 GH-172，并必须在各自实现中把该 sk
 ## 数据流
 
 ```text
-skills-lock.json + repo skill files
-  -> shared lock validator/manifest
+skills-lock.json(path + hash + v2 normalized mode) + repo skill files
+  -> shared lock validator/manifest(file identity + structural parents)
   -> installed integrity library
        -> explicit target | CODEX_HOME/skills | ~/.codex/skills
        -> derived structural parents + openat(no-follow, nonblocking)
-       -> immediate regular-file fstat + same-fd hash + final fstat
+       -> immediate regular-file fstat + same-fd hash/mode + final fstat
   -> status: match | not_installed | invalid
   -> doctor CLI / installer preflight / implx queue preflight
+
+explicit --apply authorization
+  -> stable anchor -> no-follow target descriptor chain
+  -> dirfd-relative staging + same-fd copy/fchmod
+  -> dirfd-relative backup/replace/rollback/cleanup
+  -> anchor-to-path inode rewalk + installed inspect
 ```
 
 所有检查均为本地只读。只有 installer 收到显式 `--apply` 才进入既有写路径，写后重新
-走同一 inspect 验证。
+走同一 inspect 验证；target pathname 不是写入 authority。
 
 ## 备选方案
 
@@ -247,6 +294,11 @@ skills-lock.json + repo skill files
   稳定兼容与有界诊断。
 - 发现 drift 后自动 `--apply`：拒绝。违反 dry-run 默认和人工安装授权。
 - 将 doctor 逻辑复制进 installer 与两个 skill：拒绝。会立即产生三套状态和路径语义。
+- 对 target 先 `resolve()`/`lstat()` 再用 `Path.replace()`/`shutil.rmtree()`：拒绝。
+  precheck 与 pathname 写入之间可发生 parent/root symlink swap，必须以稳定 descriptor
+  chain 和 dirfd-relative transaction 作为写入 authority。
+- v2 仍只锁 hash、让 copy/umask 决定权限：拒绝。同字节文件失去 executable bit 会令
+  分发脚本不可执行，而 hash-only doctor 会静默误判 match。
 
 ## 风险
 
@@ -254,7 +306,7 @@ skills-lock.json + repo skill files
   checker 与 installer 只从 no-follow/nonblocking fd 读取 lock 声明且经 immediate fstat 确认的
   regular files；structural directories 由 manifest 派生而非 caller 声明；拒绝逃逸且不输出
   正文，apply 权限没有扩大。
-- Compatibility: v1 单文件条目继续合法；新增 `files[]` 是可选闭集扩展。依赖 installer
+- Compatibility: v1 单文件条目继续合法；v2 `files[]` 要求显式 `0644|0755` mode。依赖 installer
   dry-run 在已存在 drift 时仍返回 0 的脚本会看到非零，这是 issue 明确要求的 fail-closed
   收紧。
 - Performance: 文件数与锁定资产线性相关；当前 14 个入口文件，未来引用仍是小型文本，
@@ -263,10 +315,12 @@ skills-lock.json + repo skill files
   与测试保证 checker 没有从 pack 中遗漏。
 - Diagnostics: 标准输出对攻击者制造的大目录仍受 50 项/8192 bytes 双上限约束；完整
   路径只进入显式 create-only artifact，queue 不创建该 artifact。
-- Race: 无法对任意外部目录获得事务快照；same-fd pre/post fstat + expected hash 检测可观察
-  变化并 fail closed。nonblocking final open 防 FIFO 卡死；installer 从同一已验证 source fd
-  写 staging，避免 validation/copy 间 symlink 跟随。不能保证阻止恶意同内容替换；该 doctor
-  是完整性诊断，不是操作系统沙箱。
+- Race: source same-fd pre/post fstat + expected hash/mode 检测可观察变化并 fail closed；
+  nonblocking final open 防 FIFO 卡死。target 写入从 stable anchor 建立并保持 no-follow
+  descriptor chain，所有 staging/replace/rollback/cleanup 都相对所持 fd，commit 前后重走
+  pathname 验证 inode binding，因此 parent/root swap 只能令事务失败，不能把写入重定向到
+  外部路径。不能保证阻止恶意同内容、同 mode 的 source 替换；该 doctor 是完整性诊断，
+  不是操作系统沙箱。
 
 ## 测试计划
 
@@ -291,7 +345,12 @@ skills-lock.json + repo skill files
       -k "installed or required_files or undeclared_artifact" &&
       python3 -m coverage report
       --include='tools/check_installed_codex_skills.py' --fail-under=80`。
-- [ ] Installer tests: `python3 -m pytest -q tests/test_install_codex_skills.py`
+- [ ] Installer tests: `python3 -m pytest -q tests/test_install_codex_skills.py
+      -k "dry_run or apply or source_race or target_parent_swap or target_root_swap or
+      symlink or fifo or special or post_check or mode or umask"`；target swap fixtures
+      在 preflight 与 staging/commit 间替换 parent/root，并证明 external sentinel 的
+      path/type/mode/mtime_ns/hash 均不变；mode fixtures 证明 `0755` 在非零 umask 下仍精确
+      安装，且安装副本降为 `0644` 后即使 hash 相同也由 doctor/post-check 判 drift。
 - [ ] Workflow integration: `python3 -m pytest -q tests/test_check_workflow.py`
 - [ ] Full regression: `python3 -m pytest -q`
 - [ ] Pack/spec checks:
