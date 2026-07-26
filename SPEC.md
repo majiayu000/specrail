@@ -111,12 +111,11 @@ are stable.
 
 For `.specrail/runtime/current.json`, `checks/runtime_ledger_gate.py` is the
 behavior authority and `schemas/runtime_checkpoint.schema.json` is the structure
-authority. The schema covers JSON shape, required fields, enum values, and
-nested object structure. The gate covers semantic rules that JSON Schema cannot
-express cleanly here, such as fresh head SHA evidence, merge authorization,
-review-thread cleanliness, and queue-drain completion semantics.
+authority. The checkpoint is only a milestone resume cursor: run identity,
+scope, completed/pending/blocked work references, artifact paths, and the next
+action. GitHub, CI, review, merge, authorization, PR-gate, branch, worktree,
+budget, Goal, and agent telemetry state are intentionally outside this contract.
 
 Tests keep the two in sync by validating representative runtime checkpoint
-instances against the schema and checking their gate decisions. The gate does
-not read the schema at runtime, so it can still diagnose malformed or missing
-schema files independently.
+instances against the schema and checking cross-list uniqueness and milestone
+completion semantics.

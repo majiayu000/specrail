@@ -1,0 +1,14 @@
+{
+  "checkpoint_version": 1,
+  "run_id": "example-run",
+  "repo": "example/repo",
+  "scope": "review the first three pull requests",
+  "status": "running",
+  "milestone": {"id": "initial-review", "state": "active", "completed_at": null},
+  "completed": [{"kind": "pr", "number": 10}],
+  "pending": [{"kind": "pr", "number": 11, "next_action": "complete initial review"}],
+  "blocked": [],
+  "artifact_refs": ["artifacts/reviews/pr-10.json"],
+  "resume": "Refresh GitHub truth and continue PR #11.",
+  "updated_at": "2026-07-26T12:00:00+08:00"
+}

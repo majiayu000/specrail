@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed
+
+- Queue review now performs one full review across the selected PR set, one
+  repair, and one diff-only re-review. Hosted feedback uses one fixed
+  15-minute collection window, and the queue stops for a cost report when the
+  first three PRs all fail to become merge-ready.
+- Verification is risk-weighted: fastlane work keeps focused tests,
+  repository-required CI, one independent exact-head review, and clean merge
+  state without structured review manifests, hosted review, GraphQL thread
+  collection, PR-gate artifacts, or runtime checkpoints. Standard and heavy
+  work retain progressively stronger gates.
+- Runtime checkpoints are now closed milestone resume cursors rather than a
+  second workflow database. The former budget, Goal, telemetry, CI, review,
+  thread, merge, authorization, PR-gate, branch, and worktree mirrors and
+  their legacy schemas, fixtures, and validators were removed.
+
 ### Added
 
 - Local-primary review provenance (GH-162): terminal review artifacts now
@@ -47,21 +63,16 @@
 - Worktree-safe merge path (GH-63): merges run from a neutral cwd with an
   API fallback for locally checked-out branches; merge records require
   `merge_path` and remote confirmation before an outcome may be reported.
-- Spec/impl mix gate (GH-62): checkpoint items record `pr_kind`; more than 3
-  consecutive spec-only PRs block without a quoted `spec_only_declaration`,
-  and `tranche_mix` counters are cross-checked against item records.
+- Spec/impl mix guidance (GH-62): queue artifacts record `pr_kind`; more than
+  3 consecutive spec-only PRs block without an explicitly confirmed spec-only
+  phase.
 - Reviewer lane resume and re-review cap (GH-61): review results record
   `review_round`/`review_mode`; full reviews past round 2 require a quoted
   human request, `diff_only` requires the prior `base_head_sha`, and
   resumed/diff-only rounds require a `prior_findings` checklist.
-- Bounded tranche hard stop (GH-60): checkpoint_version 2 drain checkpoints
-  must declare a `budget` (compaction and/or item-cap basis); over-budget
-  continuation without a recorded `budget_override` is blocked and
-  `stop_reason: budget_exhausted` with a resume prompt is a passing terminal.
-- Reviewer-lane failure gate (GH-59): checkpoint items record `lane_failures`
-  and must downgrade to blocked/needs_human or retry with a new independent
-  lane; `review_source` is required merge evidence and unauthorized
-  self-review merges are blocked.
+- Reviewer-lane failure evidence (GH-59): PR evidence must downgrade to
+  blocked/needs_human or retry with a new independent lane; unauthorized
+  self-review remains blocked.
 - Read-only GitHub issue evidence adapter for `route_gate.py`.
 - Advisory review JSON gate with diff-line validation.
 - All-spec packet validation via `checks/check_workflow.py --all-specs`.
@@ -85,9 +96,8 @@
   rejects stale or post-merge gate ordering evidence.
 - PR gate review-thread evidence now requires resolver attribution and rejects
   implementer/orchestrator-resolved reviewer threads.
-- PR and runtime gates now record review source and reviewer-lane failures,
-  blocking silent self-review substitution unless fresh scoped authorization is
-  present.
+- PR gates record review source and reviewer-lane failures, blocking silent
+  self-review substitution unless fresh scoped authorization is present.
 
 ## v0.2.1 - 2026-06-26
 

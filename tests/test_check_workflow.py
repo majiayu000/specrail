@@ -57,7 +57,6 @@ def test_required_files_include_content_binding_runtime_dependencies() -> None:
         "checks/evidence_content_binding.py",
         "checks/review_content_binding.py",
         "checks/review_round_semantics.py",
-        "checks/runtime_review_evidence.py",
     ]:
         assert path in REQUIRED_FILES
 

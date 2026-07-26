@@ -63,7 +63,7 @@ baseline; it never selects or authorizes auto mode.
   `tier_attestation` in a schema-valid review artifact whose own
   `review_source` is `independent_lane`), is authorized to merge without
   a per-PR question. Record `authorization_tier: standard_auto` and
-  `merge_authorization.source: tier_policy_gh143` on the checkpoint item.
+  `merge_authorization.source: tier_policy_gh143` in the PR evidence or handoff.
   A `review_source: self_review` item never qualifies for standard_auto.
 - `heavy` tier PRs and enforcement-sensitive surfaces (gate code,
   enforcement, contracts, authorization semantics, schemas/migrations,
@@ -106,17 +106,12 @@ baseline; it never selects or authorizes auto mode.
   cross-owner repository work, specs the issue lacks evidence to draft)
   never block the queue: skip them, keep draining, and report them once in
   a final `human_decisions` list with a recommended action each.
-- Budget exhaustion without a degradation signal does not pause the run:
-  follow the Same-Session Tranche Rollover rule in
-  `skills/specrail-implement-queue/SKILL.md` and continue with the next
-  tranche in the same session. Hand off to a fresh session only on compaction
-  budget reached, context soft stop, user interrupt, or a queue that is empty
-  or fully blocked.
+- Continue within native runtime limits. At a context hard stop, finish the
+  current atomic action, write one milestone cursor, and hand off.
 - When the runtime exposes Codex goal capability, create a thread goal for
   the drain per the Goal Use auto-drain branch in
   `skills/specrail-implement-queue/SKILL.md`. While the goal is active,
-  compaction does not interrupt the run (re-anchor from the checkpoint and
-  fresh remote truth after each compaction); the run ends only on queue
+  refresh remote truth after compaction; the run ends only on queue
   empty or fully blocked (goal complete), goal token budget exhausted, user
   interrupt, or when only `human_decisions` items remain.
 
@@ -132,14 +127,12 @@ repository without explicit instruction. In auto mode, a same-owner
 repository explicitly referenced by a queue issue counts as inside the
 authorized scope; cross-owner repositories always require explicit human
 instruction. Auto mode does not weaken the
-Bounded Tranche Hard Stop, reviewer-lane, or self-review authorization rules.
+Milestone Hard Stop, reviewer-lane, or self-review authorization rules.
 
 `full_queue_drain` means the objective spans the whole actionable queue, not
-that one session runs unbounded. Execution is a sequence of bounded tranches:
-each session declares a hard budget (compaction count and/or item cap) in the
-runtime checkpoint at tranche start, stops when the budget is exhausted, and
-hands off to a fresh session via the checkpoint. See the Bounded Tranche Hard
-Stop rules in `skills/specrail-implement-queue/SKILL.md`.
+that one session runs unbounded. Use native context/time limits and write a
+minimal resume cursor only at queue milestones or handoff. See Milestone Hard
+Stop in `skills/specrail-implement-queue/SKILL.md`.
 
 Pass the selected modes to `skills/specrail-implement-queue/SKILL.md`:
 
@@ -161,12 +154,12 @@ After startup, load `skills/specrail-implement-queue/SKILL.md` for any issue or
 PR queue. That skill owns:
 
 - spec coverage classification
-- PR tier lanes (`fastlane` / `standard` / `heavy` — tier decides one-PR
-  versus two-PR process weight; gates stay identical)
+- PR tier lanes (`fastlane` / `standard` / `heavy`) and their distinct
+  verification profiles
 - implementation candidate selection
 - one-issue-per-PR planning
 - partial versus final closing semantics
-- context-budget and runtime-checkpoint behavior
+- context limits and milestone checkpoint behavior
 - optional threads orchestration
 - verification, PR-gate evidence, and closure audit
 

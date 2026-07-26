@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""GH-143 tiered merge authorization rules.
+"""GH-143 tiered merge authorization rules for the PR gate.
 
-Split out of runtime_gate_rules.py to keep both rule files within the size
-guard. These rules encode the GH-143 contract: standard_auto tier
+These rules encode the GH-143 contract: standard_auto tier
 authorization for fastlane/standard PRs with full green evidence plus
 independent tier substantiation, heavy_manual per-PR human authorization for
 everything else, and graded re-confirmation for post-authorization findings.

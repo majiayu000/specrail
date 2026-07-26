@@ -65,24 +65,6 @@ def test_validation_requires_specrail_owned_assets(tmp_path: Path) -> None:
     ]
 
 
-def test_schema_validation_requires_extracted_reference_assets(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    copy_pack_assets(repo)
-    fragment = repo / "schemas" / "runtime_thread_dispatch_gate.schema.json"
-    fragment.unlink()
-
-    errors = validate_json_schemas(repo)
-
-    assert (
-        "schemas: missing SpecRail schema runtime_thread_dispatch_gate.schema.json"
-        in errors
-    )
-    assert any(
-        "runtime_checkpoint.schema.json: unusable schema references" in error
-        for error in errors
-    )
-
-
 def test_schema_validation_enforces_hard_line_limit(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     copy_pack_assets(repo)

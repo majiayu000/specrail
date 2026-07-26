@@ -112,7 +112,7 @@ Spec-drafting authorization depends on `auth_mode`:
 Readiness labels in auto mode: when `auth_mode: auto` and an issue's
 `spec_status` is `complete` or `umbrella_covered`, a missing readiness
 label (for example `ready_to_implement`) is not a blocker. Add the label,
-record `readiness_label_source: auto_drain` on the checkpoint item, list
+record `readiness_label_source: auto_drain` in the queue artifact, list
 every auto-applied label in the report, and continue routing. Issues with
 `needs_spec` or `needs_tasks` must never receive an auto readiness label —
 this includes `status: legacy` packets, which classify as `needs_spec` even
@@ -155,7 +155,7 @@ Verification profiles:
 Rules:
 
 - Record `pr_tier` with its evidence (changed-line count, touched paths) on
-  the checkpoint item. Where the repository ships a CI tier check, that
+  the PR evidence. Where the repository ships a CI tier check, that
   check is the enforcing authority — never self-declare `fastlane`
   against it.
 - When in doubt between two tiers, pick the heavier one.
@@ -190,7 +190,7 @@ as final or authorizing its closure.
 Deprecation windows in auto mode: when a queue item requires a deprecation
 or removal window and the user did not specify a starting version, default
 to the next minor release after the current latest release, record
-`deprecation_default: true` with the chosen version on the checkpoint item
+`deprecation_default: true` with the chosen version in the PR handoff
 and in the PR description, and continue. The removal itself stays subject
 to the existing gates; the user can veto the default afterwards.
 
@@ -207,7 +207,7 @@ specrail_implementation_queue:
     needs_spec:
     umbrella_covered:
     exception_allowed:
-  current_tranche:
+  milestone:
   remaining_queue:
   issues:
     - issue:
@@ -224,13 +224,8 @@ specrail_implementation_queue:
     pr_gate:
     review_threads:
     merge_authorization:
-  context_budget:
-    soft_stop_ratio: 0.50
-    hard_stop_ratio: 0.65
-    critical_stop_ratio: 0.75
   checkpoint:
     path:
-    runtime_gate:
   stop_policy:
 ```
 
@@ -238,27 +233,25 @@ If `auth_mode` is not provided by the calling skill, default to
 `auth_mode: review`. Never promote a run to auto mode from persisted repository
 configuration; auto requires the explicit current-message invocation above.
 
-For broad queues, always execute as bounded tranches. If the calling skill is
+For broad queues, use milestone phases rather than lane-sized tranches. If the calling skill is
 `implx`, or the user otherwise asks to finish actionable issues/PRs, set
 `queue_mode: full_queue_drain` unless the prompt explicitly limits scope to one
 issue, one PR, the current tranche, plan-only, status-only, or review-only work.
-In that mode, choose the smallest mergeable current tranche, checkpoint it, then
-continue selecting new implementation, spec-writing, or task-planning tranches
+In that mode, complete initial review across the selected queue before repairs,
+then continue selecting implementation, spec-writing, or task-planning work
 until the queue is drained or every remaining item is explicitly blocked,
 deferred, waiting on CI, or needs human input.
 
-A blocked or waiting current tranche does not stop full-queue drain. After
-checkpointing that tranche, refresh remote truth and look for an independent
-next tranche. Stop only when every remaining issue and PR is listed in
+A blocked or waiting item does not stop full-queue drain. Refresh remote truth
+and look for an independent next item. Stop only when every remaining issue and PR is listed in
 `remaining_queue` with `spec_status`, `blocker`, and `next_action`.
 
 If the user only asks for a broad queue without explicit full-queue drain
-authorization, choose the smallest mergeable tranche and leave the rest in the
-checkpoint.
+authorization, choose the smallest mergeable scope and report the rest.
 
 ## Spec/Impl Mix Gate
 
-Classify every PR the tranche creates as `pr_kind` on its checkpoint item:
+Classify every PR the run creates as `pr_kind` in the queue artifact:
 
 - `spec`: only spec packets, docs, or planning artifacts
 - `impl`: production code or tests
@@ -267,15 +260,11 @@ Classify every PR the tranche creates as `pr_kind` on its checkpoint item:
 Rules:
 
 - More than 3 consecutive `spec` PRs is a blocking violation unless the user
-  explicitly confirmed a spec-only tranche; ask before exceeding the cap and
-  record the quoted confirmation as `spec_only_declaration` (scope +
-  conversation marker).
+  explicitly confirmed a spec-only phase.
 - Items without a `pr_kind` (blocked items, non-PR work) do not reset the
   streak; only `impl`/`mixed_impl` PRs do.
-- Maintain `tranche_mix` counters (`spec_pr_count`, `impl_pr_count`,
-  `consecutive_spec_only`) derived from the item records;
-  `checks/runtime_ledger_gate.py` cross-checks them and blocks self-reported
-  inflation.
+- Count PR kinds directly from the current queue artifact; do not mirror the
+  counters into the milestone checkpoint.
 - Never present spec PR counts as implementation progress in reports.
 
 ## Orchestration
@@ -364,118 +353,20 @@ For `queue_mode: full_queue_drain`, a hard-stop handoff preserves the full queue
 objective and records the next actionable tranche; it does not redefine success
 as completing only the current tranche.
 
-### Bounded Tranche Hard Stop
+### Milestone Hard Stop
 
-`full_queue_drain` never runs as one unbounded session. It is a sequence of
-bounded tranches, each with a hard budget declared at tranche start in the
-checkpoint `budget` object (checkpoint_version 2):
+Do not create a tranche for every lane wave or fixed number of items. A long
+queue has four checkpoint milestones only: startup, initial review complete,
+repair/re-review complete, and closure or handoff.
 
-- `basis`: `compaction` | `item_cap` | `both`. Compaction events are the
-  primary observable degradation signal; use `item_cap` where the runtime
-  does not expose compaction.
-- `compaction_budget` default 1: stop before the second compaction.
-- `item_cap` default 3 when declared in `auth_mode: auto`. Declaring
-  `item_cap: 1` requires a recorded `item_cap_reason` in the budget object
-  (for example one high-risk migration item); do not default to 1.
-- Record observed `compaction_count` as the session runs.
+Use the runtime's own context and time limits directly. At soft stop, do not
+spawn new work. At hard stop, finish the current atomic action, write one
+milestone checkpoint, and hand off. Do not copy token counters, tool-call
+counters, CI state, review state, or GitHub state into that checkpoint.
 
-Budget exhaustion ends the tranche, not necessarily the session. It is a
-normal terminal, not a failure: write the checkpoint with
-`stop_reason: budget_exhausted` and a `resume_prompt`, then take one of two
-branches:
-
-- Same-Session Tranche Rollover: when `auth_mode: auto`,
-  `queue_mode: full_queue_drain`, the exhausted basis is `item_cap`,
-  observed `compaction_count` has not exceeded `compaction_budget`, and
-  parent context usage is below the soft-stop ratio, continue in the same
-  session: declare the next tranche with a new `tranche_id` and a fresh
-  budget in the checkpoint, then keep draining. This closes the old budget
-  rather than exceeding it, so it is not a `budget_override` and must not
-  fabricate one.
-- Fresh-session handoff: in every other case (compaction budget reached,
-  context at or above soft stop, user interrupt, queue empty or fully
-  blocked, or `auth_mode: review`), hand off to a fresh session. The handoff
-  report must lead with the copy-paste `resume_prompt` as its first line.
-
-Goal/session decoupling: a thread goal created under Goal Use never exempts
-a session or tranche from the compaction budget. The goal persists across
-sessions — record a stable `goal_id` in the checkpoint — but the session
-does not. When a session/tranche reaches its compaction budget, goal active
-or not, it must end: write the checkpoint (increment `tranche_id`, record
-`tranche_started_at` and `tranche_session_offset` for the next tranche),
-lead the handoff report with the copy-paste `resume_prompt`, and hand off to
-a fresh session. The new session resumes under the same `goal_id` from the
-checkpoint plus fresh remote truth; observed counters start at zero for the
-new tranche while historical tranche records stay append-only and are never
-overwritten. A second compaction while a goal is active produces exactly
-the same gate outcome as without a goal: blocked unless a per-dimension
-override records the authorization.
-
-checkpoint_version 3 adds trusted runtime counters and four hard budget
-dimensions. The gate compares `max(observed_compaction_count,
-compaction_count)` against `compaction_budget`; `telemetry_source:
-unavailable` forbids `basis: compaction`/`both` (downgrade to `item_cap` or
-`runtime_dims`); and `max_wall_clock_minutes` (default 120),
-`max_tool_calls` (default 250), `max_review_correction_rounds` (default 2),
-and `max_full_test_runs_per_head` (default 1, bound to
-`full_test_head_sha`) block on `observed > limit`.
-
-Continuing past any exceeded budget dimension still requires an explicit
-user override recorded with quoted scope and a conversation marker — a
-single `budget_override` object for version-2 checkpoints, one
-per-dimension `budget_overrides` entry per exceeded dimension for
-version 3; overrides never cover another dimension.
-`checks/runtime_ledger_gate.py` blocks over-budget continuation without one
-and blocks version-2/version-3 drain checkpoints that declare no budget.
-Reviewer lanes stay bounded (the audited well-behaved lanes stayed under
-~2M tokens); lanes do not inherit the parent budget.
-
-After every compaction, the first action is the compaction discipline, in
-order: (1) run the read-only telemetry collector
-`python3 -m checks.session_telemetry <session-jsonl> --tranche-start-offset
-<tranche_session_offset>`; (2) write `observed_compaction_count`,
-`telemetry_source`, and `last_compaction_window_id` back into the
-checkpoint budget; (3) re-read the runtime checkpoint; (4) refresh remote
-truth; (5) run `checks/runtime_ledger_gate.py` and obey its decision. Only
-then may other queue work continue.
-
-Do not read raw `~/.codex/sessions` logs, old parent transcripts, or broad
-session JSONL as queue state. The only permitted session-jsonl access is the
-read-only telemetry collector `checks/session_telemetry.py`, which returns
-event counters, never content. Use the checkpoint, repo-local run logs, and
-fresh remote truth.
-
-### Same-Issue Circuit Breaker
-
-Budget dimensions bound a tranche; the circuit breaker bounds a single issue
-across tranches and sessions. It exists because an open-ended issue plus
-compaction produces near-duplicate work rounds that each look reasonable in
-isolation — only the accumulated history reveals the loop.
-
-Before opening an implementation lane for an issue, check loop evidence
-against remote truth (not conversation memory):
-
-- `git log` on the default branch and the issue's PR branch: count commits
-  whose message references this issue (`GH<n>` or `#<n>`).
-- The issue's existing PRs: count prior implementation rounds (pushes or
-  review cycles) that did not end in closure.
-
-Trip conditions (any one trips the breaker):
-
-- 5 or more commits referencing the issue already exist without the issue
-  closing
-- 3 or more consecutive commits with near-identical message prefixes
-  targeting the issue (for example repeated `fix(rules): ... <same area>`)
-- the checkpoint records 3 or more prior tranches that worked this issue
-  without closure
-
-When tripped: do not open the lane. In `auth_mode: auto`, apply the `parked`
-label to the issue and its open PRs, convert open PRs for the issue to
-draft, record the trip evidence in `human_decisions`, and keep draining the
-rest of the queue. In `auth_mode: review`, stop and present the evidence.
-A tripped issue re-enters the queue only after a human removes `parked` —
-typically after the Done-When Gate rescope. The breaker has no auto-mode
-override; continuing on a tripped issue always requires a human decision.
+Before reopening an issue, use fresh GitHub and Git history. If the same issue
+has already consumed two unsuccessful repair/re-review cycles, route it to
+`human_decisions`; do not create another automatic tranche.
 
 ## Output Firewall
 
@@ -545,14 +436,12 @@ Test layering, to avoid re-paying a full-suite wait on every fix round:
 
 ## Runtime Checkpoint
 
-For long queues, create or update an optional local runtime checkpoint before:
+For long queues, create or update the optional local resume cursor only at:
 
-- spawning writable lanes
-- pushing or opening PRs
-- waiting on CI or long local tests
-- requesting merge review
-- compacting, handing off, or closing the parent thread
-- selecting the next tranche in a full-queue drain loop
+- startup
+- completion of all initial PR reviews
+- completion of the single repair/re-review phase
+- closure, handoff, or a hard context stop
 
 Use `templates/tranche_checkpoint.md` as the shape and validate concrete JSON
 checkpoints with:
@@ -561,49 +450,23 @@ checkpoints with:
 python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.json
 ```
 
-The runtime checkpoint is a local handoff layer only. GitHub issues, PRs,
-labels, reviews, branches, and SpecRail spec packets remain the durable workflow
-truth.
-
-For `queue_mode: full_queue_drain`, the checkpoint must record the overall
-objective, spec coverage, current tranche, completed items, remaining queue,
-explicit blockers, and next resume action. `needs_spec`, `needs_tasks`,
-`eligible_impl`, `waiting_ci`, and `needs_review` do not count as drained while
-the checkpoint status is `complete`; they require a next action or a non-drain
-handoff status. Resume from the checkpoint plus fresh remote truth; do not
-recover queue state from old parent transcripts.
+The checkpoint records only run identity, scope, current milestone, completed,
+pending and blocked work references, artifact paths, and the resume action. It
+must not contain head SHA, CI, review, thread, merge, authorization, PR-gate,
+branch, worktree, budget, Goal, or agent telemetry fields. Refresh those from
+their authorities after resuming.
 
 ## Goal Use
 
-Two branches:
-
-- Auto drain (default when ALL hold: `auth_mode: auto`,
-  `queue_mode: full_queue_drain`, and the runtime exposes Codex goal
-  capability): create a thread goal at startup. The goal objective must
-  state the whole drain objective (not just the current tranche), the four
-  termination conditions (queue empty or fully blocked, token budget
-  exhausted, user interrupt, only `human_decisions` remaining), and the
-  instruction to re-anchor every turn from the runtime checkpoint plus
-  fresh remote truth. Set a token budget: use the user-provided budget when
-  given, otherwise a conservative default recorded in the checkpoint `goal`
-  object together with the objective and status.
-- Every other case (goal capability unavailable, `auth_mode: review`, or
-  `queue_mode: bounded_tranche`): do not create a goal. Record a
-  `goal_candidate` in the checkpoint as before.
-
-Goal termination protocol:
+When the runtime exposes Goal and `auth_mode: auto` uses
+`queue_mode: full_queue_drain`, the Goal may carry the whole-run objective.
+Do not mirror Goal state or budgets into the checkpoint.
 
 - Queue empty, or every remaining item is in `human_decisions`: mark the
   goal complete and emit the final report. Never mark the goal complete
   while actionable queue items remain.
-- Token budget exhausted: stop, write the checkpoint, and hand off; the
-  handoff report leads with the copy-paste `resume_prompt`.
+- Token budget exhausted: write one handoff milestone and stop.
 - User interrupt follows native Codex behavior.
-- Goal status never substitutes for the runtime checkpoint.
-
-Goal never replaces the runtime checkpoint, GitHub truth, or SpecRail gates.
-Reviewer-lane, self-review authorization, ledger-gate, spec-coverage, and
-merge-evidence rules apply verbatim while a goal is active.
 
 ## Implementation
 
@@ -665,7 +528,7 @@ to duplicate that state.
   irreversible actions) never block the queue: skip, continue, and report them
   once in a final `human_decisions` list with a recommended action each.
 - Auto mode does not weaken the selected profile, self-review authorization,
-  or the Bounded Tranche Hard Stop. Standing merge authorization is not
+  or the Milestone Hard Stop. Standing merge authorization is not
   self-review authorization.
 
 `auth_mode: review` — tiered authorization (GH-143 decision B):
@@ -693,7 +556,7 @@ to duplicate that state.
     `heavy_manual` regardless of attestation content.
   Record `authorization_tier: standard_auto` and
   `merge_authorization.source: tier_policy_gh143` (audit anchor — do not
-  rename) on the checkpoint item, with the four green evidence references.
+  rename) in the PR handoff, with the selected profile evidence references.
 - `heavy_manual` (per-PR human authorization, unchanged): `heavy` tier PRs
   and enforcement-sensitive surfaces (gate code, enforcement, contracts,
   authorization semantics, schemas/migrations, security, any

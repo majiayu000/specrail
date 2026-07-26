@@ -146,11 +146,11 @@ Validate an optional local runtime checkpoint for long agent runs:
 python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.json --json
 ```
 
-Runtime checkpoints are handoff aids for bounded agent tranches. They do not
-replace GitHub issues, pull requests, labels, reviews, branches, or SpecRail
-spec packets as durable workflow state. For checkpoint contracts, the schema is
-the structure authority and `checks/runtime_ledger_gate.py` is the behavior
-authority; see [`SPEC.md`](SPEC.md#runtime-checkpoint-contract-authority).
+Runtime checkpoints are milestone resume cursors. They contain work references
+and artifact paths, never copies of GitHub, CI, review, merge, authorization,
+PR-gate, branch, worktree, budget, Goal, or agent telemetry state. The schema is
+the structure authority and `checks/runtime_ledger_gate.py` checks cursor
+consistency; see [`SPEC.md`](SPEC.md#runtime-checkpoint-contract-authority).
 
 Validate an advisory review artifact against a unified diff:
 
@@ -183,10 +183,9 @@ The matrix currently records `rclean`, `litellm-rs`, and
 levels. `evaluate.py` validates the required matrix records and local
 SpecRail evidence paths.
 
-For long issue or PR queues, agents may also keep an optional local runtime
-checkpoint based on [`templates/tranche_checkpoint.md`](templates/tranche_checkpoint.md).
-The checkpoint is for context-budget and handoff control only; the canonical
-workflow truth remains the repository and GitHub artifacts above.
+For long issue or PR queues, agents may keep an optional milestone cursor based
+on [`templates/tranche_checkpoint.md`](templates/tranche_checkpoint.md). The
+canonical workflow truth remains the repository and GitHub artifacts above.
 
 Gate benchmark fixtures live in `examples/fixtures/`. They are deterministic
 test inputs for route, PR, and review gates, not claims about current GitHub

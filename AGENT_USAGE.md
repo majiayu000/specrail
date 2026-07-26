@@ -187,17 +187,17 @@ The gate only evaluates that evidence and never merges or writes remote state.
 Self-review evidence must use `--review-source self_review` plus
 self-review authorization fields recorded after the lane failure.
 
-For long agent runs, maintain an optional local runtime checkpoint before
-handoff or compaction:
+For long agent runs, maintain an optional local resume cursor at startup,
+initial-review completion, repair/re-review completion, and closure or handoff:
 
 ```sh
 python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.json --json
 ```
 
-Use the checkpoint to preserve tranche scope, context budget, output-firewall
-settings, verification evidence paths, blockers, and resume prompts. Do not use
-it as a replacement for GitHub issues, PRs, labels, reviews, branches, or
-SpecRail spec packets.
+Use it only for run identity, scope, milestone, completed/pending/blocked work
+references, artifact paths, and the resume action. Do not copy GitHub, CI,
+review, merge, authorization, PR-gate, branch, worktree, budget, Goal, or agent
+telemetry state into it.
 
 Issue evidence includes `state_source` and `state_trusted`. Label-derived state
 is trusted readiness evidence. Body-hint state is useful context, but it is not

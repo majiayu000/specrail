@@ -18,8 +18,6 @@ from github_approved_spec_evidence import collect_spec_revision_approval
 from github_evidence_common import EvidenceError
 from pr_gate import evaluate_pr_gate
 from pr_gate_test_support import sensitive_evidence
-from runtime_ledger_gate import evaluate_checkpoint
-from runtime_ledger_test_support import clean_checkpoint
 from schema_validation import load_json_schema
 from sensitive_enforcement import classify_sensitive_changes
 from specrail_lib import PackConfig, validate_instance
@@ -177,30 +175,7 @@ def _live_route_case(
     return evidence, repo, config
 
 
-def _runtime_checkpoint(
-    repo: Path,
-    evidence: dict[str, object],
-) -> dict[str, object]:
-    artifact_dir = repo / "artifacts" / "runtime"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    evidence_path = artifact_dir / "spec-approval.json"
-    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
-    checkpoint = clean_checkpoint()
-    checkpoint["repo"] = evidence["repository"]
-    item = checkpoint["items"][0]
-    assert isinstance(item, dict)
-    item.update({
-        "issue": evidence["linked_issue"],
-        "state": "running",
-        "head_sha": evidence["head_sha"],
-        "enforcement_sensitive": True,
-        "sensitive_route": "spec_revision",
-        "spec_approval_evidence": evidence_path.relative_to(repo).as_posix(),
-    })
-    return checkpoint
-
-
-def test_live_collector_schema_pr_gate_and_runtime_route_end_to_end(
+def test_live_collector_schema_and_pr_gate_route_end_to_end(
     tmp_path: Path,
 ) -> None:
     evidence, repo, config = _live_route_case(tmp_path)
@@ -209,12 +184,6 @@ def test_live_collector_schema_pr_gate_and_runtime_route_end_to_end(
     gate = evaluate_pr_gate(evidence, repo=repo, config=config)
     assert gate["decision"] == "allowed"
     assert gate["sensitive_route_audit"]["commit_oid"] == evidence["head_sha"]
-
-    checkpoint = _runtime_checkpoint(repo, evidence)
-    validate_instance(_schema("runtime_checkpoint.schema.json"), checkpoint)
-    runtime = evaluate_checkpoint(checkpoint, repo=repo, config=config)
-    assert runtime["decision"] == "allowed"
-
 
 @pytest.mark.parametrize(
     ("lifecycle", "review_commit", "message"),

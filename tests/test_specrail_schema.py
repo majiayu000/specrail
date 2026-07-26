@@ -12,7 +12,6 @@ CHECKS = ROOT / "checks"
 sys.path.insert(0, str(CHECKS))
 
 from runtime_ledger_gate import evaluate_checkpoint  # noqa: E402
-from runtime_gate_rules import RUNTIME_V1_ITEM_FIELDS  # noqa: E402
 from schema_validation import load_json_schema  # noqa: E402
 from specrail_lib import (  # noqa: E402
     InstanceMismatch,
@@ -39,39 +38,23 @@ def review_result_schema() -> dict[str, object]:
 def valid_checkpoint() -> dict[str, object]:
     return {
         "checkpoint_version": 1,
-        "tranche_id": "2026-07-03-schema-instance-t01",
+        "run_id": "2026-07-03-schema-instance",
         "repo": "example/repo",
         "scope": "schema instance validation",
         "status": "handoff",
-        "context_budget": {
-            "window_tokens": 258400,
-            "soft_stop_ratio": 0.5,
-            "hard_stop_ratio": 0.65,
-            "critical_stop_ratio": 0.75,
+        "milestone": {
+            "id": "initial-review",
+            "state": "complete",
+            "completed_at": "2026-07-03T12:00:00Z",
         },
-        "output_firewall": {
-            "raw_log_policy": "file_only",
-            "max_parent_stdout_lines": 150,
-            "max_subagent_final_lines": 150,
-            "artifact_root": "artifacts/logs/schema-instance",
-        },
-        "items": [
-            {
-                "issue": 40,
-                "state": "needs_review",
-                "spec_status": "complete",
-                "spec_status_reason": "specs/GH40 has product, tech, and tasks",
-                "local_verification": [
-                    {
-                        "command": "uvx pytest -q",
-                        "status": "passed",
-                        "evidence": "artifacts/logs/schema-instance/pytest.log",
-                    }
-                ],
-                "next_action": "refresh PR evidence",
-            }
+        "completed": [{"kind": "issue", "number": 40}],
+        "pending": [
+            {"kind": "pr", "number": 41, "next_action": "refresh PR evidence"}
         ],
-        "resume_prompt": "Refresh remote truth and continue.",
+        "blocked": [],
+        "artifact_refs": ["artifacts/reviews/initial-review.json"],
+        "resume": "Refresh remote truth and continue.",
+        "updated_at": "2026-07-03T12:00:00Z",
     }
 
 
@@ -156,19 +139,6 @@ def valid_v1_review_result() -> dict[str, object]:
         "sha256": "d" * 64,
     }
     return review
-
-
-def valid_v1_checkpoint() -> dict[str, object]:
-    checkpoint = valid_checkpoint()
-    checkpoint["items"][0].update(
-        {
-            "content_binding_version": 1,
-            "snapshot": v1_snapshot(),
-            "content_hashes": v1_content_hashes(),
-            "reused_components": [v1_reuse_audit()],
-        }
-    )
-    return checkpoint
 
 
 def test_validate_instance_supports_local_schema_subset() -> None:
@@ -762,50 +732,19 @@ def test_runtime_checkpoint_inline_valid_instance_matches_schema() -> None:
 
 def test_runtime_checkpoint_required_field_is_rejected_by_schema_and_gate() -> None:
     checkpoint = valid_checkpoint()
-    checkpoint.pop("resume_prompt")
+    checkpoint.pop("resume")
 
-    with pytest.raises(SpecRailError, match="resume_prompt"):
+    with pytest.raises(SpecRailError, match="resume"):
         validate_instance(runtime_checkpoint_schema(), checkpoint)
 
     result = evaluate_checkpoint(checkpoint)
     assert result["decision"] == "blocked"
-    assert any("resume_prompt" in error for error in result["errors"])
+    assert any("resume" in error for error in result["errors"])
 
 
-def _valid_v3_checkpoint() -> dict[str, object]:
-    checkpoint = valid_checkpoint()
-    checkpoint["checkpoint_version"] = 3
-    checkpoint["tranche_started_at"] = "2026-07-17T01:00:00Z"
-    checkpoint["tranche_session_offset"] = 0
-    return checkpoint
-
-
-def test_runtime_checkpoint_v3_schema_accepts_real_tranche_fields() -> None:
-    validate_instance(runtime_checkpoint_schema(), _valid_v3_checkpoint())
-
-
-@pytest.mark.parametrize(
-    ("key", "value"),
-    [
-        ("tranche_started_at", None),
-        ("tranche_session_offset", None),
-        ("tranche_session_offset", -1),
-    ],
-)
-def test_runtime_checkpoint_v3_schema_rejects_null_or_negative_tranche_fields(
-    key: str, value: object
-) -> None:
-    checkpoint = _valid_v3_checkpoint()
-    checkpoint[key] = value
-
-    with pytest.raises(SpecRailError):
-        validate_instance(runtime_checkpoint_schema(), checkpoint)
-
-
-def test_v1_content_binding_instances_validate_across_all_three_schemas() -> None:
+def test_v1_content_binding_instances_validate_pr_and_review_schemas() -> None:
     validate_instance(pr_review_gate_schema(), valid_v1_pr_evidence())
     validate_instance(review_result_schema(), valid_v1_review_result())
-    validate_instance(runtime_checkpoint_schema(), valid_v1_checkpoint())
 
 
 @pytest.mark.parametrize("missing", ["snapshot", "content_hashes", "reused_components"])
@@ -828,35 +767,22 @@ def test_review_result_schema_rejects_partial_v1_component(missing: str) -> None
         validate_instance(review_result_schema(), review)
 
 
-@pytest.mark.parametrize("missing", ["snapshot", "content_hashes", "reused_components"])
-def test_runtime_checkpoint_schema_rejects_partial_v1_wrapper(missing: str) -> None:
-    checkpoint = valid_v1_checkpoint()
-    checkpoint["items"][0].pop(missing)
-
-    with pytest.raises(InstanceMismatch, match=rf"{missing}.*missing required field"):
-        validate_instance(runtime_checkpoint_schema(), checkpoint)
-
-
-@pytest.mark.parametrize("schema_kind", ["pr_gate", "review", "runtime"])
+@pytest.mark.parametrize("schema_kind", ["pr_gate", "review"])
 def test_content_binding_schemas_reject_unsupported_version(schema_kind: str) -> None:
     if schema_kind == "pr_gate":
         instance = valid_v1_pr_evidence()
         instance["content_binding_version"] = 2
         schema = pr_review_gate_schema()
-    elif schema_kind == "review":
+    else:
         instance = valid_v1_review_result()
         instance["content_binding_version"] = 2
         schema = review_result_schema()
-    else:
-        instance = valid_v1_checkpoint()
-        instance["items"][0]["content_binding_version"] = 2
-        schema = runtime_checkpoint_schema()
 
     with pytest.raises(InstanceMismatch, match="content_binding_version.*const"):
         validate_instance(schema, instance)
 
 
-@pytest.mark.parametrize("schema_kind", ["pr_gate", "review", "runtime"])
+@pytest.mark.parametrize("schema_kind", ["pr_gate", "review"])
 def test_content_binding_schemas_reject_v1_fields_mixed_into_legacy(
     schema_kind: str,
 ) -> None:
@@ -864,14 +790,10 @@ def test_content_binding_schemas_reject_v1_fields_mixed_into_legacy(
         instance = valid_v1_pr_evidence()
         instance.pop("content_binding_version")
         schema = pr_review_gate_schema()
-    elif schema_kind == "review":
+    else:
         instance = valid_v1_review_result()
         instance.pop("content_binding_version")
         schema = review_result_schema()
-    else:
-        instance = valid_v1_checkpoint()
-        instance["items"][0].pop("content_binding_version")
-        schema = runtime_checkpoint_schema()
 
     with pytest.raises(InstanceMismatch):
         validate_instance(schema, instance)
@@ -903,7 +825,7 @@ def test_pr_gate_v1_wrapper_accepts_current_head_legacy_check() -> None:
     validate_instance(pr_review_gate_schema(), evidence)
 
 
-@pytest.mark.parametrize("schema_kind", ["pr_gate", "review", "runtime"])
+@pytest.mark.parametrize("schema_kind", ["pr_gate", "review"])
 def test_content_binding_schemas_reject_unknown_coverage_category(
     schema_kind: str,
 ) -> None:
@@ -911,56 +833,40 @@ def test_content_binding_schemas_reject_unknown_coverage_category(
         instance = valid_v1_pr_evidence()
         instance["checks"][0]["covered_categories"] = ["dependencies"]
         schema = pr_review_gate_schema()
-    elif schema_kind == "review":
+    else:
         instance = valid_v1_review_result()
         instance["covered_categories"] = ["dependencies"]
         schema = review_result_schema()
-    else:
-        instance = valid_v1_checkpoint()
-        instance["items"][0]["reused_components"][0]["covered_categories"] = [
-            "dependencies"
-        ]
-        schema = runtime_checkpoint_schema()
 
     with pytest.raises(InstanceMismatch, match="not in enum"):
         validate_instance(schema, instance)
 
 
-@pytest.mark.parametrize("schema_kind", ["pr_gate", "review", "runtime"])
+@pytest.mark.parametrize("schema_kind", ["pr_gate", "review"])
 def test_content_binding_schemas_reject_empty_coverage(schema_kind: str) -> None:
     if schema_kind == "pr_gate":
         instance = valid_v1_pr_evidence()
         instance["checks"][0]["covered_categories"] = []
         schema = pr_review_gate_schema()
-    elif schema_kind == "review":
+    else:
         instance = valid_v1_review_result()
         instance["covered_categories"] = []
         schema = review_result_schema()
-    else:
-        instance = valid_v1_checkpoint()
-        instance["items"][0]["reused_components"][0]["covered_categories"] = []
-        schema = runtime_checkpoint_schema()
 
     with pytest.raises(InstanceMismatch, match="shorter than minItems"):
         validate_instance(schema, instance)
 
 
-@pytest.mark.parametrize("schema_kind", ["pr_gate", "review", "runtime"])
+@pytest.mark.parametrize("schema_kind", ["pr_gate", "review"])
 def test_content_binding_schemas_reject_unknown_binding_key(schema_kind: str) -> None:
     if schema_kind == "pr_gate":
         instance = valid_v1_pr_evidence()
         bindings = instance["checks"][0]["content_bindings"]
         schema = pr_review_gate_schema()
-    elif schema_kind == "review":
+    else:
         instance = valid_v1_review_result()
         bindings = instance["content_bindings"]
         schema = review_result_schema()
-    else:
-        instance = valid_v1_checkpoint()
-        bindings = instance["items"][0]["reused_components"][0][
-            "current_content_bindings"
-        ]
-        schema = runtime_checkpoint_schema()
     bindings["dependencies"] = "4" * 64
 
     with pytest.raises(InstanceMismatch, match="additional property"):
@@ -979,34 +885,20 @@ def test_content_binding_schemas_reject_unknown_binding_key(schema_kind: str) ->
         "reason",
     ],
 )
-@pytest.mark.parametrize("schema_kind", ["pr_gate", "runtime"])
-def test_reuse_audit_schema_requires_every_audit_field(
-    schema_kind: str, missing: str
-) -> None:
-    if schema_kind == "pr_gate":
-        instance = valid_v1_pr_evidence()
-        audit = instance["reused_components"][0]
-        schema = pr_review_gate_schema()
-    else:
-        instance = valid_v1_checkpoint()
-        audit = instance["items"][0]["reused_components"][0]
-        schema = runtime_checkpoint_schema()
+def test_reuse_audit_schema_requires_every_audit_field(missing: str) -> None:
+    instance = valid_v1_pr_evidence()
+    audit = instance["reused_components"][0]
+    schema = pr_review_gate_schema()
     audit.pop(missing)
 
     with pytest.raises(InstanceMismatch, match=rf"{missing}.*missing required field"):
         validate_instance(schema, instance)
 
 
-@pytest.mark.parametrize("schema_kind", ["pr_gate", "runtime"])
-def test_snapshot_schema_rejects_unknown_or_partial_provenance(schema_kind: str) -> None:
-    if schema_kind == "pr_gate":
-        instance = valid_v1_pr_evidence()
-        snapshot = instance["snapshot"]
-        schema = pr_review_gate_schema()
-    else:
-        instance = valid_v1_checkpoint()
-        snapshot = instance["items"][0]["snapshot"]
-        schema = runtime_checkpoint_schema()
+def test_snapshot_schema_rejects_unknown_or_partial_provenance() -> None:
+    instance = valid_v1_pr_evidence()
+    snapshot = instance["snapshot"]
+    schema = pr_review_gate_schema()
     snapshot.pop("base_tree_oid")
     snapshot["sha_provenance"] = "caller supplied"
 
@@ -1021,30 +913,12 @@ def test_component_binding_key_equality_is_reserved_for_semantic_validator() -> 
     validate_instance(review_result_schema(), review)
 
 
-@pytest.mark.parametrize(
-    "field",
-    ["covered_categories", "future_tier_override", "original_content_bindings"],
-)
-def test_runtime_schema_closes_v1_item_field_set(field: str) -> None:
-    checkpoint = valid_v1_checkpoint()
-    checkpoint["items"][0][field] = {}
-
-    with pytest.raises(InstanceMismatch, match=rf"{field}.*additional property"):
-        validate_instance(runtime_checkpoint_schema(), checkpoint)
-
-
-def test_runtime_schema_keeps_legacy_item_extensions() -> None:
+def test_runtime_schema_rejects_copied_workflow_state() -> None:
     checkpoint = valid_checkpoint()
-    checkpoint["items"][0]["consumer_extension"] = "legacy metadata"
+    checkpoint["head_sha"] = "a" * 40
 
-    validate_instance(runtime_checkpoint_schema(), checkpoint)
-
-
-def test_runtime_v1_schema_and_semantic_field_sets_match() -> None:
-    item_schema = runtime_checkpoint_schema()["properties"]["items"]["items"]
-    schema_fields = set(item_schema["allOf"][0]["then"]["properties"])
-
-    assert schema_fields == RUNTIME_V1_ITEM_FIELDS
+    with pytest.raises(InstanceMismatch, match="head_sha.*additional property"):
+        validate_instance(runtime_checkpoint_schema(), checkpoint)
 
 
 def _checks_unavailable_evidence() -> dict[str, object]:

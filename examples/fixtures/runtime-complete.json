@@ -1,0 +1,22 @@
+{
+  "checkpoint_version": 1,
+  "run_id": "example-run",
+  "repo": "example/repo",
+  "scope": "review the first three pull requests",
+  "status": "complete",
+  "milestone": {
+    "id": "closure",
+    "state": "complete",
+    "completed_at": "2026-07-26T13:00:00+08:00"
+  },
+  "completed": [
+    {"kind": "pr", "number": 10},
+    {"kind": "pr", "number": 11},
+    {"kind": "pr", "number": 12}
+  ],
+  "pending": [],
+  "blocked": [],
+  "artifact_refs": ["artifacts/closure-audit.json"],
+  "resume": "No remaining work.",
+  "updated_at": "2026-07-26T13:00:00+08:00"
+}

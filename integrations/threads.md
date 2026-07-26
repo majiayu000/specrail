@@ -162,7 +162,7 @@ evidence each system needs.
 | `human_gates` | `merge_policy`, `stop_conditions` | Threads must not bypass SpecRail gates. |
 | `verification_commands` | `verification_owner` | One owner runs shared checks for a tranche. |
 | `selected_locale` | final report language | Human-facing reports follow SpecRail locale rules. |
-| runtime checkpoint | `queue_ledger`, `threads_run_log` | Checkpoints are local handoff artifacts; run logs are observational. |
+| milestone checkpoint | work references and artifact paths only | Threads run logs remain observational and are not copied into the checkpoint. |
 
 ## Long-Run Guardrails
 
@@ -173,13 +173,13 @@ stricter budget:
 - hard stop at 65%
 - critical stop at 75%
 
-At hard stop, write or update the runtime checkpoint and hand off to a fresh
-parent thread. At critical stop, do not spawn lanes or read large outputs; write
-checkpoint and resume instructions only.
+At hard stop, finish the current atomic action, write one milestone checkpoint,
+and hand off. At critical stop, do not spawn lanes or read large outputs; write
+the minimal resume cursor only.
 
 Do not load raw Codex session JSONL or old parent transcripts as live queue
-state. Use SpecRail artifacts, runtime checkpoints, repo-local compact run logs,
-and fresh GitHub truth.
+state. Use SpecRail artifacts, the milestone cursor, repo-local compact run
+logs, and fresh GitHub truth.
 
 Large output commands must use an artifact-first pattern:
 
