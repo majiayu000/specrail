@@ -489,15 +489,16 @@ def build_human_authorization(
     actor: str | None,
     source: str | None,
     summary: str | None,
+    pr: int | None,
     head_sha: str | None,
     authorized_at: str | None,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     provided = [
         value
         for value in [actor, source, summary, head_sha, authorized_at]
         if value is not None and value.strip()
     ]
-    if not provided:
+    if not provided and pr is None:
         return None
     required = {
         "--authorization-actor": actor,
@@ -505,15 +506,18 @@ def build_human_authorization(
         "--authorization-head-sha": head_sha,
         "--authorization-at": authorized_at,
     }
-    if any(value is None or not value.strip() for value in required.values()):
+    if any(value is None or not value.strip() for value in required.values()) or (
+        not isinstance(pr, int) or isinstance(pr, bool) or pr < 1
+    ):
         raise EvidenceError(
             "human authorization requires --authorization-actor, "
-            "--authorization-source, --authorization-head-sha and "
-            "--authorization-at together"
+            "--authorization-source, --authorization-pr, "
+            "--authorization-head-sha and --authorization-at together"
         )
-    authorization = {
+    authorization: dict[str, Any] = {
         "actor": actor.strip(),
         "source": source.strip(),
+        "pr": pr,
         "head_sha": head_sha.strip(),
         "authorized_at": authorized_at.strip(),
     }

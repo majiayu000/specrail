@@ -58,11 +58,17 @@ def fastlane_evidence() -> dict[str, object]:
             },
             "review_completed_at": "2026-07-26T12:00:00Z",
         },
+        "focused_tests": {
+            "command": "python3 -m pytest tests/test_example.py -q",
+            "passed": True,
+            "head_sha": HEAD,
+        },
         "merge_state": "CLEAN",
         "gate_started_at": "2026-07-26T12:05:00Z",
         "human_authorization": {
             "actor": "maintainer",
             "source": "current conversation",
+            "pr": 198,
             "head_sha": HEAD,
             "authorized_at": "2026-07-26T12:01:00Z",
         },
@@ -93,6 +99,7 @@ def test_fastlane_review_mode_allows_complete_exact_head_evidence() -> None:
     assert result["reasons"] == []
     assert {item["signal_type"] for item in result["signals"]} == {
         "ci",
+        "focused_tests",
         "independent_review",
         "tier_eligibility",
         "merge_state",
@@ -102,6 +109,68 @@ def test_fastlane_review_mode_allows_complete_exact_head_evidence() -> None:
         set(item) == {"signal_type", "signal", "reason"}
         for item in result["signals"]
     )
+
+
+def test_fastlane_missing_focused_tests_blocks() -> None:
+    evidence = fastlane_evidence()
+    evidence.pop("focused_tests")
+
+    result = evaluate_fastlane_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "focused_tests" in result["missing"]
+
+
+def test_fastlane_focused_tests_must_bind_current_head_and_pass() -> None:
+    evidence = fastlane_evidence()
+    evidence["focused_tests"] = {
+        "command": "python3 -m pytest tests/test_example.py -q",
+        "passed": True,
+        "head_sha": "b" * 40,
+    }
+
+    result = evaluate_fastlane_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "focused_tests.head_sha must match" in reason
+        for reason in result["reasons"]
+    )
+
+    evidence["focused_tests"] = {
+        "command": "python3 -m pytest tests/test_example.py -q",
+        "passed": False,
+        "head_sha": HEAD,
+    }
+    result = evaluate_fastlane_gate(evidence)
+    assert result["decision"] == "blocked"
+    assert any(
+        "focused_tests.passed must be true" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_review_mode_authorization_must_name_the_gated_pr() -> None:
+    evidence = fastlane_evidence()
+    evidence["human_authorization"]["pr"] = 999
+
+    result = evaluate_fastlane_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "human_authorization.pr must match the gated pr" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_review_mode_authorization_without_pr_needs_human() -> None:
+    evidence = fastlane_evidence()
+    evidence["human_authorization"].pop("pr")
+
+    result = evaluate_fastlane_gate(evidence)
+
+    assert result["decision"] == "needs_human"
+    assert "human_authorization.pr" in result["missing"]
 
 
 def test_review_mode_rejects_authorization_before_terminal_review() -> None:

@@ -62,6 +62,7 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
         {
             "actor": "user",
             "source": "chat",
+            "pr": 10,
             "summary": "merge approved",
             "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
             "authorized_at": "2026-07-16T00:05:00Z",
@@ -167,6 +168,7 @@ def test_build_evidence_derives_sensitive_classification_and_approved_spec(
         {
             "actor": "user",
             "source": "chat",
+            "pr": 10,
             "head_sha": checkout_head,
             "authorized_at": "2026-07-16T00:05:00Z",
         },
@@ -297,6 +299,7 @@ def test_build_evidence_records_other_closing_issues_without_reclassifying_expec
         {
             "actor": "user",
             "source": "chat",
+            "pr": 10,
             "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
             "authorized_at": "2026-07-16T00:05:00Z",
         },
@@ -393,6 +396,7 @@ def test_build_evidence_maps_resolver_role_from_lane_roster() -> None:
         {
             "actor": "user",
             "source": "chat",
+            "pr": 10,
             "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
             "authorized_at": "2026-07-16T00:05:00Z",
         },
@@ -577,6 +581,7 @@ def test_build_evidence_can_record_merge_dispatch_ordering() -> None:
         {
             "actor": "user",
             "source": "chat",
+            "pr": 10,
             "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
             "authorized_at": "2026-07-16T00:05:00Z",
         },
@@ -592,25 +597,31 @@ def test_build_evidence_can_record_merge_dispatch_ordering() -> None:
 
 
 def test_authorization_flags_must_include_actor_source_head_and_time() -> None:
-    assert build_human_authorization(None, None, None, None, None) is None
+    assert build_human_authorization(None, None, None, None, None, None) is None
     assert build_human_authorization(
-        "user", "chat", "approved", "e" * 40, "2026-07-16T00:05:00Z"
+        "user", "chat", "approved", 10, "e" * 40, "2026-07-16T00:05:00Z"
     ) == {
         "actor": "user",
         "source": "chat",
+        "pr": 10,
         "head_sha": "e" * 40,
         "authorized_at": "2026-07-16T00:05:00Z",
         "summary": "approved",
     }
 
     with pytest.raises(EvidenceError):
-        build_human_authorization("user", None, None, None, None)
+        build_human_authorization("user", None, None, None, None, None)
 
     with pytest.raises(EvidenceError):
-        build_human_authorization(None, None, "approved", None, None)
+        build_human_authorization(None, None, "approved", None, None, None)
 
     with pytest.raises(EvidenceError):
-        build_human_authorization("user", "chat", "approved", None, None)
+        build_human_authorization("user", "chat", "approved", None, None, None)
+
+    with pytest.raises(EvidenceError):
+        build_human_authorization(
+            "user", "chat", "approved", None, "e" * 40, "2026-07-16T00:05:00Z"
+        )
 
 
 def test_run_authorization_binds_repository_and_run() -> None:

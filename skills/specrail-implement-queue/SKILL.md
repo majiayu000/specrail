@@ -168,9 +168,10 @@ Rules:
 - The tier selects verification depth only. In `auth_mode: review`, every tier
   still requires explicit per-PR human merge authorization.
 - Fastlane merges pass a lightweight authorization gate before merging:
-  repository-required CI green at the exact head, one independent exact-head
-  review at that head, clean merge state, and the per-PR human authorization
-  (in `auth_mode: review`) naming the PR and current head. Record all four in
+  repository-required CI green at the exact head, focused tests passed at
+  that head, one independent exact-head review at that head, clean merge
+  state, and the per-PR human authorization (in `auth_mode: review`) naming
+  the PR number and current head. Record all five in
   schema-backed fastlane evidence and run:
 
   ```sh

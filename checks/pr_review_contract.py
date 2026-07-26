@@ -439,6 +439,18 @@ def _self_review_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], 
                 reasons.append(f"lane_failures[{index}].pr must match pr")
             if failure.get("head_sha") != evidence.get("head_sha"):
                 reasons.append(f"lane_failures[{index}].head_sha must match head_sha")
+        if str(evidence.get("auth_mode", "review")).strip().lower() == "auto":
+            distinct = {
+                str(failure["lane_id"]).strip()
+                for failure in failures
+                if isinstance(failure, dict) and _nonempty(failure.get("lane_id"))
+            }
+            if len(distinct) < 2:
+                reasons.append(
+                    "auth_mode auto self_review requires two distinct failed "
+                    f"reviewer lanes (found {len(distinct)}); a single lane "
+                    "failure still requires an independent retry lane"
+                )
     authorization = evidence.get("self_review_authorization")
     if not isinstance(authorization, dict):
         return satisfied, ["self_review_authorization"], [

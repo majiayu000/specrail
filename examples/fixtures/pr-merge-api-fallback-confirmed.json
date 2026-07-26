@@ -58,6 +58,7 @@
   "human_authorization": {
     "actor": "maintainer",
     "source": "chat",
+    "pr": 718,
     "summary": "merge approved",
     "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
     "authorized_at": "2026-07-16T00:05:00Z"

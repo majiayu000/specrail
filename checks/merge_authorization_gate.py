@@ -107,6 +107,12 @@ def evaluate_merge_authorization(
         for key in ["actor", "source", "head_sha", "authorized_at"]:
             if not _non_empty_string(authorization.get(key)):
                 missing.append(f"human_authorization.{key}")
+        if not _positive_int(authorization.get("pr")):
+            missing.append("human_authorization.pr")
+        elif authorization.get("pr") != evidence.get("pr"):
+            reasons.append(
+                "human_authorization.pr must match the gated pr"
+            )
         if authorization.get("head_sha") != head_sha:
             reasons.append(
                 "human_authorization.head_sha must match the current head_sha"
@@ -302,6 +308,49 @@ def evaluate_fastlane_gate(evidence: dict[str, Any]) -> dict[str, Any]:
                 if not check_missing and not check_reasons
                 and checks_head_sha == head_sha
                 else "repository-required CI evidence rejected"
+            ),
+        )
+    )
+
+    focused_tests = evidence.get("focused_tests")
+    if not isinstance(focused_tests, dict):
+        missing.append("focused_tests")
+    else:
+        focused_reasons: list[str] = []
+        if not _non_empty_string(focused_tests.get("command")):
+            focused_reasons.append("focused_tests.command must be a non-empty string")
+        if focused_tests.get("passed") is not True:
+            focused_reasons.append("focused_tests.passed must be true")
+        if focused_tests.get("head_sha") != head_sha:
+            focused_reasons.append(
+                "focused_tests.head_sha must match the current head_sha"
+            )
+        if focused_reasons:
+            reasons.extend(focused_reasons)
+        else:
+            satisfied.append("focused tests passed at the exact head")
+    signals.append(
+        _signal(
+            "focused_tests",
+            {
+                "command": (
+                    focused_tests.get("command")
+                    if isinstance(focused_tests, dict)
+                    else None
+                ),
+                "head_sha": (
+                    focused_tests.get("head_sha")
+                    if isinstance(focused_tests, dict)
+                    else None
+                ),
+            },
+            (
+                "focused tests are green at the exact head"
+                if isinstance(focused_tests, dict)
+                and _non_empty_string(focused_tests.get("command"))
+                and focused_tests.get("passed") is True
+                and focused_tests.get("head_sha") == head_sha
+                else "focused test evidence rejected"
             ),
         )
     )

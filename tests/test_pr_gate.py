@@ -423,6 +423,39 @@ def test_pr_gate_blocks_authorized_self_review_without_lane_failure() -> None:
     assert any("self_review requires recorded lane_failures" in reason for reason in result["reasons"])
 
 
+def test_pr_gate_auto_self_review_requires_two_distinct_lane_failures() -> None:
+    evidence = fixture("pr-self-review-unauthorized.json")
+    evidence["auth_mode"] = "auto"
+    evidence["self_review_authorization"] = {
+        "actor": "maintainer",
+        "source": "chat after reviewer lane failure",
+        "scope": "PR #718 exact head e36d97517d8d0b27faca1abe5e5c63f9f88684d9 after merge-reviewer-1 usage_limit",
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "two distinct failed reviewer lanes" in reason
+        for reason in result["reasons"]
+    )
+
+    evidence["lane_failures"].append(
+        {
+            "lane_id": "merge-reviewer-2",
+            "failure_kind": "usage_limit",
+            "pr": 718,
+            "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+            "observed_marker": "You've hit your usage limit",
+        }
+    )
+    result = evaluate_pr_gate(evidence)
+    assert not any(
+        "two distinct failed reviewer lanes" in reason
+        for reason in result["reasons"]
+    )
+
+
 def test_pr_gate_blocks_missing_thread_resolver_attribution() -> None:
     evidence = fixture("pr-missing-thread-resolver.json")
 
@@ -655,6 +688,7 @@ def test_pr_gate_tier_metadata_with_human_authorization_allowed() -> None:
     evidence["human_authorization"] = {
         "actor": "maintainer",
         "source": "current conversation",
+        "pr": evidence["pr"],
         "head_sha": evidence["head_sha"],
         "authorized_at": "2026-07-16T00:05:00Z",
     }

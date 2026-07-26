@@ -184,6 +184,26 @@ def write_review_manifest(
     return path.relative_to(repo).as_posix()
 
 
+def test_v1_manifest_legacy_artifact_cannot_exceed_round_cap(
+    tmp_path: Path,
+) -> None:
+    artifact = clean_terminal_artifact()
+    artifact["review_round"] = 3
+    artifact["review_mode"] = "full"
+    manifest_path = write_review_manifest(tmp_path, [artifact])
+
+    result = load_review_manifest(
+        tmp_path,
+        manifest_path,
+        expected_pr=489,
+        expected_head_sha="a" * 40,
+    )
+
+    assert any(
+        "review_round 3 exceeds the cap of 2" in item for item in result["errors"]
+    )
+
+
 def test_review_manifest_allows_clean_current_head(tmp_path: Path) -> None:
     manifest_path = write_review_manifest(tmp_path, [clean_terminal_artifact()])
 

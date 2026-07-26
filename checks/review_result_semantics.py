@@ -16,7 +16,11 @@ from review_content_binding import (
     load_review_content_binding,
     load_review_json as _load_manifest_json,
 )
-from review_round_semantics import validate_bounded_rounds
+from review_round_semantics import (
+    ROUND_CAP,
+    legacy_round_cap_reason,
+    validate_bounded_rounds,
+)
 from schema_validation import validate_instance
 from specrail_lib import SpecRailError, resolve_path, resolve_repo_path
 
@@ -371,6 +375,11 @@ def validate_review_artifact(
                 errors.append("bounded review_round >= 2 requires a 40-character base_head_sha")
             if not DIFF_SHA_RE.fullmatch(str(artifact.get("diff_sha256", ""))):
                 errors.append("bounded review_round >= 2 requires a 64-character diff_sha256")
+    elif (
+        _positive_int(artifact.get("review_round"))
+        and artifact["review_round"] > ROUND_CAP
+    ):
+        errors.append(legacy_round_cap_reason(artifact, ROUND_CAP))
 
     prior = artifact.get("prior_findings")
     normalized_prior: list[dict[str, Any]] = []

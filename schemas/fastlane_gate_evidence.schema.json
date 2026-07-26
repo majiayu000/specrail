@@ -16,6 +16,7 @@
     "auth_mode",
     "checks_head_sha",
     "checks",
+    "focused_tests",
     "independent_review",
     "merge_state",
     "gate_started_at"
@@ -73,6 +74,19 @@
           "name": {"type": "string", "minLength": 1},
           "status": {"const": "COMPLETED"},
           "conclusion": {"const": "SUCCESS"}
+        }
+      }
+    },
+    "focused_tests": {
+      "type": "object",
+      "required": ["command", "passed", "head_sha"],
+      "additionalProperties": false,
+      "properties": {
+        "command": {"type": "string", "minLength": 1},
+        "passed": {"const": true},
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"
         }
       }
     },

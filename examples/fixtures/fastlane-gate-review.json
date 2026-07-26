@@ -7,7 +7,9 @@
   "pr_tier": "fastlane",
   "pr_tier_evidence": {
     "changed_lines": 32,
-    "touched_paths": ["checks/example.py"]
+    "touched_paths": [
+      "checks/example.py"
+    ]
   },
   "enforcement_sensitive": false,
   "protected_paths": [],
@@ -38,7 +40,13 @@
   "human_authorization": {
     "actor": "maintainer",
     "source": "current conversation",
+    "pr": 198,
     "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "authorized_at": "2026-07-26T12:01:00Z"
+  },
+  "focused_tests": {
+    "command": "python3 -m pytest tests/test_example.py -q",
+    "passed": true,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   }
 }
