@@ -147,7 +147,11 @@ fail closed，而不是只检查已被 lock 点名的目录内部闭集。
   指令喂进 queue preflight）。枚举只进入 manifest 派生的 structural directories；遇到
   undeclared directory 把其 raw-byte relative path 作为一个 subtree root 后立即停止向下，
   不统计其 descendants。library 固定 `MAX_NAMESPACE_VISITS = 4096`，caller/CLI/env 不能提高；
-  读取第 4097 项即停止整个 traversal，并返回
+  读取第 4097 项即停止整个 traversal。lock validation 复用同一常量做 cardinality gate：
+  全部 skill 的入口、`files[]` 声明文件与派生 structural directories 的总数超过
+  `MAX_NAMESPACE_VISITS` 时 lock 直接 invalid，因此 installer 可分发的 manifest 对应的
+  完全匹配安装树永远不会触发 truncation；测试必须覆盖恰好 4096（match）与 4097
+  （lock invalid）的 exact-boundary fixtures。命中 cap 时返回
   `traversal_truncated=true`、`undeclared_total_exact=false`、
   `undeclared_total=null`、`undeclared_observed=4097`、
   `undeclared_omitted=null` 与固定空 `undeclared_sample`，整体 `invalid`。未命中 cap 时
@@ -243,7 +247,9 @@ manifest 与 integrity library：
    beneath-root 等价保证时 recovery fail closed。伪造/矛盾 record 保留现场，且不得读取、
    删除或改写 target root 外对象。通过该 gate 后才以 record 的 old/new manifest identities
    对两棵 tree 分类。若
-   destination=old 且 staging=new，说明 exchange 未发生，安全删除 staging/record并保持 old；
+   destination 完整匹配 old identity，说明 exchange 未发生：无论 staging 等于 new，还是
+   step 7 中被 kill 留下的不完整/不匹配 tree，都属于可恢复的 pre-exchange 状态，只经所持
+   target-root fd 安全删除 staging 与 record 并保持 old，后续显式 apply 不得被永久阻断；
    若 destination=new 且 staging=old，说明 exchange 已发生，完成 post-check 后清理 old/
    record。若 staging 已不存在，则只在 destination 完整匹配 record 的 new identity 时判定
    old cleanup 已完成并删除 record，或完整匹配 old identity 时判定 transaction 未生效/已
@@ -292,7 +298,13 @@ directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 
   它消费 compact JSON 摘要，不把全部文件哈希正文反复注入父上下文。
 - 磁盘 doctor 之外，queue preflight 必须消费 host/runtime 在 skill load 时捕获、调用方
   不可写的 closed `loaded_skill_evidence`：`session_instance_id`、`captured_at`、
-  `lock_manifest_sha256`，以及按 skill/path 排序的
+  `lock_manifest_sha256`。`lock_manifest_sha256` 的 preimage 是版本化的 canonical manifest 编码，而不是
+  `skills-lock.json` 的 raw bytes：normalized shared manifest（每 skill 的 name、每文件的
+  `(relative_path, sha256, normalized_mode)`，按 skill/path 字节序排序）序列化为带
+  encoding-version tag 的 canonical JSON（UTF-8、键排序、无多余空白），对该字节串取
+  sha256。repo validator、doctor 与 host evidence provider 必须共享同一实现与固定
+  test vectors；对 raw lock bytes、非规范化 JSON 或派生字段（如 `expected_size`）哈希
+  都不符合本契约。evidence 还包含按 skill/path 排序的
   `loaded_entries[{entry_role,skill,origin,resolved_path,sha256}]`。`origin` 是闭集
   `{source_checkout, installed_target}`，entry role 与 origin 的允许组合也是闭合的：
   唯一 router role 必须为 `source_checkout`，其 `resolved_path` 必须在当前 source repo
@@ -488,7 +500,9 @@ explicit --apply authorization
       在 preflight 与 staging/commit 间替换 parent/root，并证明 external sentinel 的
       path/type/mode/mtime_ns/hash 均不变；mode fixtures 证明 `0755` 在非零 umask 下仍精确
       安装，且安装副本降为 `0644` 后即使 hash 相同也由 doctor/post-check 判 drift；forged
-      recovery path fixtures 在任何 open/cleanup 前失败并保持 outside sentinel 不变。
+      recovery path fixtures 在任何 open/cleanup 前失败并保持 outside sentinel 不变；
+      kill-during-copy fixture 在 step 7 复制中途中断，证明 destination=old 加不完整
+      staging 会被下一次显式 apply 清理恢复，而不是永久 fail closed。
 - [ ] Session binding: `python3 -m pytest -q tests/test_check_workflow.py
       -k "loaded_skill or session_restart"`；正例要求 runtime-owned current-session entrypoint
       hashes 与 doctor/lock 同一 manifest，并允许 source router 的 `source_checkout` path；
@@ -496,7 +510,8 @@ explicit --apply authorization
       冒充、path/hash/session mismatch，且都在 lane/checkpoint/remote write 前阻断。
 - [ ] Namespace/artifact safety: `python3 -m pytest -q
       tests/test_installed_skill_integrity.py -k "non_utf8 or raw_bytes or hardlink or
-      undeclared_directory or traversal_cap or truncated or artifact_parent or
+      undeclared_directory or traversal_cap or truncated or manifest_cardinality or
+      artifact_parent or
       structural_directory_rebind or structural_directory_mutation or size_mismatch or
       file_size_cap or append_growth or read_budget"`；证明 cap 命中后 sample 固定为空且无
       descendant traversal，artifact parent swap 不会写入 target，structural tree 不会混合
