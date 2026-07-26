@@ -129,7 +129,12 @@ readiness、review、authorization、merge 或 fail-closed 合同。
     不得由 public CLI 的默认目录、`--target-dir`、environment 或 agent text 替代。doctor
     `match` receipt 必须回绑 canonical root identity、root binding digest 与同一
     `source_lock_manifest_sha256`；检查其它 matching installation、root rebind 或任一回绑
-    不一致均不能授权实际 loaded copy。
+    不一致均不能授权实际 loaded copy。installed startup 不得要求 source checkout 存在或
+    对 source root 运行 graph checker；它必须验证 installed root 内的 embedded bundle
+    manifest，且 manifest bytes digest 由 current-invocation loader registry 独立固定。
+    manifest 枚举除自身外的完整 installed 文件闭集并绑定 source-lock；manifest 自身不得
+    自哈希。host-pinned manifest digest、闭集内容、实际文件或 source-lock 任一不一致均
+    fail closed。
 25. B-025 当 `output_firewall_v1` 向 parent 注入 command tail/summary 时，必须同时满足
     `max_lines=150`、`max_total_utf8_bytes=16384`、`max_line_utf8_bytes=512` 与
     `max_tokens=4096`；截断 marker 必须包含在全部上限内，raw excess 只能留在 artifact。

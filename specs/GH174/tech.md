@@ -6,7 +6,7 @@ GH-174
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":174,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/installed_skill_integrity.py","checks/skill_reference_graph.py","skills-lock.json","tools/check_installed_codex_skills.py","tools/install_codex_skills.py","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement-queue/references/evidence-and-recovery.md","skills/specrail-implement-queue/references/planning-and-runtime.md","skills/specrail-implement-queue/references/review-and-merge.md","skills/specrail-implement-queue/runtime/phase_loader.py","tests/test_check_workflow.py","tests/test_install_codex_skills.py","tests/test_phase_loader.py","tests/test_skill_reference_graph.py"],"spec_refs":["specs/GH174/product.md","specs/GH174/tech.md","specs/GH174/tasks.md"]}
+{"version":1,"issue":174,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/check_workflow.py","checks/installed_skill_integrity.py","checks/skill_reference_graph.py","skills-lock.json","tools/check_installed_codex_skills.py","tools/install_codex_skills.py","skills/implx/SKILL.md","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement-queue/references/evidence-and-recovery.md","skills/specrail-implement-queue/references/planning-and-runtime.md","skills/specrail-implement-queue/references/review-and-merge.md","skills/specrail-implement-queue/runtime/installed_bundle_manifest.json","skills/specrail-implement-queue/runtime/phase_loader.py","tests/test_check_workflow.py","tests/test_install_codex_skills.py","tests/test_phase_loader.py","tests/test_skill_reference_graph.py"],"spec_refs":["specs/GH174/product.md","specs/GH174/tech.md","specs/GH174/tasks.md"]}
 -->
 
 ## Product Spec
@@ -176,9 +176,10 @@ host `specrail.runtime.skill-contract.v2` 必须从当前 runtime invocation 的
 protocol_version, request_id, challenge, current_invocation_id,
 loaded_entrypoint{skill_id, realpath, sha256},
 delegated_entrypoint{skill_id, realpath, sha256, dependency_binding} | null,
-canonical_bundle_root, source_repository_root, source_lock_manifest_sha256,
+canonical_bundle_root, source_repository_root | null, source_lock_manifest_sha256,
 runtime_client{realpath, sha256, mode, source_bytes_digest},
 installed_root_binding{canonical_realpath, device, inode, binding_digest} | null,
+installed_bundle_manifest{relative_path, sha256} | null,
 parser_binding{peer_identity, protocol_version},
 issued_at, expires_at, attestation
 ```
@@ -205,8 +206,12 @@ dependency binding。client 读取所有 attested realpath 的实际 bytes 重�
   `source_lock_manifest_sha256`/dependency chain。只匹配 queue、未知 `skill_id`、混用
   root/lock 或缺失任一层都不得判为 `repo_copy`；
 - `installed_copy` 时，每个 attested entrypoint 与 runtime client 都必须位于 resolver 证明的
-  同一 runtime-owned installed root，且 installed bundle/source-lock binding 与同一 source
-  repository manifest 相等；
+  同一 runtime-owned installed root。current-invocation loader registry 还必须独立固定
+  `runtime/installed_bundle_manifest.json` 的相对路径与 SHA-256；该 manifest 固定
+  `bundle_id`、`source_lock_manifest_sha256` 及除 manifest 自身外全部 bundled files 的
+  `{relative_path, mode, size, sha256}` 闭集。manifest 不得包含自己的 digest，防止自哈希；
+  它自身的 digest 只由 host registry attestation 固定，caller、bundle 内其它文件或 consumer
+  checkout 不能提供或覆盖；
 - 同时匹配、均不匹配、symlink/path escape、bytes/root/manifest 漂移或字段缺失均 fail closed。
 
 hook/client/resolver/peer/verifier 不可用时 queue 明确 unavailable，不得回退到
@@ -219,8 +224,12 @@ caller-selected repo/path 或 consumer checkout 中的相对 executable。host �
 - `repo_copy`：graph checker 只能使用 attestation 推导出的 canonical source root；
   `allowed` 即可继续，**不得**要求 `$CODEX_HOME`/`~/.codex` 存在或运行
   `--require-installed`。
-- `installed_copy`：除对同一 attested source root 的 source graph `allowed` 外，runtime
-  client 必须把已验证 attestation 中的 typed `installed_root_binding` 直接交给
+- `installed_copy`：不得要求 source repository root 存在，也不得读取或运行 source
+  checkout 中的 graph checker。runtime client 必须先在 attested installed root 内
+  stable-open/no-follow 读取 embedded `runtime/installed_bundle_manifest.json`，验证其 bytes
+  等于 host registry 独立固定的 digest，再按 manifest 的完整 expected set 验证实际 installed
+  bundle；缺文件、额外文件、type/mode/size/digest/source-lock 漂移均 fail closed。然后 client
+  把已验证 attestation 中的 typed `installed_root_binding` 直接交给
   installed-integrity internal API：该 API 随 v2 lock 与 runtime client 一同打包进 queue
   bundle（与 repo `checks/installed_skill_integrity.py` 的 `inspect_installed_skills()`
   同源同 hash），不得从 consumer checkout 的 repo-root `checks/` import path 解析；
@@ -258,6 +267,9 @@ startup preflight 在 invocation 内固定经验证的 canonical source/installe
 `source_lock_manifest_sha256`，以及完整引用闭集的
 `{relative_path, expected_utf8_bytes, sha256}` expected set，并返回不可由 agent 构造或跨
 invocation 重放的 opaque `bootstrap_handle`；
+`repo_copy` 的 expected set 来自 canonical source graph；`installed_copy` 的 expected set
+只来自 host-pinned embedded manifest，且 source repository root 可以不存在。两条来源不可
+混用，installed 分支不得为了 graph authorization 重新发现 source checkout。
 后续 phase 不得以“startup 已通过”或当前磁盘上的新 lock 重新授权不同内容。每个 phase 在
 首个动作前只调用 host `load_phase(bootstrap_handle, phase_id)`。runtime client 根据 closed
 phase manifest 选择 references；agent 不能传 path/bytes/parser endpoint。client 逐项从
