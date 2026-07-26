@@ -47,6 +47,16 @@ Use `queue_mode: bounded_tranche` only when the prompt explicitly limits scope,
 for example one issue, one PR, the current tranche, plan-only, status-only, or
 review-only work.
 
+Single-issue short circuit: when the prompt targets exactly one issue whose
+spec coverage is already `complete` (or `exception_allowed`) and the change is
+plausibly `fastlane`/`standard` tier, skip the queue skill entirely — run the
+startup checks above, then route straight to
+`skills/specrail-implement/SKILL.md` plus
+`skills/specrail-pr-gate/SKILL.md`. Do not build the full-queue coverage
+classification, queue-planning YAML, or tranche budget for one scoped issue.
+Fall back to the queue skill only when the short circuit discovers multi-issue
+coupling, a `heavy` tier surface, or missing spec coverage.
+
 ## Authorization Mode
 
 Two modes. Record the selected mode at startup and pass it downstream.
@@ -206,7 +216,9 @@ For GitHub issue or PR queues, reviewer lanes, merge gates, and closure audit
 make native thread dispatch required whenever native subagent capability is
 available. Record `thread_dispatch_gate` before implementation, review, or
 merge work. A coordinator self-review is not a native thread and does not
-satisfy merge review.
+satisfy merge review, except for `fastlane`-tier PRs under the
+`basis: fastlane_policy` self-review path defined in
+`skills/specrail-implement-queue/SKILL.md`.
 
 Primary reviewer evidence must be produced by a local reviewer execution and
 record `review_execution: local` on the exact-head terminal artifact. A local
@@ -264,8 +276,6 @@ implx_handoff:
     dirty_files:
   human_decisions:
   focused_handoff:
-  thread_dispatch_gate:
-    native_subagents:
-    spawn_requirement:
-    native_thread_evidence:
+  thread_dispatch_gate_ref: <checkpoint path>  # recorded once in the runtime
+                                               # checkpoint; do not copy fields
 ```

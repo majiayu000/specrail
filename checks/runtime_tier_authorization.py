@@ -16,6 +16,8 @@ from typing import Any
 
 # Audit anchor for merge_authorization.source; do not rename it.
 TIER_POLICY_SOURCE = "tier_policy_gh143"
+# Audit anchor for self_review_authorization.basis; do not rename it.
+FASTLANE_SELF_REVIEW_BASIS = "fastlane_policy"
 PR_TIERS = {"fastlane", "standard", "heavy"}
 STANDARD_AUTO_TIERS = {"fastlane", "standard"}
 AUTHORIZATION_TIERS = {"standard_auto", "heavy_manual"}
@@ -40,6 +42,38 @@ def _valid_pr_tier_evidence(value: Any) -> bool:
         and bool(touched_paths)
         and all(_nonempty_string(path) for path in touched_paths)
     )
+
+
+def _validate_fastlane_self_review(
+    raw_item: dict[str, Any],
+    authorization: dict[str, Any],
+    label: str,
+    errors: list[str],
+) -> None:
+    """Fastlane self-review policy: a `fastlane`-tier item with valid tier
+    evidence on a non-enforcement-sensitive surface may use coordinator
+    self-review without recorded reviewer-lane failures. Every other
+    review_source rule (local review artifact, passed status, evidence)
+    still applies; eligibility gaps fail closed to the strict lane-failure
+    path requirements."""
+    if raw_item.get("pr_tier") != "fastlane":
+        errors.append(
+            f"{label}: self_review_authorization.basis {FASTLANE_SELF_REVIEW_BASIS} "
+            "requires pr_tier fastlane"
+        )
+    if raw_item.get("enforcement_sensitive") is True:
+        errors.append(
+            f"{label}: enforcement-sensitive item cannot use "
+            f"{FASTLANE_SELF_REVIEW_BASIS} self-review"
+        )
+    if not _valid_pr_tier_evidence(raw_item.get("pr_tier_evidence")):
+        errors.append(
+            f"{label}: {FASTLANE_SELF_REVIEW_BASIS} self-review requires "
+            "pr_tier_evidence with changed_lines and touched_paths"
+        )
+    for key in ["scope", "conversation_marker"]:
+        if not _nonempty_string(authorization.get(key)):
+            errors.append(f"{label}: self_review_authorization.{key} is required")
 
 
 def _item_review_source(raw_item: dict[str, Any]) -> str:

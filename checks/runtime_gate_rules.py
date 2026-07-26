@@ -20,6 +20,10 @@ from runtime_budget_dimensions import (
     judge_dimension,
     judge_hard_dimensions,
 )
+from runtime_tier_authorization import (
+    FASTLANE_SELF_REVIEW_BASIS,
+    _validate_fastlane_self_review,
+)
 from schema_validation import SpecRailError, load_json_schema, validate_instance
 from session_telemetry import parse_timestamp
 
@@ -286,6 +290,13 @@ def _validate_self_review_authorization(
     *,
     auth_mode: str = "",
 ) -> None:
+    authorization = raw_item.get("self_review_authorization")
+    if (
+        isinstance(authorization, dict)
+        and authorization.get("basis") == FASTLANE_SELF_REVIEW_BASIS
+    ):
+        _validate_fastlane_self_review(raw_item, authorization, label, errors)
+        return
     lane_failures = raw_item.get("lane_failures")
     if not isinstance(lane_failures, list) or not lane_failures:
         errors.append(f"{label}: self_review requires recorded lane_failures")
