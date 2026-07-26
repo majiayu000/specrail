@@ -284,7 +284,8 @@ Rules:
 Use `integrations/threads.md` and an available threads skill for parallel lanes,
 disjoint ownership, review/CI/merge gates, or closure audit. For GitHub queues,
 native dispatch is required when available. Before implementation, review,
-push, comment, or merge, record:
+push, comment, or merge, record — once, in the runtime checkpoint (handoffs
+and reports reference it rather than copying the fields):
 
 ```yaml
 thread_dispatch_gate:

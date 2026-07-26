@@ -91,16 +91,13 @@ specrail_threads_handoff:
   threads:
     mode:
     truth_level:
-    thread_dispatch_gate:
     queue_ledger:
     issue_to_pr_map:
     lanes:
     merge_policy:
     stop_conditions:
-    context_budget:
-    output_firewall:
   checkpoint:
-    path:
+    path:  # holds thread_dispatch_gate, context_budget, output_firewall
     runtime_gate:
 ```
 
@@ -132,34 +129,23 @@ Threads owns the orchestration side:
 - closure audit after PR or issue state changes
 - parent context budget and output firewall enforcement
 
-Record this queue handoff when both systems are active:
+The queue plan block is defined once, in
+`skills/specrail-implement-queue/SKILL.md` (`specrail_implementation_queue`);
+do not maintain a second field layout here. When threads orchestration is
+active, extend that block with one `orchestration` section:
 
 ```yaml
-specrail_implementation_queue:
-  issues:
-    - issue:
-      spec_dir:
-      existing_prs:
-      planned_prs:
-      completion_mode: partial | final
-      acceptance_evidence:
-  orchestration:
-    threads_mode:
-    lanes:
-    thread_dispatch_gate:
-    native_thread_evidence:
-    fallback_reason:
-    context_budget:
-    output_firewall:
-  checkpoint:
-    path:
-    runtime_gate:
-  gates:
-    route_gate:
-    pr_gate:
-    review_threads:
-    merge_authorization:
+# appended to the specrail_implementation_queue block from the queue skill
+orchestration:
+  threads_mode:
+  lanes:
+  fallback_reason:
 ```
+
+`thread_dispatch_gate` (with its `native_thread_evidence`) is recorded exactly
+once, in the runtime checkpoint; every other artifact — this handoff, the
+`implx` wrapper handoff, reports — references the checkpoint instead of
+copying the fields. The same goes for `context_budget` and `output_firewall`.
 
 This handoff must not grant approval or merge authority. It only preserves the
 evidence each system needs.
