@@ -21,7 +21,7 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
   正确 route 和可信 readiness 触发。
 - 将 packet 的 artifact shape 与 implementation readiness 分开判定，允许
   product/tech-only packet 通过全量结构校验，但绝不因此获得实现资格。
-- 为 implement route 定义无循环依赖的 task plan 生成顺序。
+- 为 spec-first implement route 定义无循环依赖的 task plan 生成顺序。
 - 保持既有三文件 packet 兼容，同时为 GH-180 自身及错误地提前生成 tasks 的在途
   spec PR 提供可审计、不可扩权的迁移路径。
 
@@ -29,7 +29,8 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
 
 - 不改变 issue #165 的 Gate Availability 行为契约。
 - 不自动授予 `ready_to_implement`、`spec_approved` 或任何实现、审批、merge 权限。
-- 不删除 task planning，也不允许代码实现先于有效 `tasks.md` 开始。
+- 不删除 spec-first task planning，也不允许该路径的代码实现先于有效 `tasks.md` 开始；
+  本变更不向原本无 spec packet 的 direct bug 强加 task plan。
 - 不把 issue body hint、文件存在、agent 自报或历史成功结果升级为可信 readiness。
 - 不弱化 product、tech 或 tasks 各自已有的内容校验。
 
@@ -53,7 +54,7 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
 6. B-006 当可信当前状态为 `ready_to_spec` 且 `write_spec` route 为 `allowed` 时，
    route 只要求并创建 `product_spec` 与 `tech_spec`；不创建 `task_plan`，且
    product/tech 写成后必须能以 `staged` 形态通过 packet 校验。
-7. B-007 当进入 `implement` route 时，入场前提必须是可信当前状态
+7. B-007 当 spec-first 工作进入 `implement` route 时，入场前提必须是可信当前状态
    `ready_to_implement` 加有效 product/tech；入场检查不得预先要求尚应由该 route
    创建的 `task_plan`。staged packet 的 machine result 必须只授予独立的
    `task_planning` capability，明确阻断 `production_implementation`；route 创建并验证
@@ -63,7 +64,8 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
    staged/task-planning result，即使其通用 gate `decision` 为 `allowed`。
    shared runtime lifecycle mapping 中 `needs_tasks` 只能对应
    `ready_to_implement`，不得继续映射为 `spec_approved` 或更早状态。
-8. B-008 从 spec 写作进入实现时，默认及 `auth_mode: review` 路径必须同时具备：可信、
+8. B-008 对确实从 `ready_to_spec` 进入 spec-first 写作的工作，默认及
+   `auth_mode: review` 路径必须同时具备：可信、
    按时间有序且完成 `ready_to_spec → spec_pr_open → spec_review → spec_approved` 的
    lifecycle approval evidence；被接受的 exact-head maintainer `APPROVED` review
    `submittedAt` 必须严格早于被接受的 `spec_approved` label event，后者又必须严格早于
@@ -77,7 +79,7 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
    exact approved spec-only PR 及其 exact-head branch：repository id、PR number、head
    repository/ref/SHA 与完整 changed-path 集必须全部匹配 approval source。duplicate collector
    必须先由 repo-owned workflow artifact 配置与 closed role classifier 确定
-   `product_spec | tech_spec | task_plan | packet_evidence` 的路径 allowlist，再验证 exact-head
+   `product_spec | tech_spec | task_plan` 的路径 allowlist，再验证 exact-head
    manifest `spec_refs` 是该 allowlist 的无重复子集且与 implementation `paths` 完全 disjoint；
    manifest/caller 不能新增 role 或扩大 allowlist。changed paths 必须包含 product/tech、
    全部属于经分类的 validated `spec_refs`，且不得包含 planned implementation path。其它引用
@@ -114,10 +116,10 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
     加入 `tasks.md`，在可信 `write_spec` route evidence 下删除该 task plan 必须是
     合法的纠偏，并把 packet 恢复为 `staged`；该纠偏不得制造
     `ready_to_implement` 或 spec approval 证据。
-13. B-013 在 `ready_to_implement` 或更晚阶段删除、遗漏或破坏有效 `tasks.md`
+13. B-013 在 spec-first 工作的 `ready_to_implement` 或更晚阶段删除、遗漏或破坏有效 `tasks.md`
     时，implementation-ready 判定必须失效并阻断代码实现；系统不得沿用删除前的
     readiness、验证或 task plan 证据。
-14. B-014 readiness-sensitive 结果必须同时绑定 issue evidence、spec approval authorization
+14. B-014 spec-first readiness-sensitive 结果必须同时绑定 issue evidence、spec approval authorization
     evidence（review 路径的 ordered exact-head lifecycle 或 auto 路径的 runtime-registry
     grant）、duplicate-work evidence、immutable repository id + canonical repository name，
     以及当前 packet artifact。repository identity 必须贯穿 fresh issue/duplicate evidence、
@@ -170,13 +172,36 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
     当前实现授权或其它 issue 的先例。tracked evidence 缺失、字段标为 `unproven`、采集失败、
     权限不足、issue/head/packet 不匹配，均不得被宽泛授权补齐或复用。新 validator 落地后，
     在途 `ready_to_spec` packet 必须使用 B-012 的 staged 纠偏路径，不能继续提前创建 tasks；
-    所有正常 packet 都必须遵守 B-008。
+    所有 spec-first packet 都必须遵守 B-008；合法 direct/mixed 入口按 B-021 判定。
 18. B-018 每次 packet 判定必须给出可审计结果，至少能区分 linked issue、artifact
     shape、发现的 artifact、各 artifact 校验结果、readiness 是否被证明、evidence
     来源与阻断原因；使用 bootstrap 或纠偏路径时还必须标明对应依据。
 19. B-019 若校验、spec 写作或 task planning 被取消/中断，已落下的部分文件只能按
     当前真实 shape 重新校验；半写文件、临时成功状态与未完成 transition 不得被
     提升为 `staged`、`complete` 或 implementation-ready。
+20. B-020 通用 artifact role classifier 只能从 repo-owned workflow templates 派生
+    `product_spec | tech_spec | task_plan | invalid`，不得认识
+    `bootstrap-evidence.json`、`packet_evidence` 或其它 issue-specific role。仅 GH-180
+    consumer overlay 可以把精确路径 `specs/GH180/bootstrap-evidence.json` 判为
+    `gh180_bootstrap_audit`，且必须同时验证 `version: 2`、`issue: 180`、顶层、
+    `observed` 与 `evidence_verdict` 三处 `authorization_effect: none`，以及
+    `evidence_verdict.status: partial_unproven`。该
+    overlay 只允许本 spec PR 的 exact changed-path equality 纳入审计；任何复制、改名、错误
+    issue/path/content 都必须失败，且它永不产生 readiness、approval、waiver 或可复用授权。
+21. B-021 实现入口必须由可信 evidence 确定性分类为闭集
+    `implementation_entry_kind: spec_first | direct_bug | mixed_impl`，不得由 caller、PR body
+    或 manifest 自报。`spec_first` 必须有从 `ready_to_spec` 开始的有序 lifecycle 与 exact-head
+    spec PR；`direct_bug` 必须没有 spec packet，并满足 `SPEC.md` 已有 accepted-small-bug
+    evidence 与可信 `triaged → ready_to_implement`；standard/fastlane 的 `mixed_impl` 必须由
+    queue-derived tier 与同一 PR 的 mixed relation 证明，不要求先有独立 spec-only PR，也不得
+    声称 `approved_spec_pr_exemption`。三者继续分别执行其现有 duplicate、readiness、
+    approval/final-review gates；证据缺失、冲突或同时匹配多类时 fail closed。
+22. B-022 `sensitive` 不得由 open spec PR approval 单独授权 production implementation。
+    spec-first sensitive 工作可用 exact-head open PR 建立 lifecycle/order，但还必须等待该精确
+    revision merge 到 trusted default base，并重新采集 existing sensitive `approved_spec`
+    evidence，验证 `merged_at`、`merge_commit_sha` 与 ancestry 后才能进入生产实现。
+    direct/mixed sensitive 路径同样保留 existing sensitive evaluator；无法产生 merged-base
+    evidence 时必须 `blocked`/`needs_human`，不得以 open PR、auto waiver 或 route 类型绕过。
 
 ## 验收标准
 
@@ -220,6 +245,15 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
   reported route decisions 与无法恢复的 issue-evidence `collected_at`/hash=`unproven`；
   历史 auto/waiver 也只能标为 `reported_unproven`，不得写成已证明 invocation-scoped waiver；
   它不声称完成 B-008 正常链，不充当当前 route authorization，且不能跨 issue 复用。
+- [ ] 通用 classifier 不包含 bootstrap/packet-evidence role；仅 GH-180 exact-path +
+  exact-content overlay 可识别 `gh180_bootstrap_audit`，复制到其它 issue 或修改
+  authorization/status 字段都 fail closed，且 overlay 只参与本 PR path equality。
+- [ ] route gate 确定性区分 `spec_first | direct_bug | mixed_impl`：spec-first 执行 staged
+  lifecycle；accepted small bug 的 direct route 与 standard/fastlane 单 PR mixed route 保持
+  可用且不伪造独立 spec PR，任何歧义 fail closed。
+- [ ] sensitive spec-first 只有在 exact approved revision merge 到 trusted default base 且
+  existing `approved_spec` merged-base/ancestry gate 通过后才能生产实现；direct/mixed
+  sensitive 也不能绕过该 evaluator。
 - [ ] 同一输入重复校验结果稳定，失败重试、取消和中断不会复用旧授权或产生部分成功。
 - [ ] validator、route 与审计输出对同一 packet 的 shape、readiness 和阻断原因一致。
 - [ ] shared runtime mapping 把 `needs_tasks` 精确映射到 `ready_to_implement`；runtime
@@ -231,13 +265,13 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
 | --- | --- |
 | 空/缺失输入 | covered: B-001, B-004, B-005, B-009（缺 tasks 是合法 staged；缺 product/tech、空文件或缺 evidence 分别 fail closed） |
 | 错误与失败路径 | covered: B-004, B-005, B-013, B-017, B-019（无效 artifact、采集/权限失败、部分写入均不可伪装成功） |
-| 授权/权限 | covered: B-003, B-007..B-009, B-016, B-017（shape/readiness label 不单独授权；review implement 验证同仓 spec PR exact-head 人类 approval、readiness actor maintainer authority 与后续 event；auto 只接受 repository-bound runtime-owned registry grant，caller record 仅作 selector；staged scope 只可规划 tasks） |
-| 并发/竞态 | covered: B-008, B-014（artifact、repository identity、issue、lifecycle/grant、spec PR exact head/path、runtime current generation 或 duplicate-work semantic snapshot 漂移后必须重判；freshness 与 key activity分别校验，合法 key rotation 不改变 stable binding） |
+| 授权/权限 | covered: B-003, B-007..B-009, B-016, B-017, B-020..B-022（shape/readiness/bootstrap overlay 不单独授权；spec-first review 验证同仓 spec PR exact-head 人类 approval、readiness actor authority 与后续 event；auto 只接受 repository-bound runtime-owned registry grant；direct/mixed 保留既有 gates；sensitive 追加 merged-base gate） |
+| 并发/竞态 | covered: B-008, B-014, B-021, B-022（artifact、repository identity、issue、route kind、lifecycle/grant、spec PR exact head/path/merge ancestry、runtime current generation 或 duplicate-work semantic snapshot 漂移后必须重判） |
 | 重试/幂等 | covered: B-015, B-019（同输入同结论；失败或中断后全量重验，不复用旧片段） |
-| 非法状态转换 | covered: B-006..B-008, B-012, B-013（write_spec/task planning/production implementation 职责与 machine scope 分离，禁止靠文件或 staged allowed decision 跳状态） |
-| 兼容/迁移 | covered: B-011, B-012, B-016, B-017（旧完整 packet、提前 tasks 纠偏与 GH-180 两阶段 bootstrap 均有窄化合同） |
+| 非法状态转换 | covered: B-006..B-008, B-012, B-013, B-021, B-022（spec-first staged lifecycle 与 direct/mixed 合法入口分离；禁止靠文件、open sensitive approval 或 staged allowed decision 跳状态） |
+| 兼容/迁移 | covered: B-011, B-012, B-016, B-017, B-020..B-022（旧完整 packet、direct/mixed routes、sensitive merged-base enforcement 与 GH-180-only bootstrap overlay 均保持窄化合同） |
 | 降级/回退 | covered: B-005, B-010, B-013, B-017（结构可验证不等于授权；错误 tasks/evidence 不得静默回退成功） |
-| 证据与审计完整性 | covered: B-008..B-010, B-014..B-018（fresh envelope 与 semantic snapshot、spec/packet snapshot、task-planning/production scope 分离；exact-head approval/duplicate exemption、readiness actor authority、repository-bound runtime grant 与 unproven bootstrap 均可追溯） |
+| 证据与审计完整性 | covered: B-008..B-010, B-014..B-018, B-020..B-022（fresh envelope 与 semantic snapshot、spec/packet snapshot、route kind、sensitive merge ancestry、GH180-only audit overlay 与授权分离均可追溯） |
 | 取消/中断 | covered: B-019（只认中断后的真实文件与状态，部分完成不升级） |
 
 ## 发布说明
@@ -249,4 +283,7 @@ implementation readiness。GH-180 的一次性旧-validator bootstrap 被诚实�
 `collected_at`/hash 明确为 `unproven`；历史 auto/waiver 仅为 `reported_unproven`，因为缺少
 current-invocation trust anchor 与 runtime-owned grant，不能证明当次 `spec_approval` waiver 成立，
 更不是正常生命周期、standing authorization 或其它 gate 的 waiver。其它在途 spec PR 必须使用
-staged 纠偏，不能通过提前创建 tasks、伪造 readiness 或跳过校验完成迁移。
+staged 纠偏，不能通过提前创建 tasks、伪造 readiness 或跳过校验完成迁移。迁移只约束
+spec-first 工作：既有 accepted-small-bug direct route 和 standard/fastlane 单 PR mixed route
+继续按可信 route 分类与原 gates 运行；sensitive 路径继续要求 approved revision 落入 trusted
+default base，open PR approval 不能替代 merged-base evidence。

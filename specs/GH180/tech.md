@@ -13,7 +13,8 @@ GH-180
 
 见 `specs/GH180/product.md`。本设计把 packet 的 artifact shape 与 GitHub readiness
 拆成两个正交维度：离线 validator 可接受 `staged`，但只有可信生命周期和 route evidence
-才能进入 task planning；生产代码仍要求有效 `tasks.md`。
+才能进入 spec-first task planning；该路径的生产代码仍要求有效 `tasks.md`，不改变
+direct bug/mixed PR 的既有入口合同。
 
 ## Codebase Context
 
@@ -31,10 +32,12 @@ GH-180
 | portable verification | fresh-checkout Python 环境没有可依赖的 `cryptography`、`nacl`、`jcs` 或 `rfc8785` manifest/安装合同 | 单靠 client spec 要求 Ed25519/RFC8785 无法保证普通 checkout 可运行 | host runtime package 必须提供固定 authenticated verifier interface；repo client 只做闭合 schema/binding 与 verifier IPC 调用，不 vendor 私钥/自选 backend，verifier 缺失时 auto fail closed |
 | duplicate-work evidence | `checks/github_duplicate_evidence.py`、`checks/duplicate_work_gate.py:134-197`、`schemas/duplicate_work_evidence.schema.json` | collector/gate 能验证 open PR/remote branch 完整性，但无条件拒绝每个引用 issue 的 open PR 与匹配 branch，无法识别作为 approval source 的 exact spec-only PR；saved route consumer 也不要求 fresh duplicate evidence或限制 evidence 年龄 | 必须只排除 approval object 精确绑定的同仓 spec-only PR/head branch，其它候选与任何 identity/head/path/query 漂移继续 fail closed；saved result 后的新 PR/branch 也必须使旧成功失效 |
 | route result contract | `checks/route_gate.py:513-516`、`schemas/evaluation_result.schema.json:6-89` | `allowed_actions` 仅按 lifecycle state 加入 `implement`，`decision=allowed` 不区分 staged task planning 与 complete production implementation | staged allowed result 可被旧 consumer 直接当成生产实现授权；必须增加闭合 scope/capability 并让 verify-result 按消费目的拒绝错用 |
-| route gate | `checks/route_gate.py:240-405` | readiness route 可接受 CLI `--state`，CLI `--label` 又在推断前并入 labels；artifact 只检查文件存在 | 两种自报入口都可绕过可信 label，且旧 route success 可被错误复用于改变后的 packet、repository identity 或 duplicate snapshot |
+| route gate | `checks/route_gate.py:240-405`、`SPEC.md`、`states.yaml` | readiness route 可接受 CLI `--state`，CLI `--label` 又在推断前并入 labels；当前仓库同时允许 accepted-small-bug 的 `triaged → ready_to_implement`，不能把 staged spec lifecycle 套到所有实现入口 | 两种自报入口都可绕过可信 label；新 gate 还必须从可信 evidence 区分 spec-first/direct-bug/mixed-PR，不能阻断已有合法入口或复用漂移后的 route success |
+| mixed queue route | `skills/specrail-implement-queue/SKILL.md` | standard/fastlane 允许同一个 `mixed_impl` PR 承载 spec/tasks/implementation，并无更早的独立 spec-only PR | universal spec-PR prerequisite 会使既有 mixed route 永远无法入场；必须按 queue-derived tier 与 PR relation 保留 |
+| sensitive enforcement | `checks/sensitive_enforcement.py`、`tests/test_route_gate_sensitive.py` | existing `approved_spec` 要求 approved revision 已 merge 到 trusted default base，并验证 `merged_at`、`merge_commit_sha` 与 ancestry | open exact-head approval 可建立 spec-first lifecycle，但不能替代 sensitive production 的 merge-first 追加门禁 |
 | evidence regressions | `tests/test_github_issue_evidence.py:245-760`、`tests/route_gate_test_support.py:142-181`、`tests/test_configured_spec_path_review_regressions.py:155-345`、`examples/fixtures/issue-*.json` | 既有断言允许 readiness CLI state，trusted helper/fixtures 没有采集时间；主测试文件 851 行 | freshness 收紧会影响现有全量回归，必须纳入 manifest，并把超限文件按现有 route-evidence 模块拆分 |
 | agent contract | `AGENT_USAGE.md:86-130` | Basic Flow 列出三种 artifact，却未说明 write_spec 与 implement 的分阶段所有权 | agent 容易把 validator 的完整性要求误读为提前生成 tasks |
-| roadmap contract | `PLAN.md:98-108` | 非 sensitive plan 被描述为无需 approval timeline，sensitive approval source 又限定为 merged default-branch PR | agent entry 要求读取 PLAN；必须迁移成所有 review/default implement 都使用 open same-repository exact-head APPROVED spec PR lifecycle，sensitive registry 只增加额外约束 |
+| roadmap contract | `PLAN.md:98-108` | 非 sensitive plan 被描述为无需 approval timeline，sensitive approval source 限定为 merged default-branch PR | agent entry 要求读取 PLAN；应补齐 spec-first 的 open exact-head lifecycle，同时保留 direct/mixed route 及 sensitive merged-base production gate |
 | shared runtime mapping | `checks/specrail_lib.py:35-49`、`tests/test_runtime_ledger_gate.py:34-51` | `needs_tasks` 仍映射到 `spec_approved`，shared regression 只检查 target 存在于 workflow state 集 | 新合同要求 fresh `ready_to_implement` 后才进入 task planning；mapping 与 exact-value regression 必须同步 |
 | route router | `skills/specrail-workflow/SKILL.md:16-45` | 路由到 product、tech、tasks focused skill，但未明示 staged packet 的交接条件 | 需声明 product/tech 完成后等待真实 `ready_to_implement`，不能靠 shape 跳状态 |
 | focused write/implement | `skills/specrail-write-product-spec/SKILL.md:12-23`、`skills/specrail-write-tech-spec/SKILL.md:12-21`、`skills/specrail-implement/SKILL.md:12-21` | focused skills 仍以 CLI `--state` 自报；direct implement 预读 tasks 且未定义缺 tasks 的交还顺序 | 新 route policy 会让真实入口自阻塞或绕过 staged handoff |
@@ -85,6 +88,16 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
 保持 `workflow.yaml` 的 action policy 不变，并收紧 issue/lifecycle/duplicate collectors 与
 `route_gate`：
 
+- 在应用 staged lifecycle 前，route gate 必须从 trusted issue transition、packet/PR relation
+  与 queue-derived tier 计算闭合的
+  `implementation_entry_kind: spec_first | direct_bug | mixed_impl`。`spec_first` 要求可信轨迹从
+  `ready_to_spec` 开始并存在独立 exact-head spec PR；`direct_bug` 要求没有 spec packet，且有
+  `SPEC.md` 已定义的 accepted-small-bug expected/actual evidence 和可信
+  `triaged → ready_to_implement`；`mixed_impl` 要求 standard/fastlane tier 与同一 PR 的 mixed
+  relation，并且没有更早的独立 spec-only source。该值不得由 CLI、manifest 或 PR body选择；
+  缺失、矛盾或同时匹配多个 kind 时 fail closed。只有 `spec_first` 进入下述 staged spec
+  approval lifecycle；direct/mixed 继续执行各自现有 duplicate、readiness、approval/final-review
+  gate，且 `mixed_impl` 不生成 `approved_spec_pr_exemption`；
 - issue evidence schema 新增必填 UTC `collected_at`；collector 在完成同一次 issue query 后写入，
   route gate 对 readiness-sensitive route 使用显式、可配置且有安全默认值的最大年龄，拒绝缺失、
   无效、未来或超窗时间。每次采集同时计算两个不同用途的摘要：
@@ -98,7 +111,7 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   `--label ready_to_spec|ready_to_implement` 都必须明确拒绝，不能在 state inference 前注入可信状态；
 - 在 `labels.yaml` 声明 `spec_pr_open`、`spec_review`、`spec_approved` lifecycle labels。
   `github_approved_spec_evidence.py` 复用现有 label timeline、default-base 与 permission 查询，
-  为 review/default 路径的 trusted `ready_to_implement` issue 收集闭合的
+  为 `spec_first` review/default 路径的 trusted `ready_to_implement` issue 收集闭合的
   `spec_lifecycle_approval`：
   四个 transition `ready_to_spec → spec_pr_open → spec_review → spec_approved` 必须属于同一
   issue、按时间有序、终态为当前/latest `spec_approved`（缺少起始 `ready_to_spec` 事件即
@@ -134,11 +147,17 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   `repository`、`pr_number`、`head_repository_id`、`head_ref`、`approved_spec_head_sha`、
   `changed_paths_complete: true` 与排序后的 `changed_paths`。在读取 caller-controlled
   manifest `spec_refs` 前，shared `specrail_lib` 必须先从 `workflow.yaml` 的 artifact templates
-  与 closed role table 派生 issue-bound allowlist：配置渲染出的 `product_spec`、
-  `tech_spec`、`task_plan`，以及 packet root 下固定 basename、通过对应 JSON contract 的
-  `packet_evidence`（当前仅 `bootstrap-evidence.json`）。classifier 只返回
-  `product_spec | tech_spec | task_plan | packet_evidence | invalid`；CLI、manifest、PR body
-  与 collector caller 都不能添加 role/path。manifest `spec_refs` 必须是该派生 allowlist 的
+  与 closed role table 派生 issue-bound allowlist：通用 classifier 只返回
+  `product_spec | tech_spec | task_plan | invalid`，不得硬编码 `bootstrap-evidence.json` 或公开
+  `packet_evidence` role；CLI、manifest、PR body 与 collector caller 都不能添加 role/path。
+  GH-180 approval/duplicate consumer 另有窄化 overlay：仅当 issue 精确为 180、路径精确为
+  `specs/GH180/bootstrap-evidence.json`，且 JSON 同时满足 `version: 2`、`issue: 180`、
+  顶层 `authorization_effect: none`、`observed.authorization_effect: none`、
+  `evidence_verdict.authorization_effect: none` 与
+  `evidence_verdict.status: partial_unproven` 时，才返回不可复用的
+  `gh180_bootstrap_audit`。它只让本 PR 的 exact changed-path equality 可验证，不产生
+  readiness/approval/waiver；复制到其它 issue、错误路径或任一内容漂移均为 `invalid`。
+  manifest `spec_refs` 必须是通用 allowlist 加该精确 overlay 结果的
   无重复子集、必须含 product/tech，并与 manifest implementation `paths` 完全 disjoint；
   不满足即 source classification invalid，不能进入 exemption 判断。changed paths 必须精确等于
   source PR 的完整 path 集并全部属于 validated `spec_refs`；因此正常 staged PR 可只有
@@ -188,17 +207,22 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   consumer 的每个 fresh response 仍必须分别由 verifier 校验自己的 `key_id` 在该次签发时
   active/non-revoked；两个有效重叠 key 之间的合法 rotation 不改变 stable binding。用完整
   context 或 `key_id` 作跨 challenge equality 会错误拒绝合法 fresh response，因此禁止；
-- 无论 authorization kind 是 `human_lifecycle` 还是 `invocation_auto_waiver`，route 都必须
+- 对 spec-first route，无论 authorization kind 是 `human_lifecycle` 还是
+  `invocation_auto_waiver`，route 都必须
   验证 fresh trusted `ready_to_implement` event。review 路径还验证该 event 严格晚于 accepted
   approval；auto 路径验证它晚于 runtime grant 的 `authorized_at`。auto waiver 不替代 duplicate
-  gate、packet validation、freshness 或 saved-result binding。sensitive route 原有 exact-head
-  `approved_spec` 仍是额外安全约束，不因 auto waiver 放宽；
+  gate、packet validation、freshness 或 saved-result binding。对 sensitive spec-first，
+  open exact-head review 只证明 lifecycle/order；生产实现前还必须等待该 exact revision merge
+  到 trusted default base，fresh 重采并通过 existing sensitive `approved_spec` 的
+  `merged_at`、`merge_commit_sha` 与 ancestry 校验。direct/mixed sensitive 入口同样保留该
+  evaluator；无法产生 merged-base evidence 即 `blocked`/`needs_human`，不得因 auto waiver 或
+  route kind 放宽；
 - route 分别计算两类 artifact snapshot：`spec_snapshot_sha256` 只覆盖 product/tech，专用于
   exact-head approval 比较；`packet_snapshot_sha256` 覆盖实际发现的 product/tech/tasks，专用于
   saved-result 与 artifact drift。二者都按稳定 repository-relative path + 内容 sha256 聚合。
   合法创建 tasks 只改变 packet snapshot，不改变 spec snapshot；
-- route 在计算 snapshot 前调用 staged-aware packet validator，确保 product/tech 内容有效，
-  已存在的 tasks 也有效；implement 入场允许 tasks 缺失，但 tasks 创建后必须重跑 route。
+- spec-first route 在计算 snapshot 前调用 staged-aware packet validator，确保 product/tech 内容有效，
+  已存在的 tasks 也有效；其 implement 入场允许 tasks 缺失，但 tasks 创建后必须重跑 route。
   `schemas/evaluation_result.schema.json` 收紧 implement result：staged packet 固定输出
   `authorization_scope: "task_planning"`、`allowed_actions: ["plan_tasks"]`，并把 `implement`
   放入 `blocked_actions`；complete packet 只有在全部 gate 通过时才输出
@@ -318,7 +342,7 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
   downgrade、回退到 caller-supplied context/crypto，或在任一 host prerequisite 未满足时声称
   auto available。
 
-对应交接顺序为：
+`spec_first` 对应交接顺序为：
 
 1. `ready_to_spec` + allowed write_spec → 写 product/tech → staged validator pass；
 2. review/default 路径采集同仓 spec PR immutable exact-head maintainer approval 及有序
@@ -341,7 +365,10 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
    adapter 自动发出新的 provider challenge 并调用 portable verifier）对当前
    `spec_snapshot_sha256`、`packet_snapshot_sha256`、fresh semantic evidence、
    repository identity、approval-or-grant、scope/capability 与 freshness 分别验证；
-6. `specrail-implement-queue` 只有在 `spec_status=complete` 且 consumer gate 通过时才允许生产代码 lane。
+6. 若为 sensitive，等待该 exact approved revision merge 到 trusted default base，fresh 重采
+   existing `approved_spec`，验证 `merged_at`、`merge_commit_sha` 与 ancestry；
+7. `specrail-implement-queue` 只有在 `spec_status=complete`、consumer gate 以及适用的
+   sensitive merged-base gate 都通过时才允许生产代码 lane。
 
 因此 implement route 入场不循环要求它将创建的 tasks，但生产代码也不能从 staged packet
 开始。ready_to_implement 后 tasks 被删除或损坏时，queue coverage 重新分类为 `needs_tasks`，
@@ -349,6 +376,10 @@ evidence，因此 readiness 固定为 `unproven`，不会把三文件齐全冒�
 `RUNTIME_STATE_MAPPING["needs_tasks"]` 精确设为 `("ready_to_implement",)`；回归须同时断言
 `spec_approved` 不映射 `needs_tasks`，而 fresh `ready_to_implement` 才能记录 task-planning
 checkpoint，避免 runtime ledger 把尚未获实现 readiness 的 packet 推入 tasks lane。
+`direct_bug` 与 `mixed_impl` 不执行上述独立 spec-PR staged handoff：前者按 `SPEC.md`
+accepted-small-bug direct contract，后者按 standard/fastlane single-PR contract；二者仍须
+trusted `ready_to_implement`、各自 duplicate/approval/final-review gates，且 sensitive 时同样
+执行第 6 步。route classification 缺失或歧义时不得退回 spec-first 或自动选一条路径。
 
 ### 4. GH-180 bootstrap 与在途纠偏
 
@@ -374,6 +405,11 @@ decisions/waiver claim 与 unproven 证据缺口；它不得保留 `invocation_s
 不充当未来 route 授权。这一
 spec PR 不包含生产实现。
 
+该文件不是通用 packet artifact。shared classifier 不认识它；仅 GH-180 consumer overlay
+在 exact issue/path 且 `version/issue/authorization_effect/status` 全部满足 B-020 时返回
+`gh180_bootstrap_audit`，作用只限于本 spec PR 的 changed-path equality。其它 issue 的副本、
+改名文件、缺字段或把 `partial_unproven`/`none` 改成更强结论都必须 classification invalid。
+
 实现 PR 合并后，PR #179 仍在原分支删除提前生成的 `specs/GH165/tasks.md`，其 product/tech
 以 staged 形态通过新 validator。GH-180 bootstrap evidence 不可复制到其它 issue；后续
 ready_to_spec packet 一律走 staged 路径。
@@ -386,9 +422,12 @@ task-planning、direct implement 与 queue skill 使用相同术语：shape 是
 来自 fresh trusted GitHub evidence；spec approval 在 review/default 路径来自同仓 spec PR
 immutable exact-head maintainer approval 与有序 lifecycle，且满足
 `APPROVED submittedAt < spec_approved < ready_to_implement`；readiness actor 必须满足
-maintainer policy。`PLAN.md` 不再按 sensitive 与否豁免 approval timeline，也不再要求先 merge
-default-branch PR：所有 review/default implement 都走 open same-repository exact-head
-APPROVED spec PR lifecycle，sensitive registry 只增加额外约束。duplicate exemption 只覆盖
+maintainer policy。该 staged 合同只应用于被 trusted evidence 判为 `spec_first` 的入口；
+`PLAN.md` 必须同时保留 `SPEC.md` accepted-small-bug direct route 与 queue standard/fastlane
+single-PR `mixed_impl` route，并说明 caller 不能自报 route kind。对 sensitive spec-first，
+open same-repository exact-head APPROVED PR 只完成 lifecycle，production 仍须等精确 revision
+merge 到 trusted default base 并通过 existing sensitive `approved_spec` ancestry gate；
+direct/mixed sensitive 同样不绕过该 evaluator。duplicate exemption 只覆盖
 由 repo-owned closed artifact-role allowlist 分类、且与 implementation paths disjoint 的 exact
 approved spec-only PR/head；在
 明确 auto invocation 中来自 caller selector、runtime-owned grant registry 与 verified live
@@ -427,10 +466,15 @@ hash 自比较后声称 implementation-ready。
 | B-016 B-017 | tracked bootstrap evidence | direct transition、reported decisions/waiver claim 与 unproven invocation/route/waived gates/exact trigger/collected_at/hash 分栏；authorization_effect=none |
 | B-018 | CLI + route evidence pair | shape 行含 path/shape/readiness/snapshot；route JSON 含 issue/state/auth_mode/authorization kind 与 hash/evidence hashes/decision/reasons |
 | B-019 | partial-file fixtures | 半写/空 product 或 tech 失败；中断后只按当前文件重新分类 |
+| B-020 | shared classifier + GH180 approval/duplicate consumer overlay | 通用 role 闭集仅有 product/tech/tasks；只有 exact GH180 path/content 返回 `gh180_bootstrap_audit`，跨 issue/改名/提权内容均 invalid 且不产生授权 |
+| B-021 | route gate、SPEC/state compatibility、queue route tests/docs | trusted evidence 确定性产出 `spec_first|direct_bug|mixed_impl`；direct bug 与 standard/fastlane mixed PR 正例保留，caller 自报、歧义/冲突证据 fail closed |
+| B-022 | existing sensitive evaluator、route integration、PLAN 与 sensitive regressions | open PR 只能完成 spec-first lifecycle；production 正例还须 exact revision merged-base/ancestry evidence，direct/mixed sensitive 也不能绕过 |
 
 ## 数据流
 
-Git tree 中的 packet paths → `spec_packet_shape` → `validate_spec_packet` 内容错误集合 →
+trusted transition + packet/PR relation + queue tier → deterministic
+`implementation_entry_kind`。对于 `spec_first`：Git tree 中的 packet paths →
+`spec_packet_shape` → `validate_spec_packet` 内容错误集合 →
 `check_workflow` 稳定 shape/validation/packet snapshot 输出。live GitHub issue evidence、同仓
 spec PR exact-head review lifecycle/readiness actor authority 或 repository-bound runtime-owned
 grant + verified current-invocation anchor、
@@ -438,7 +482,9 @@ duplicate-work evidence → route gate 分别校验 freshness、semantic snapsho
 ordering、authorization kind、exact spec-source duplicate exemption、open PR/branch、spec
 snapshot 和 packet snapshot → 带 repository/grant/runtime-context/evidence
 envelope+semantic/artifact 摘要及 authorization scope 的 decision JSON。
-queue 在 task planning 前校验 staged snapshot，tasks 写入后再用 validator、route gate 和 spec
+对 sensitive，open exact-head lifecycle 后还需 merged-base `approved_spec`/ancestry evidence。
+`direct_bug` 与 `mixed_impl` 跳过 spec-first packet lifecycle，但继续执行各自既有 route/queue
+gates，sensitive 时仍执行同一 merged-base evaluator。queue 在 task planning 前校验 staged snapshot，tasks 写入后再用 validator、route gate 和 spec
 coverage 重跑，再用 production-scoped `--verify-result` 与 fresh issue/duplicate evidence 同时匹配 complete
 snapshot；生产实现只消费 fresh 且全部摘要、human gates 和 duplicate gate 均匹配的结果。
 
@@ -447,17 +493,21 @@ snapshot；生产实现只消费 fresh 且全部摘要、human gates 和 duplica
 - 继续要求所有 spec PR 提前写 tasks：拒绝；它越过 workflow 的 route/readiness 所有权。
 - 让 implement route 入场前要求 tasks：拒绝；会形成“进入 route 前先有该 route 产物”的循环。
 - 从 workflow 把 task_plan 移到 write_spec：拒绝；会把任务规划提前到未批准设计，扩大 issue 范围。
+- 对所有 implement 强制独立 spec-only PR：拒绝；会破坏 `SPEC.md` 的 accepted-small-bug
+  direct route 与 standard/fastlane 的 single-PR `mixed_impl` route。
+- 让 sensitive open PR approval 取代 merged-base evidence：拒绝；会削弱现有 ancestry enforcement。
 - 用 issue label 传给 `check_workflow --all-specs`：拒绝；CI 的离线结构校验不应依赖网络或可变状态。
 - 删除 task 内容校验：拒绝；只允许文件缺失代表 staged，存在但无效必须 fail closed。
 
 ## 风险
 
-- Security: shape 与 readiness label 都不得被当作 spec approval；review implement 验证同仓
+- Security: shape、route kind 与 readiness label 都不得被 caller 当作 spec approval；spec-first review 验证同仓
   spec PR immutable exact-head maintainer approval、readiness actor authority 与 exact-source
   duplicate exemption，auto implement 只接受 repository-bound runtime-owned active grant +
   authenticated challenge-response；runtime grant registry、
   private key/issuer/verifier 由 host owner 管理，不进入 repo，client 不允许 endpoint/verifier/
   root 注入；两者都验证可信 readiness、duplicate、spec/packet snapshot 与 consumer evidence。
+  sensitive production 另需现有 merged-base/ancestry evidence；GH180 overlay 永不授权。
 - Compatibility: CLI 新增确定性 shape/scope 行但保留既有最终消息与 exit code；旧 saved result
   缺 scope 时 fail closed，必须重跑，不能兼容成 production authorization；旧完整 packet 无需改写。
 - Availability: host provider + grant registry + portable verifier 是 auto 的显式前置条件；任一
@@ -480,8 +530,8 @@ snapshot；生产实现只消费 fresh 且全部摘要、human gates 和 duplica
 - [ ] CLI: `/usr/bin/python3 -m pytest -q tests/test_check_workflow.py`，覆盖显式与 all-specs 的
   稳定 shape 行、配置 root、成功/失败 exit code和 readiness=unproven。
 - [ ] Workflow/skill regression: README、双语 PR template、implx、focused write/plan/direct
-  implement/queue 入口与 PLAN 均不再自报或跳过 readiness/approval timeline，skill lock 只更新
-  七个目标 hash。
+  implement/queue 入口与 PLAN 均不再自报 route/readiness，且同时保留 direct-bug、
+  standard/fastlane mixed route 和 sensitive merged-base gate；skill lock 只更新七个目标 hash。
 - [ ] Evidence/route: `/usr/bin/python3 -m pytest -q tests/test_issue_evidence_freshness.py
   tests/test_route_gate.py tests/test_runtime_invocation_context.py
   tests/test_runtime_invocation_provider.py tests/test_duplicate_work_gate.py
@@ -500,11 +550,13 @@ snapshot；生产实现只消费 fresh 且全部摘要、human gates 和 duplica
   缺/伪造/过期/旧 generation context、caller 自造/旧/revoked grant、旧 selector 与 saved result
   跨 repository/invocation 重放、缺失/错误/rename-drift repository id/name、只变化
   `collected_at` 的 fresh recapture、semantic evidence 漂移、
-  spec/packet snapshot 分离与 artifact 漂移。
+  spec/packet snapshot 分离与 artifact 漂移；通用 classifier 拒绝 bootstrap role，
+  GH180-only overlay 的 exact-path/content 正例及跨 issue/改名/提权负例，route kind 的
+  spec-first/direct-bug/mixed-impl 正负例。
 - [ ] Runtime ledger: `/usr/bin/python3 -m pytest -q tests/test_runtime_ledger_gate.py`，精确断言
   `RUNTIME_STATE_MAPPING["needs_tasks"] == ("ready_to_implement",)`，并覆盖
   `spec_approved` 不能产生 task-planning checkpoint、`ready_to_implement` 可以产生该 checkpoint。
-- [ ] Regression migration: `/usr/bin/python3 -m pytest -q tests/test_github_issue_evidence.py tests/test_github_issue_route_evidence.py tests/test_configured_spec_path_review_regressions.py tests/test_route_gate_sensitive.py`，覆盖拆分后的原有断言、shipped fixtures、configured paths 与 sensitive route helper；所有修改文件 `<800`。
+- [ ] Regression migration: `/usr/bin/python3 -m pytest -q tests/test_github_issue_evidence.py tests/test_github_issue_route_evidence.py tests/test_configured_spec_path_review_regressions.py tests/test_route_gate_sensitive.py`，覆盖拆分后的原有断言、shipped fixtures、configured paths、direct/mixed compatibility 与 sensitive open-PR negative + merged-base positive/ancestry-drift negative；所有修改文件 `<800`。
 - [ ] Submission: `/usr/bin/python3 -m pytest -q`、
   `/usr/bin/python3 checks/check_workflow.py --repo . --all-specs`、
   `/usr/bin/python3 tools/spec_depth_audit.py --spec-dir specs/GH180 --gate`、`git diff --check`、
