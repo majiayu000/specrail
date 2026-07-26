@@ -522,6 +522,39 @@ def build_human_authorization(
     return authorization
 
 
+def build_run_authorization(
+    actor: str | None,
+    source: str | None,
+    repository: str | None,
+    run_id: str | None,
+    authorized_at: str | None,
+) -> dict[str, str] | None:
+    """Build an explicit run-scoped standing authorization for implx auto."""
+
+    explicit_values = [actor, source, run_id, authorized_at]
+    provided = [
+        value
+        for value in explicit_values
+        if value is not None and value.strip()
+    ]
+    if not provided:
+        return None
+    values = [*explicit_values, repository]
+    if any(value is None or not value.strip() for value in values):
+        raise EvidenceError(
+            "run authorization requires actor, source, repository, run_id and "
+            "authorized_at together"
+        )
+    return {
+        "actor": actor.strip(),
+        "source": source.strip(),
+        "repository": repository.strip(),
+        "run_id": run_id.strip(),
+        "decision": "authorize_auto_run",
+        "authorized_at": authorized_at.strip(),
+    }
+
+
 def build_self_review_authorization(
     actor: str | None,
     source: str | None,

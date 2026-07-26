@@ -16,19 +16,13 @@ def _nonempty(value: Any) -> bool:
 def legacy_round_cap_reason(review: dict[str, Any], cap: int) -> str | None:
     """Blocking reason for a legacy (unversioned) artifact beyond the round cap.
 
-    Legacy artifacts without ``round_policy_version`` must not exceed the
-    bounded cap unless they carry the same escalation authorization the
-    bounded v2 manifest requires.
+    Legacy artifacts cannot bind an escalation ID to the external role-mapped
+    authorization set, so they must migrate to the bounded v2 manifest.
     """
-    escalation = review.get("round_cap_escalation")
-    authorization_id = (
-        escalation.get("authorization_id") if isinstance(escalation, dict) else None
-    )
-    if _nonempty(authorization_id):
-        return None
     return (
         f"review_round {review.get('review_round')} exceeds the cap of {cap}; "
-        "legacy artifacts require round_cap_escalation.authorization_id "
+        "legacy artifacts cannot prove exact role-mapped escalation "
+        "authorization; migrate to a bounded_diff_v1 v2 manifest "
         f"beyond round {cap}"
     )
 

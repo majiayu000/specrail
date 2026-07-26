@@ -1,0 +1,44 @@
+{
+  "pr": 198,
+  "repository": "majiayu000/specrail",
+  "state": "OPEN",
+  "is_draft": false,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "pr_tier": "fastlane",
+  "pr_tier_evidence": {
+    "changed_lines": 32,
+    "touched_paths": ["checks/example.py"]
+  },
+  "enforcement_sensitive": false,
+  "protected_paths": [],
+  "auth_mode": "review",
+  "checks_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "checks": [
+    {
+      "name": "workflow-check",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS"
+    }
+  ],
+  "independent_review": {
+    "review_source": "independent_lane",
+    "review_execution": "local",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": "completed",
+    "verdict": "clean",
+    "tier_attestation": {
+      "pr_tier": "fastlane",
+      "attested": true,
+      "basis": "32 changed lines; no protected paths"
+    },
+    "review_completed_at": "2026-07-26T12:00:00Z"
+  },
+  "merge_state": "CLEAN",
+  "gate_started_at": "2026-07-26T12:05:00Z",
+  "human_authorization": {
+    "actor": "maintainer",
+    "source": "current conversation",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "authorized_at": "2026-07-26T12:01:00Z"
+  }
+}

@@ -37,6 +37,7 @@ from github_pr_snapshot import (
 )
 from github_review_evidence import (
     build_human_authorization,
+    build_run_authorization,
     build_self_review_authorization,
     load_lane_failures,
     load_maintainer_role_map,
@@ -225,6 +226,9 @@ def build_evidence(
     reusable_ci_evidence: dict[str, Any] | None = None,
     round_cap_authorizations: list[dict[str, Any]] | None = None,
     spec_approval: dict[str, Any] | None = None,
+    auth_mode: str | None = None,
+    run_id: str | None = None,
+    run_authorization: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
     linked_issue, issue_reference = normalize_issue_reference(
@@ -383,6 +387,14 @@ def build_evidence(
         )
     if authorization is not None:
         evidence["human_authorization"] = authorization
+    if auth_mode is not None:
+        evidence["auth_mode"] = auth_mode
+    if run_authorization is not None:
+        if not isinstance(repository, str) or not repository.strip():
+            raise EvidenceError("run authorization requires repository identity")
+        evidence["repository"] = repository
+        evidence["run_id"] = run_id
+        evidence["run_authorization"] = run_authorization
     if self_review_authorization is not None:
         evidence["self_review_authorization"] = self_review_authorization
     if round_cap_authorizations:
@@ -415,6 +427,9 @@ def collect_evidence(
     content_binding_v1: bool = False,
     reusable_ci_evidence: dict[str, Any] | None = None,
     round_cap_authorizations: list[dict[str, Any]] | None = None,
+    auth_mode: str | None = None,
+    run_id: str | None = None,
+    run_authorization: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if expected_issue is not None and (
         not isinstance(expected_issue, int)
@@ -612,6 +627,9 @@ def collect_evidence(
         reusable_ci_evidence,
         round_cap_authorizations,
         spec_approval,
+        auth_mode,
+        run_id,
+        run_authorization,
     )
 
 
@@ -632,6 +650,24 @@ def main() -> int:
     parser.add_argument("--authorization-summary", help="Short authorization summary")
     parser.add_argument("--authorization-head-sha", help="Head SHA the human authorization covers")
     parser.add_argument("--authorization-at", help="When the authorization was given (after the relevant review)")
+    parser.add_argument(
+        "--auth-mode",
+        choices=["auto", "review"],
+        help="Transient authorization mode; omitted means the review-mode default",
+    )
+    parser.add_argument("--run-id", help="Current implx auto run identifier")
+    parser.add_argument(
+        "--run-authorization-actor",
+        help="Human who invoked implx auto for this run",
+    )
+    parser.add_argument(
+        "--run-authorization-source",
+        help="Source of the explicit implx auto invocation",
+    )
+    parser.add_argument(
+        "--run-authorization-at",
+        help="When the run-scoped implx auto authorization was given",
+    )
     parser.add_argument(
         "--review-source",
         choices=sorted(REVIEW_SOURCES),
@@ -688,6 +724,25 @@ def main() -> int:
             args.authorization_head_sha,
             args.authorization_at,
         )
+        run_authorization = build_run_authorization(
+            args.run_authorization_actor,
+            args.run_authorization_source,
+            args.github_repo,
+            args.run_id,
+            args.run_authorization_at,
+        )
+        if args.auth_mode == "auto" and run_authorization is None:
+            raise EvidenceError(
+                "auth_mode auto requires explicit run-scoped authorization"
+            )
+        if args.auth_mode != "auto" and run_authorization is not None:
+            raise EvidenceError(
+                "run-scoped authorization requires --auth-mode auto"
+            )
+        if args.auth_mode == "auto" and authorization is not None:
+            raise EvidenceError(
+                "auth_mode auto must not synthesize per-PR human authorization"
+            )
         self_review_authorization = build_self_review_authorization(
             args.self_review_authorization_actor,
             args.self_review_authorization_source,
@@ -723,6 +778,9 @@ def main() -> int:
             args.content_binding_v1 or args.content_binding_only,
             reusable_ci_evidence,
             round_cap_authorizations,
+            args.auth_mode,
+            args.run_id,
+            run_authorization,
         )
         if args.content_binding_only:
             evidence = build_content_binding_evidence(args.pr, evidence)

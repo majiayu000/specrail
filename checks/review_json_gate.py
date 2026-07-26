@@ -289,18 +289,6 @@ def _validate_review_round(
     bounded = review.get("round_policy_version") == 1
     if bounded and review_round >= 2 and review_mode not in {"resumed", "diff_only"}:
         reasons.append("bounded review_round >= 2 requires resumed or diff_only mode")
-    elif not bounded and review_mode == "full" and review_round > FULL_REVIEW_ROUND_CAP:
-        request = review.get("human_full_review_request")
-        if _non_empty_string(request):
-            satisfied.append(
-                f"round {review_round} full review authorized by human request"
-            )
-        else:
-            reasons.append(
-                f"review_round {review_round} with review_mode full exceeds the "
-                f"cap of {FULL_REVIEW_ROUND_CAP}; use resumed/diff_only or record "
-                "human_full_review_request"
-            )
     elif not bounded and review_round > FULL_REVIEW_ROUND_CAP:
         reason = legacy_round_cap_reason(review, FULL_REVIEW_ROUND_CAP)
         if reason is None:

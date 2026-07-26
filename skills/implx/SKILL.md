@@ -68,6 +68,10 @@ baseline; it never selects or authorizes auto mode.
 
 - The explicit `implx auto` invocation itself IS the standing merge
   authorization for this run. Do not ask per-PR "can I merge" questions.
+- Preserve the invocation as one schema-backed `run_authorization` bound to
+  the repository and current `run_id`; pass it with `auth_mode: auto` to
+  fastlane and PR gates. Never synthesize a later exact-head
+  `human_authorization` from the standing invocation.
 - Merge a PR when all evidence required by its selected profile is current and
   green per `skills/specrail-implement-queue/SKILL.md`.
 - Use closing keywords for final slices so merged PRs close their issues;

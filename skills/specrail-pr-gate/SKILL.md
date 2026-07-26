@@ -33,6 +33,13 @@ linked-work evidence and never authorizes final completion or issue closure.
 python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
 ```
 
+For an explicit `implx auto` run, collect evidence with `--auth-mode auto`,
+`--run-id`, and the `--run-authorization-*` fields from the original
+invocation. The resulting `run_authorization` is repository/run scoped; it
+never becomes a fabricated exact-head `human_authorization`. In review mode,
+`human_authorization.authorized_at` must be timezone-aware and no earlier than
+the terminal `review_completed_at`.
+
 3. Confirm evidence includes linked issue and, for new adapter output, a
    self-consistent `issue_reference`; also confirm current PR head SHA, gate-query
    completion timestamp, gate-query head SHA, CI/check rollup, review decision,

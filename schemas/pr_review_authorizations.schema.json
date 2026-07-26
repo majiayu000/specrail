@@ -31,6 +31,43 @@
         }
       }
     },
+    "run_authorization": {
+      "type": "object",
+      "required": [
+        "actor",
+        "source",
+        "repository",
+        "run_id",
+        "decision",
+        "authorized_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decision": {
+          "const": "authorize_auto_run"
+        },
+        "authorized_at": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "self_review_authorization": {
       "type": "object",
       "required": ["actor", "source", "scope"],

@@ -46,6 +46,7 @@ REQUIRED_FILES = [
     "checks/github_approved_spec_evidence.py",
     "checks/github_issue_reference.py",
     "checks/github_issue_evidence.py",
+    "checks/merge_authorization_gate.py",
     "checks/github_pr_evidence.py",
     "checks/github_pr_snapshot.py",
     "checks/github_review_evidence.py",

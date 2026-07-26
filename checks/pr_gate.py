@@ -19,6 +19,7 @@ from evidence_content_binding import (
     validate_content_binding,
 )
 from github_evidence_common import EvidenceError, trusted_ci_coverage
+from merge_authorization_gate import evaluate_merge_authorization
 from pr_review_contract import evaluate_review_contract_with_items
 from review_result_semantics import evaluate_review_evidence
 from rejection_items import (
@@ -300,36 +301,10 @@ def _validated_sensitive_route_audit(
 
 def _authorization_item(
     evidence: dict[str, Any],
-) -> tuple[list[str], list[str], list[str]]:
-    """Require explicit per-PR human authorization.
+) -> tuple[list[str], list[str], list[str], list[dict[str, Any]]]:
+    """Use the shared profile-aware authorization evaluator."""
 
-    Risk tiers select verification depth only. They never satisfy the merge
-    authorization item in review mode.
-    """
-    reasons: list[str] = []
-    authorization = evidence.get("human_authorization")
-    if not isinstance(authorization, dict):
-        return [], ["human_authorization"], reasons
-    missing = []
-    for key in ["actor", "source", "head_sha", "authorized_at"]:
-        if not _non_empty_string(authorization.get(key)):
-            missing.append(f"human_authorization.{key}")
-    if missing:
-        return [], missing, reasons
-    if authorization["head_sha"] != evidence.get("head_sha"):
-        reasons.append(
-            "human_authorization.head_sha must match the current head_sha; "
-            "re-collect authorization after the head changes"
-        )
-        return [], [], reasons
-    return (
-        [
-            f"human authorization from {authorization['actor']} via "
-            f"{authorization['source']} at head {authorization['head_sha']}"
-        ],
-        [],
-        reasons,
-    )
+    return evaluate_merge_authorization(evidence)
 
 
 def evaluate_pr_gate(
@@ -543,7 +518,9 @@ def evaluate_pr_gate(
             item_from_reason(reason, "contract_violation")
             for reason in review_reasons
         )
-    auth_satisfied, auth_missing, auth_reasons = _authorization_item(evidence)
+    auth_satisfied, auth_missing, auth_reasons, auth_signals = (
+        _authorization_item(evidence)
+    )
     satisfied.extend(auth_satisfied)
     missing.extend(auth_missing)
     reasons.extend(auth_reasons)
@@ -575,6 +552,8 @@ def evaluate_pr_gate(
         "review_source": evidence.get("review_source"),
         "gate_query_completed_at": evidence.get("gate_query_completed_at"),
         "gate_query_head_sha": evidence.get("gate_query_head_sha"),
+        "auth_mode": evidence.get("auth_mode", "review"),
+        "run_id": evidence.get("run_id"),
         "content_binding_version": evidence.get("content_binding_version"),
         "snapshot": evidence.get("snapshot"),
         "content_hashes": evidence.get("content_hashes"),
@@ -586,6 +565,7 @@ def evaluate_pr_gate(
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),
         "rejection_items": [] if decision == "allowed" else finalize_items(items),
+        "signals": auth_signals,
         "blocked_actions": blocked_actions,
         "verification_commands": [
             "python3 checks/pr_gate.py --repo . --evidence <evidence.json>",

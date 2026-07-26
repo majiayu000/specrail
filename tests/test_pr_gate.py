@@ -662,7 +662,7 @@ def test_pr_gate_tier_metadata_with_human_authorization_allowed() -> None:
     result = evaluate_pr_gate(evidence)
 
     assert result["decision"] == "allowed"
-    assert any("human authorization from" in item for item in result["satisfied"])
+    assert any("review-mode human authorization" in item for item in result["satisfied"])
 
 
 def test_pr_gate_human_authorization_requires_head_and_time_binding() -> None:
@@ -695,6 +695,53 @@ def test_pr_gate_human_authorization_head_mismatch_blocks() -> None:
         "human_authorization.head_sha must match" in reason
         for reason in result["reasons"]
     )
+
+
+def test_pr_gate_rejects_authorization_before_terminal_review() -> None:
+    evidence = clean_evidence()
+    evidence["human_authorization"]["authorized_at"] = "2000-01-01T00:00:00Z"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "must be at or after review_completed_at" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_pr_gate_accepts_run_scoped_auto_authorization() -> None:
+    evidence = clean_evidence()
+    evidence.pop("human_authorization")
+    evidence["auth_mode"] = "auto"
+    evidence["repository"] = "majiayu000/specrail"
+    evidence["run_id"] = "implx-20260726"
+    evidence["run_authorization"] = {
+        "actor": "maintainer",
+        "source": "explicit implx auto invocation",
+        "repository": "majiayu000/specrail",
+        "run_id": "implx-20260726",
+        "decision": "authorize_auto_run",
+        "authorized_at": "2026-07-03T23:00:00Z",
+    }
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "allowed"
+    assert result["auth_mode"] == "auto"
+    assert any("repository and run" in item for item in result["satisfied"])
+
+
+def test_pr_gate_auto_mode_does_not_require_per_pr_human_authorization() -> None:
+    evidence = clean_evidence()
+    evidence.pop("human_authorization")
+    evidence["auth_mode"] = "auto"
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert "run_authorization" in result["missing"]
+    assert "human_authorization" not in result["missing"]
 
 
 def _stacked_declaration() -> dict[str, object]:

@@ -21,6 +21,7 @@ from github_pr_evidence import (  # noqa: E402
     REVIEW_THREADS_QUERY,
     build_evidence,
     build_human_authorization,
+    build_run_authorization,
     collect_evidence,
     load_maintainer_role_map,
     load_round_cap_authorizations,
@@ -610,6 +611,55 @@ def test_authorization_flags_must_include_actor_source_head_and_time() -> None:
 
     with pytest.raises(EvidenceError):
         build_human_authorization("user", "chat", "approved", None, None)
+
+
+def test_run_authorization_binds_repository_and_run() -> None:
+    assert build_run_authorization(None, None, None, None, None) is None
+    assert build_run_authorization(
+        "user",
+        "current conversation",
+        "majiayu000/specrail",
+        "implx-20260726",
+        "2026-07-26T11:00:00Z",
+    ) == {
+        "actor": "user",
+        "source": "current conversation",
+        "repository": "majiayu000/specrail",
+        "run_id": "implx-20260726",
+        "decision": "authorize_auto_run",
+        "authorized_at": "2026-07-26T11:00:00Z",
+    }
+
+    with pytest.raises(EvidenceError, match="requires actor"):
+        build_run_authorization(
+            "user", None, "majiayu000/specrail", "implx-20260726", None
+        )
+
+
+def test_build_evidence_records_auto_run_authorization() -> None:
+    run_authorization = build_run_authorization(
+        "user",
+        "current conversation",
+        "majiayu000/specrail",
+        "implx-20260726",
+        "2026-07-26T11:00:00Z",
+    )
+    evidence = build_evidence(
+        pr_payload(),
+        threads_payload(),
+        review_source="independent_lane",
+        review_evidence=clean_review_evidence(),
+        resolver_roles=reviewer_resolver_roles(),
+        repository="majiayu000/specrail",
+        auth_mode="auto",
+        run_id="implx-20260726",
+        run_authorization=run_authorization,
+    )
+
+    assert evidence["auth_mode"] == "auto"
+    assert evidence["run_id"] == "implx-20260726"
+    assert evidence["run_authorization"] == run_authorization
+    assert evidence["repository"] == "majiayu000/specrail"
 
 
 def _round_cap_authorization() -> dict[str, object]:

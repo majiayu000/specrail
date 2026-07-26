@@ -148,15 +148,17 @@ Verification profiles:
 
 | Tier | Required | Not required by default |
 | --- | --- | --- |
-| `fastlane` | focused tests, repository-required CI, one independent exact-head review, clean merge state | structured review manifest, hosted review, GraphQL thread collection, `pr_gate`, runtime checkpoint |
+| `fastlane` | focused tests, repository-required CI, one independent exact-head review, clean merge state, `merge_authorization_gate.py` | structured review manifest, hosted review, GraphQL thread collection, `pr_gate`, runtime checkpoint |
 | `standard` | focused/relevant tests, repository-required CI, one independent exact-head review, linked-spec comparison, `pr_gate` | hosted review, runtime checkpoint outside a long-run milestone |
 | `heavy` | full repository verification plus every standard gate, structured review manifest, thread evidence, and milestone checkpoint | none |
 
 Rules:
 
-- Record `pr_tier` with its evidence (changed-line count, touched paths) on
-  the PR evidence. Where the repository ships a CI tier check, that
-  check is the enforcing authority — never self-declare `fastlane`
+- Record `pr_tier` with `pr_tier_evidence` (changed-line count and touched
+  paths), `enforcement_sensitive`, and `protected_paths` on the PR evidence.
+  Fastlane evidence must include an independent review `tier_attestation`
+  confirming that classification. Where the repository ships a CI tier check,
+  that check is the enforcing authority — never self-declare `fastlane`
   against it.
 - When in doubt between two tiers, pick the heavier one.
 - A protected path or enforcement-sensitive change is always `heavy`.
@@ -169,7 +171,14 @@ Rules:
   repository-required CI green at the exact head, one independent exact-head
   review at that head, clean merge state, and the per-PR human authorization
   (in `auth_mode: review`) naming the PR and current head. Record all four in
-  the PR evidence; a handoff assertion alone never satisfies this gate.
+  schema-backed fastlane evidence and run:
+
+  ```sh
+  python3 checks/merge_authorization_gate.py \
+    --repo . --evidence <fastlane-evidence.json> --json
+  ```
+
+  A handoff assertion alone never satisfies this gate.
 
 ## Queue Planning
 
@@ -498,7 +507,8 @@ Before readiness, run the verification profile selected under PR Tier Lanes.
 `standard` and `heavy` compare the diff with linked specs via
 `skills/specrail-check-impl-against-spec/SKILL.md` and use
 `skills/specrail-pr-gate/SKILL.md`. `fastlane` does not invoke those gates.
-All tiers still run checks explicitly required by the consumer repository.
+It invokes only `checks/merge_authorization_gate.py`; all tiers still run
+checks explicitly required by the consumer repository.
 
 For `standard` and `heavy` GitHub PRs, current evidence must include:
 
@@ -526,6 +536,11 @@ state.
 - The current user message must explicitly say `implx auto` / `implx 自动`.
   That invocation is the standing merge authorization for the run. Do not ask
   per-PR merge questions.
+- Record that invocation once as `run_authorization` with
+  `decision: authorize_auto_run`, repository, `run_id`, actor, source, and
+  `authorized_at`. Pass `auth_mode: auto`, the same `run_id`, and this object
+  to every gate in the run. Never rewrite it as exact-head
+  `human_authorization`.
 - Merge when the selected profile's current evidence is green. Fastlane needs
   CI, one independent exact-head review, and clean merge state. Standard and
   heavy additionally need their declared PR/thread gates. Any required evidence
@@ -545,7 +560,9 @@ state.
 `auth_mode: review`:
 
 - Every PR requires explicit human merge authorization in the current
-  conversation after its selected verification profile is green.
+  conversation after its selected verification profile is green. Its
+  timezone-aware `authorized_at` must be at or after the terminal
+  `review_completed_at` and bound to the exact reviewed head.
 - `pr_tier` changes verification depth only and never grants merge authority.
 - Findings that change intent, paths, contracts, or security-sensitive behavior
   invalidate prior authorization and require a new human authorization after

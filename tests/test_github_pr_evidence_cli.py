@@ -226,7 +226,7 @@ def test_cli_wires_external_round_cap_authorization_and_maintainer_map(
     )
 
     def fake_collect(*args: object) -> dict[str, object]:
-        return {"round_cap_authorizations": args[-1]}
+        return {"round_cap_authorizations": args[15]}
 
     monkeypatch.setattr(github_pr_evidence_module, "collect_evidence", fake_collect)
     monkeypatch.setattr(

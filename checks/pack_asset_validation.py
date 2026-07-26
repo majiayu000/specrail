@@ -18,6 +18,7 @@ SPEC_SCHEMA_FILES = frozenset(
         "content_binding_evidence.schema.json",
         "duplicate_work_evidence.schema.json",
         "evaluation_result.schema.json",
+        "fastlane_gate_evidence.schema.json",
         "flow_manifest.schema.json",
         "issue_evidence.schema.json",
         "issue_triage.schema.json",

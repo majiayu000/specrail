@@ -193,6 +193,8 @@
       "type": "string",
       "minLength": 1
     },
+    "auth_mode": {"enum": ["auto", "review"]},
+    "run_id": {"type": "string", "minLength": 1},
     "base_sha": {
       "type": "string",
       "minLength": 40
@@ -786,6 +788,7 @@
     "human_authorization": {
       "$ref": "pr_review_authorizations.schema.json#/properties/human_authorization"
     },
+    "run_authorization": {"$ref": "pr_review_authorizations.schema.json#/properties/run_authorization"},
     "self_review_authorization": {
       "$ref": "pr_review_authorizations.schema.json#/properties/self_review_authorization"
     }

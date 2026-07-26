@@ -383,12 +383,31 @@ def test_review_json_gate_blocks_round_three_full_without_request() -> None:
     assert any("exceeds the cap" in reason for reason in result["reasons"])
 
 
-def test_review_json_gate_allows_round_three_full_with_human_request() -> None:
+def test_review_json_gate_blocks_round_three_full_with_human_request_only() -> None:
     result = evaluate_review_gate(
         load_review("review-round3-full-with-request.json"), load_diff()
     )
 
-    assert result["decision"] == "allowed", result["reasons"]
+    assert result["decision"] == "blocked"
+    assert any(
+        "bounded_diff_v1 v2 manifest" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_review_json_gate_blocks_legacy_round_three_full_with_escalation() -> None:
+    review = load_review("review-round3-full-with-request.json")
+    review["round_cap_escalation"] = {
+        "authorization_id": "RCA-489-3",
+        "unresolved_findings": [],
+    }
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "bounded_diff_v1 v2 manifest" in reason for reason in result["reasons"]
+    )
 
 
 def test_review_json_gate_blocks_legacy_round_three_without_escalation() -> None:
@@ -398,12 +417,12 @@ def test_review_json_gate_blocks_legacy_round_three_without_escalation() -> None
 
     assert result["decision"] == "blocked"
     assert any(
-        "round_cap_escalation.authorization_id" in reason
+        "bounded_diff_v1 v2 manifest" in reason
         for reason in result["reasons"]
     )
 
 
-def test_review_json_gate_allows_legacy_round_three_with_escalation() -> None:
+def test_review_json_gate_blocks_legacy_round_three_with_escalation() -> None:
     review = load_review("review-round3-diff-only-checklist.json")
     review["round_cap_escalation"] = {
         "authorization_id": "RCA-489-3",
@@ -411,7 +430,10 @@ def test_review_json_gate_allows_legacy_round_three_with_escalation() -> None:
     }
     result = evaluate_review_gate(review, load_diff())
 
-    assert result["decision"] == "allowed", result["reasons"]
+    assert result["decision"] == "blocked"
+    assert any(
+        "bounded_diff_v1 v2 manifest" in reason for reason in result["reasons"]
+    )
 
 
 def test_review_json_gate_blocks_resumed_round_without_checklist() -> None:
