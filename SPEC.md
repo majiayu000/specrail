@@ -115,6 +115,8 @@ authority. The checkpoint is only a milestone resume cursor: run identity,
 scope, completed/pending/blocked work references, artifact paths, and the next
 action. GitHub, CI, review, merge, authorization, PR-gate, branch, worktree,
 budget, Goal, and agent telemetry state are intentionally outside this contract.
+The cursor format is version 4; older v1–v3 ledger files are incompatible and
+must be recreated from current GitHub and artifact truth.
 
 Tests keep the two in sync by validating representative runtime checkpoint
 instances against the schema and checking cross-list uniqueness and milestone

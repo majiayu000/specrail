@@ -65,7 +65,13 @@ def test_complete_checkpoint_rejects_remaining_work() -> None:
 
 @pytest.mark.parametrize(
     ("status", "milestone_state"),
-    [("running", "complete"), ("handoff", "active"), ("blocked", "active")],
+    [
+        ("running", "complete"),
+        ("running", "paused"),
+        ("handoff", "active"),
+        ("blocked", "active"),
+        ("complete", "paused"),
+    ],
 )
 def test_checkpoint_status_matches_milestone_state(
     status: str, milestone_state: str
@@ -78,6 +84,36 @@ def test_checkpoint_status_matches_milestone_state(
 
     assert result["decision"] == "blocked"
     assert any("milestone" in error for error in result["errors"])
+
+
+@pytest.mark.parametrize("status", ["handoff", "blocked"])
+def test_unfinished_milestone_can_pause_for_handoff_or_block(status: str) -> None:
+    payload = checkpoint("runtime-handoff.json")
+    payload["status"] = status
+
+    result = evaluate_checkpoint(payload)
+
+    assert result["decision"] == "allowed"
+
+
+def test_checkpoint_rejects_completed_at_on_unfinished_milestone() -> None:
+    payload = checkpoint()
+    payload["milestone"]["completed_at"] = "2026-07-26T12:30:00+08:00"
+
+    result = evaluate_checkpoint(payload)
+
+    assert result["decision"] == "blocked"
+    assert "active milestone requires completed_at null" in result["errors"]
+
+
+def test_checkpoint_requires_completed_at_for_complete_milestone() -> None:
+    payload = checkpoint("runtime-complete.json")
+    payload["milestone"]["completed_at"] = None
+
+    result = evaluate_checkpoint(payload)
+
+    assert result["decision"] == "blocked"
+    assert "complete milestone requires completed_at" in result["errors"]
 
 
 def test_checkpoint_schema_rejects_copied_github_state() -> None:
@@ -134,7 +170,7 @@ def test_runtime_ledger_gate_cli_json_contract(tmp_path: Path) -> None:
 
 def test_schema_rejects_unknown_checkpoint_version() -> None:
     payload = checkpoint()
-    payload["checkpoint_version"] = 2
+    payload["checkpoint_version"] = 3
     schema = load_json_schema(ROOT / "schemas" / "runtime_checkpoint.schema.json")
 
     with pytest.raises(SpecRailError, match="checkpoint_version"):

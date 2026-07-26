@@ -20,7 +20,7 @@
   ],
   "additionalProperties": false,
   "properties": {
-    "checkpoint_version": {"const": 1},
+    "checkpoint_version": {"const": 4},
     "run_id": {"type": "string", "minLength": 1},
     "repo": {"type": "string", "minLength": 1},
     "scope": {"type": "string", "minLength": 1},
@@ -31,7 +31,7 @@
       "additionalProperties": false,
       "properties": {
         "id": {"type": "string", "minLength": 1},
-        "state": {"enum": ["active", "complete"]},
+        "state": {"enum": ["active", "paused", "complete"]},
         "completed_at": {"type": ["string", "null"]}
       }
     },

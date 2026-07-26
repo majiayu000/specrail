@@ -29,11 +29,6 @@ from rejection_items import (
     item_from_reason,
     items_from_legacy,
 )
-from runtime_tier_authorization import (
-    AUTHORIZATION_TIERS,
-    STANDARD_AUTO_TIERS,
-    _valid_pr_tier_evidence,
-)
 from sensitive_enforcement import (
     evaluate_sensitive_evidence_with_items,
     sensitive_registry,
@@ -303,67 +298,15 @@ def _validated_sensitive_route_audit(
     }
 
 
-def _tier_substantiation_reference(evidence: dict[str, Any]) -> str | None:
-    """GH-143 defense in depth: standard_auto needs an independent reference.
-
-    Self-reported pr_tier_evidence alone never satisfies the authorization
-    item; the evidence must also reference independent substantiation —
-    either a ci_tier_check artifact reference or a tier_attestation_ref
-    pointing at review evidence whose review_source is independent_lane.
-    """
-    ci_tier_check = evidence.get("ci_tier_check")
-    if isinstance(ci_tier_check, dict) and _non_empty_string(
-        ci_tier_check.get("evidence")
-    ):
-        return "ci_tier_check artifact reference"
-    if _non_empty_string(evidence.get("tier_attestation_ref")):
-        review_evidence = evidence.get("review_evidence")
-        review_source = (
-            review_evidence.get("review_source")
-            if isinstance(review_evidence, dict)
-            else None
-        )
-        if review_source == "independent_lane":
-            return "tier_attestation_ref backed by independent_lane review evidence"
-    return None
-
-
 def _authorization_item(
     evidence: dict[str, Any],
-    *,
-    enforcement_sensitive: bool = False,
 ) -> tuple[list[str], list[str], list[str]]:
-    """GH-143 B-007: tier-scoped authorization or per-PR human authorization.
+    """Require explicit per-PR human authorization.
 
-    standard_auto on a non-sensitive fastlane/standard PR with tier evidence
-    plus an independent substantiation reference satisfies the authorization
-    item. Every other case (heavy, sensitive, missing tier evidence or
-    substantiation, out-of-set authorization_tier) keeps the existing
-    human_authorization requirement.
+    Risk tiers select verification depth only. They never satisfy the merge
+    authorization item in review mode.
     """
     reasons: list[str] = []
-    tier = evidence.get("authorization_tier")
-    if tier is not None and tier not in AUTHORIZATION_TIERS:
-        allowed = ", ".join(sorted(AUTHORIZATION_TIERS))
-        reasons.append(f"authorization_tier must be one of: {allowed}")
-        tier = None
-    if tier == "standard_auto":
-        pr_tier = evidence.get("pr_tier")
-        substantiation = _tier_substantiation_reference(evidence)
-        if (
-            pr_tier in STANDARD_AUTO_TIERS
-            and _valid_pr_tier_evidence(evidence.get("pr_tier_evidence"))
-            and not enforcement_sensitive
-            and substantiation is not None
-        ):
-            return (
-                [
-                    f"tier authorization: standard_auto (pr_tier={pr_tier}), "
-                    f"substantiated by {substantiation}"
-                ],
-                [],
-                reasons,
-            )
     authorization = evidence.get("human_authorization")
     if not isinstance(authorization, dict):
         return [], ["human_authorization"], reasons
@@ -591,9 +534,7 @@ def evaluate_pr_gate(
             item_from_reason(reason, "contract_violation")
             for reason in review_reasons
         )
-    auth_satisfied, auth_missing, auth_reasons = _authorization_item(
-        evidence, enforcement_sensitive=enforcement_sensitive_flag
-    )
+    auth_satisfied, auth_missing, auth_reasons = _authorization_item(evidence)
     satisfied.extend(auth_satisfied)
     missing.extend(auth_missing)
     reasons.extend(auth_reasons)

@@ -53,12 +53,24 @@ def evaluate_checkpoint(data: dict[str, Any], **_: Any) -> dict[str, Any]:
     status = data["status"]
     if status == "complete" and (data["pending"] or data["blocked"]):
         errors.append("complete checkpoint cannot contain pending or blocked work")
-    if status == "running" and data["milestone"]["state"] != "active":
+    milestone = data["milestone"]
+    milestone_state = milestone["state"]
+    completed_at = milestone.get("completed_at")
+    if status == "running" and milestone_state != "active":
         errors.append("running checkpoint requires an active milestone")
-    if status in {"handoff", "blocked", "complete"} and (
-        data["milestone"]["state"] != "complete"
-    ):
+    if status in {"handoff", "blocked"} and milestone_state not in {
+        "paused",
+        "complete",
+    }:
+        errors.append(f"{status} checkpoint requires a paused or complete milestone")
+    if status == "complete" and milestone_state != "complete":
         errors.append(f"{status} checkpoint requires a complete milestone")
+    if milestone_state == "complete" and not (
+        isinstance(completed_at, str) and completed_at.strip()
+    ):
+        errors.append("complete milestone requires completed_at")
+    if milestone_state != "complete" and completed_at is not None:
+        errors.append(f"{milestone_state} milestone requires completed_at null")
 
     return {
         "decision": "blocked" if errors else "allowed",

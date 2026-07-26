@@ -37,22 +37,9 @@ python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
    self-consistent `issue_reference`; also confirm current PR head SHA, gate-query
    completion timestamp, gate-query head SHA, CI/check rollup, review decision,
    review source, lane failures, review-thread resolution, merge state, and the
-   merge authorization: either human merge authorization
-   (`human_authorization.actor`/`source`) or a GH-143 tier-scoped
-   authorization (`authorization_tier: standard_auto` with `pr_tier`
-   fastlane/standard, `pr_tier_evidence` with changed-line count and touched
-   paths, a non-sensitive classification, AND a reference to independent
-   substantiation: a `ci_tier_check` artifact reference or a
-   `tier_attestation_ref` backed by `review_evidence` with `review_source`
-   `independent_lane`). Heavy or sensitive PRs, missing tier evidence, or a
-   missing substantiation reference keep the human-authorization requirement
-   (`needs_human`); self-reported tier evidence alone is never sufficient.
-   The runtime ledger gate additionally loads and verifies the artifacts
-   themselves: the review artifact must validate against
-   `schemas/review_result.schema.json`, the `tier_attestation` counts only
-   when the artifact's own `review_source` is `independent_lane` and the
-   item is not `self_review`, and a `self_review` item can never qualify for
-   standard_auto.
+   per-PR human merge authorization
+   (`human_authorization.actor`/`source`). Risk tiers select verification
+   depth only and never satisfy this authorization item.
 
    For enforcement-sensitive evidence, also confirm the route-specific approval
    contract. `sensitive_route: approved_spec` requires `approved_spec` evidence.

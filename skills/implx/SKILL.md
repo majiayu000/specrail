@@ -56,26 +56,10 @@ baseline; it never selects or authorizes auto mode.
 `auth_mode: review` — the DEFAULT for plain `implx`, `use implx`, `用 implx`,
 `implx review`, `implx 审核`, and `implx 人工`:
 
-- Tiered merge authorization (GH-143): a PR whose `pr_tier` is `fastlane` or
-  `standard`, with the selected queue verification profile green, AND
-  independent tier substantiation (a
-  gate-verifiable CI tier-check artifact or a reviewer-lane
-  `tier_attestation` in a schema-valid review artifact whose own
-  `review_source` is `independent_lane`), is authorized to merge without
-  a per-PR question. Record `authorization_tier: standard_auto` and
-  `merge_authorization.source: tier_policy_gh143` in the PR evidence or handoff.
-  A `review_source: self_review` item never qualifies for standard_auto.
-- `heavy` tier PRs and enforcement-sensitive surfaces (gate code,
-  enforcement, contracts, authorization semantics, schemas/migrations,
-  security) keep per-PR explicit human merge authorization in the current
-  conversation before any merge (`authorization_tier: heavy_manual`).
-- Missing, unevidenced, or out-of-set `pr_tier` fails closed to `heavy`. A
-  reviewer-lane `tier_dispute` or a `tier_attestation` that disagrees with
-  the checkpoint `pr_tier` is a dispute: standard_auto is blocked until a
-  human decides. Only the reviewer/merge-reviewer lane (or a human) may set
-  or clear the dispute marker.
-- Tier authorization never replaces a profile requirement. Do not require
-  heavier-profile evidence from fastlane work.
+- Every PR requires explicit human merge authorization in the current
+  conversation. `pr_tier` selects verification depth only; it never grants
+  merge authority.
+- Do not require heavier-profile evidence from fastlane work.
 - Route `needs_spec` / `needs_tasks` to spec-writing skills but wait for
   human confirmation before implementing from a freshly drafted spec.
 
@@ -84,9 +68,8 @@ baseline; it never selects or authorizes auto mode.
 
 - The explicit `implx auto` invocation itself IS the standing merge
   authorization for this run. Do not ask per-PR "can I merge" questions.
-- Merge a PR when ALL evidence is current and green per
-  `skills/specrail-implement-queue/SKILL.md` (CI rollup, PR gate, resolved
-  review threads, clean merge state, reviewer-lane evidence).
+- Merge a PR when all evidence required by its selected profile is current and
+  green per `skills/specrail-implement-queue/SKILL.md`.
 - Use closing keywords for final slices so merged PRs close their issues;
   close merged-but-open issues during closure audit.
 - `needs_spec` / `needs_tasks` issues are actionable: auto-draft the spec or
@@ -200,13 +183,10 @@ model-driven poll loop. See Waiting Discipline in
 ## Boundaries
 
 - In `auto` mode, merge only on complete current evidence (CI, review threads,
-  merge state, PR gate, reviewer lane); evidence gaps mean skip and report,
-  not ask.
+  merge state, PR gate, reviewer lane) required by the selected profile;
+  evidence gaps mean skip and report, not ask.
 - In `review` mode, do not merge without explicit human authorization in the
-  current conversation, except via GH-143 `standard_auto`: `fastlane` or
-  `standard` tier, full green evidence, independent tier substantiation, and
-  no tier dispute. Heavy or sensitive PRs and any tier ambiguity always
-  require per-PR human authorization.
+  current conversation. Risk tiers change verification depth, not authority.
 - Do not treat green CI as merge readiness without review-thread and merge-state
   truth.
 - Do not treat hosted review as the primary local reviewer lane; hosted review

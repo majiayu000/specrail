@@ -1,5 +1,5 @@
 {
-  "checkpoint_version": 1,
+  "checkpoint_version": 4,
   "run_id": "example-run",
   "repo": "example/repo",
   "scope": "review the first three pull requests",

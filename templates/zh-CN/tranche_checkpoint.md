@@ -3,13 +3,17 @@
 这是长时间 agent run 的可选恢复游标。仅在 milestone 开始、完成，或 run
 交接、阻塞、结束时更新。GitHub 与 SpecRail artifact 仍是工作流真相。
 
+这是 checkpoint version 4。Version 1–3 使用不兼容的 ledger 格式；迁移时
+应依据当前 GitHub 与 artifact 真相新建 v4 游标。milestone 未完成就交接或
+阻塞时，使用 `paused` state。
+
 不要把可变 GitHub 状态复制进 checkpoint：不得记录 head SHA、CI 状态、
 review 结果、review thread、merge state、authorization、PR gate、branch、
 worktree、budget 或 agent telemetry。
 
 ```json
 {
-  "checkpoint_version": 1,
+  "checkpoint_version": 4,
   "run_id": "YYYY-MM-DD-repo-purpose",
   "repo": "owner/repo or local/path",
   "scope": "the approved queue or tranche scope",

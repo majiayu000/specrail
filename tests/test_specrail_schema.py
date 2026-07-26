@@ -37,15 +37,15 @@ def review_result_schema() -> dict[str, object]:
 
 def valid_checkpoint() -> dict[str, object]:
     return {
-        "checkpoint_version": 1,
+        "checkpoint_version": 4,
         "run_id": "2026-07-03-schema-instance",
         "repo": "example/repo",
         "scope": "schema instance validation",
         "status": "handoff",
         "milestone": {
             "id": "initial-review",
-            "state": "complete",
-            "completed_at": "2026-07-03T12:00:00Z",
+            "state": "paused",
+            "completed_at": None,
         },
         "completed": [{"kind": "issue", "number": 40}],
         "pending": [

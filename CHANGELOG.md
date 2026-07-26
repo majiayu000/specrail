@@ -5,9 +5,9 @@
 ### Changed
 
 - Queue review now performs one full review across the selected PR set, one
-  repair, and one diff-only re-review. Hosted feedback uses one fixed
-  15-minute collection window, and the queue stops for a cost report when the
-  first three PRs all fail to become merge-ready.
+  repair, and one diff-only re-review. Heavy or explicitly requested hosted
+  feedback uses one fixed 15-minute collection window, and the queue stops for
+  a cost report when the first three PRs all fail to become merge-ready.
 - Verification is risk-weighted: fastlane work keeps focused tests,
   repository-required CI, one independent exact-head review, and clean merge
   state without structured review manifests, hosted review, GraphQL thread
@@ -16,7 +16,9 @@
 - Runtime checkpoints are now closed milestone resume cursors rather than a
   second workflow database. The former budget, Goal, telemetry, CI, review,
   thread, merge, authorization, PR-gate, branch, and worktree mirrors and
-  their legacy schemas, fixtures, and validators were removed.
+  their legacy schemas, fixtures, and validators were removed. The incompatible
+  cursor format is version 4, and interrupted milestones may hand off in the
+  explicit `paused` state.
 
 ### Added
 

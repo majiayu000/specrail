@@ -1,13 +1,13 @@
 {
-  "checkpoint_version": 1,
+  "checkpoint_version": 4,
   "run_id": "example-run",
   "repo": "example/repo",
   "scope": "review the first three pull requests",
   "status": "handoff",
   "milestone": {
     "id": "initial-review",
-    "state": "complete",
-    "completed_at": "2026-07-26T12:30:00+08:00"
+    "state": "paused",
+    "completed_at": null
   },
   "completed": [{"kind": "pr", "number": 10}],
   "pending": [{"kind": "pr", "number": 11, "next_action": "apply the single repair"}],

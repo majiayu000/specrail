@@ -4,13 +4,18 @@ This optional local file is a resume cursor for long agent runs. Update it only
 when a milestone starts or completes, or when the run hands off, blocks, or
 finishes. GitHub and SpecRail artifacts remain the workflow truth.
 
+This is checkpoint version 4. Versions 1–3 used incompatible ledger formats;
+migrate by creating a new v4 cursor from current GitHub and artifact truth.
+Use milestone state `paused` when handing off or blocking before a milestone
+completes.
+
 Do not copy mutable GitHub state into the checkpoint: no head SHA, CI status,
 review result, review threads, merge state, authorization, PR gate, branches,
 worktrees, budgets, or agent telemetry.
 
 ```json
 {
-  "checkpoint_version": 1,
+  "checkpoint_version": 4,
   "run_id": "YYYY-MM-DD-repo-purpose",
   "repo": "owner/repo or local/path",
   "scope": "the approved queue or tranche scope",
