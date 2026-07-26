@@ -49,9 +49,10 @@ B-008 要求的"重复 phase 声明必须被拒绝并报告"就无法实现（�
 `startup_planning` 会隐形并悄悄改变路由）。数组形态让重复 `phase` 值可被确定性检出；
 实现禁止改回对象形态，也不得依赖 pair-preserving parser 之外的隐式行为。
 
-允许同一引用服务多个 phase，但每个 phase 路径必须唯一、稳定排序。主文件对每个 phase
-明确“何时加载”和“在首个什么动作前加载”。implx 只加载 queue 主入口，queue 再按
-当前 phase 路由；禁止 implx 预读全部引用。
+允许同一引用服务多个 phase，但**每个 phase 内**路径必须唯一、稳定排序；跨 phase 重复
+同一路径是上述 canonical manifest 的合法复用，validator 不得用全局 path uniqueness
+拒绝。主文件对每个 phase 明确“何时加载”和“在首个什么动作前加载”。implx 只加载 queue
+主入口，queue 再按当前 phase 路由；禁止 implx 预读全部引用。
 
 主文件必须保留稳定关键 marker：
 
@@ -83,8 +84,11 @@ GH-160 自己的 manifest 里同时更新 phase manifest、lock 与闭集检查�
 - `evidence-and-recovery.md`：output firewall、验证层次、handoff、closure audit、
   rejection persistence 与 retry evidence。
 
-引用不含 frontmatter，不声明其他引用，不出现 `../` 或绝对路径。每个引用开头声明
-`Reference only; the main SKILL.md contract wins`，并列出自己服务的 phase ID。
+引用不含 frontmatter，不声明其他引用，不出现 `../` 或绝对路径。每个引用第一条非空行
+必须逐字声明 `Reference only; the main SKILL.md contract wins`，并列出自己服务的 phase ID。
+validator 仅对这条 exact required header 中的单个 bare `SKILL.md` token 做窄豁免；header
+之外的裸 `SKILL.md`、`references/*.md` 或其它主/引用路径仍按二级路由拒绝，近似 header、
+多次出现或在其它位置出现均不豁免。
 normative summary 只在主文件定义；引用给出步骤/字段/示例，不得出现降低 MUST 的
 fallback 语句。
 
@@ -102,35 +106,51 @@ validate_skill_reference_graph(repo, skill_name) -> list[str]
 2. 校验 closed phase enum、非空路由、POSIX 相对路径与 skill-root containment；
 3. 校验每个路径是普通文件且无 symlink component；
 4. 扫描引用中的 Markdown link/marker **以及裸路径 token**（反引号或纯文本里的
-   `SKILL.md`、`references/*.md` 等规范化路径），拒绝对主文件/其他引用的二级路由。
+   `SKILL.md`、`references/*.md` 等规范化路径），拒绝对主文件/其他引用的二级路由；
+   唯一例外是步骤 6 验证通过的第一条 exact required header 中恰好一次 `SKILL.md`，
+   scanner 必须按 line/occurrence 定位豁免，不能把该 token 加入全局 allowlist。
    只扫链接语法不够：这类 skill 文档习惯用反引号裸写可操作文件名，未加链接语法的
    `references/review-and-merge.md` 同样会诱导多跳重读；
 5. 与 GH-172 normalized lock manifest 对账：声明集合必须等于 queue 的额外
    `files[]` 集合；
-6. 检查每个引用声明的 phase 与反向路由一致；
+6. 检查每个引用的 exact required header、声明 phase 与反向路由一致；
 7. 检查关键 marker 只在主文件存在，并按**结构化清单**判定冲突：每条不可绕过合同在
    主文件里有稳定语义 ID（`contract_id`），引用中若出现同一 `contract_id` 的规范性
-   句子，必须逐字复用主文件的短版文本，否则报冲突。除此之外只保留一份显式、封闭的
-   weakening pattern 清单（如 "when available"、"optional"、"best effort"、
-   "may skip"）。B-009 的判定范围随之收窄为「同 contract_id 文本不一致」或「命中清单」
-   两类可判定情形——检查器不承诺检出任意自然语言矛盾，规格也不再声称能做到；
+   句子，必须逐字复用主文件的短版文本，否则报冲突。引用中其它强制步骤必须放在成对的
+   `specrail-normative-v1:start/end` marker 内；仅这些 block 扫描显式、封闭的 weakening
+   pattern 清单（如 "when available"、"optional"、"best effort"、"may skip"），示例、
+   解释和 marker 外普通文本不扫描。这样当前合法的 “optional local runtime checkpoint”
+   可保留在说明文本中，但若在 normative block 用 `optional` 放宽 gate 仍确定性失败。
+   B-009 的判定范围随之收窄为「同 contract_id 文本不一致」或「显式 normative block
+   命中清单」两类可判定情形——检查器不承诺检出其它自然语言矛盾；
 8. 稳定聚合全部错误。
 
 `checks/check_workflow.py` 把 checker 加入 required assets，并对 queue 调用。
 installed doctor 继续负责安装字节/hash；reference graph 负责仓库结构/路由，两者都通过
 才可启动 queue。
 
-仅靠"某次 doctor 或 CI 跑过"不满足 B-005：直接调用 `specrail-implement-queue` 时，
-Startup 在加载任何 phase 引用之前就开始抓取和映射远端队列状态。因此主文件 Startup
-的**第一步**（早于 fetch remote state、写 checkpoint、spawn lane）必须是：
+仅靠"某次 doctor 或 CI 跑过"不满足 B-005。preflight 先从实际加载的 main entrypoint
+descriptor 与 canonical repo root 判定 `execution_origin = repo_copy | installed_copy`；
+调用方不得用 flag 自报 origin。两条入口都必须在 fetch/list/map remote state、写
+checkpoint 或 spawn lane 前执行：
 
 ```sh
 python3 checks/skill_reference_graph.py --repo <specrail-source> --skill specrail-implement-queue --json
-python3 tools/check_installed_codex_skills.py --repo <specrail-source> --require-installed --json
 ```
 
-两条命令都必须 `allowed`/`match`；缺失、漂移或无法定位源包时停止队列，不得降级为
-warning，也不得先做远端读写再补检查。
+- `repo_copy`：graph checker 的 `<specrail-source>` 必须是当前加载 repo copy 所属
+  canonical source root；`allowed` 即可继续，**不得**要求 `$CODEX_HOME`/`~/.codex`
+  存在或运行 `--require-installed`。
+- `installed_copy`：除 source graph `allowed` 外，还必须运行
+  `python3 tools/check_installed_codex_skills.py --repo <specrail-source>
+  --require-installed --json` 并得到 `match`，证明实际加载的 installed bytes 与同一
+  manifest 一致；无法定位 source/loaded origin 或不匹配均停止。
+
+正常 `implx` wrapper 当前在加载 queue 主 Skill 前就 fetch/map remote state，因此
+`skills/implx/SKILL.md` 自己必须先执行上述 origin-aware bootstrap，再做任何远端读取，
+随后才委派 queue。直接调用 `specrail-implement-queue` 时，queue Startup 第一步重复该
+bootstrap，不能信任 wrapper 曾执行。两层都须 fail closed；repo copy 不依赖本机安装，
+installed copy 不得跳过 doctor。
 
 ### 4. 机械等价与尺寸门禁
 
@@ -147,8 +167,8 @@ manifest API 实现并最后刷新 queue/implx hash。
 | --- | --- | --- |
 | B-001 | size validator | `python3 -m pytest -q tests/test_skill_reference_graph.py -k size` |
 | B-002 B-010 B-015 | critical marker inventory | `python3 -m pytest -q tests/test_skill_reference_graph.py -k contract` |
-| B-003 B-004 B-011 | phase router | `python3 -m pytest -q tests/test_skill_reference_graph.py -k phase` |
-| B-005 B-006 B-013 B-014 | GH-172 lock/installer/doctor | `python3 -m pytest -q tests/test_skill_reference_graph.py tests/test_install_codex_skills.py -k "reference or multifile"` |
+| B-003 B-004 B-011 | phase router + exact per-phase isolation | `python3 -m pytest -q tests/test_skill_reference_graph.py -k "phase or runtime_handoff or isolation"` |
+| B-005 B-006 B-013 B-014 | origin-aware repo/installed preflight + GH-172 lock/installer/doctor | `python3 -m pytest -q tests/test_skill_reference_graph.py tests/test_install_codex_skills.py tests/test_check_workflow.py -k "repo_copy or installed_copy or outer_preflight or reference or multifile"` |
 | B-007 B-008 B-009 | graph/safety/conflict rules | `python3 -m pytest -q tests/test_skill_reference_graph.py -k "cycle or path or conflict"` |
 | B-012 | deterministic repeat | `python3 -m pytest -q tests/test_skill_reference_graph.py -k deterministic` |
 | B-016 | post-merge observation boundary | 人工复核报告不作为结构 PR gate |
@@ -179,12 +199,14 @@ installed files  → GH-172 doctor ────────────┘
 
 ## 测试计划
 
-- [ ] Unit: 尺寸、manifest、phase、闭集、循环、路径、冲突与稳定错误。
+- [ ] Unit: 尺寸、manifest、phase 内重复/跨 phase 合法复用、required-header 窄豁免、
+      normative-block weakening、闭集、循环、路径、冲突与稳定错误。
 - [ ] Integration: workflow + GH-172 lock/installer/doctor 多文件 fixture。
 - [ ] Regression: 全量 pytest、all-specs、depth audit、diff/hash/line/byte checks。
 - [ ] Forward-use: 临时安装目录加载 startup_planning、runtime_handoff、review_merge、
   retry_recovery 四条 phase 路径（`runtime_handoff` 同时需要 planning 与 evidence 两个
-  引用，漏测会让坏掉的 handoff 路由通过最终验收却违反 B-004/B-011）。
+  引用），并逐 phase 断言 exact isolation：startup 仅 planning、runtime_handoff 恰为
+  planning+evidence、review 仅 review、recovery 仅 evidence。
 
 ## 回滚方案
 
