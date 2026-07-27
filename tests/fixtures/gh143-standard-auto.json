@@ -61,8 +61,16 @@
       "pr_tier": "standard",
       "pr_tier_evidence": {
         "changed_lines": 42,
-        "touched_paths": ["checks/example.py", "tests/test_example.py"]
+        "changed_lines_countable": true,
+        "changed_files": 2,
+        "touched_paths": ["checks/example.py", "tests/test_example.py"],
+        "source": "github_changed_files",
+        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "base_ref": "main",
+        "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "paths_sha256": "48af4e7c366698ace675551dc12c43e918c7fb69cb4b753844a90cdf2d53125e"
       },
+      "enforcement_sensitive": false,
       "authorization_tier": "standard_auto",
       "ci": {
         "status": "green",
@@ -102,7 +110,7 @@
       "pr_gate": {
         "status": "passed",
         "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
-        "evidence": "examples/fixtures/pr-clean-authorized.json",
+        "evidence": "tests/fixtures/gh143-standard-auto-pr-gate.json",
         "checked_at": "2026-06-30T12:01:00Z"
       },
       "blocker": null,

@@ -1,0 +1,36 @@
+# Canonical queue-plan shape referenced by skills/specrail-implement-queue/SKILL.md.
+specrail_implementation_queue:
+  overall_objective:
+  queue_mode: bounded_tranche | full_queue_drain
+  auth_mode: auto | review
+  spec_coverage:
+    complete:
+    needs_tasks:
+    needs_spec:
+    umbrella_covered:
+    exception_allowed:
+  current_tranche:
+  remaining_queue:
+  issues:
+    - issue:
+      spec_dir:
+      spec_status: complete | needs_tasks | needs_spec | umbrella_covered | exception_allowed
+      spec_status_reason:
+      acceptance_criteria:
+      existing_prs:
+      planned_prs:
+      completion_mode: partial | final
+      verification:
+  gates:
+    route_gate:
+    pr_gate:
+    review_threads:
+    merge_authorization:
+  context_budget:
+    soft_stop_ratio: 0.50
+    hard_stop_ratio: 0.65
+    critical_stop_ratio: 0.75
+  checkpoint:
+    path:
+    runtime_gate:
+  stop_policy:

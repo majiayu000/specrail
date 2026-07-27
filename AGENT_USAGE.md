@@ -184,7 +184,7 @@ For long agent runs, maintain an optional local runtime checkpoint before
 handoff or compaction:
 
 ```sh
-python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.json --json
+python3 checks/runtime_ledger_gate.py --repo . --checkpoint .specrail/runtime/current.json --json
 ```
 
 Use the checkpoint to preserve tranche scope, context budget, output-firewall

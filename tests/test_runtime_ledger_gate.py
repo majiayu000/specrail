@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -20,6 +21,7 @@ from runtime_ledger_gate import (  # noqa: E402
 )
 from specrail_lib import (  # noqa: E402
     RUNTIME_ONLY_STATE,
+    load_pack,
     RUNTIME_STATE_MAPPING,
     SPEC_STATUSES,
     load_yaml_file,
@@ -101,21 +103,38 @@ def _fastlane_self_review_checkpoint() -> dict[str, object]:
     checkpoint = json.loads(fixture.read_text(encoding="utf-8"))
     item = checkpoint["items"][0]
     item["lane_failures"] = []
+    item["review_source"] = "self_review"
     item["pr_tier"] = "fastlane"
+    touched_paths = ["docs/notes.md"]
     item["pr_tier_evidence"] = {
         "changed_lines": 12,
-        "touched_paths": ["docs/notes.md"],
+        "changed_lines_countable": True,
+        "changed_files": 1,
+        "touched_paths": touched_paths,
+        "source": "github_changed_files",
+        "head_sha": item["head_sha"],
+        "base_ref": "main",
+        "base_sha": "b" * 40,
+        "paths_sha256": hashlib.sha256(
+            json.dumps(touched_paths, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
     }
+    item["enforcement_sensitive"] = False
     item["self_review_authorization"] = {
         "basis": "fastlane_policy",
         "scope": "PR #718 docs-only fastlane change",
         "conversation_marker": "implx auto 2026-07-26",
     }
+    item["pr_gate"]["evidence"] = str(
+        ROOT / "examples" / "fixtures" / "pr-fastlane-self-review-authorized.json"
+    )
     return checkpoint
 
 
 def test_runtime_ledger_gate_allows_fastlane_self_review_without_lane_failures() -> None:
-    result = evaluate_checkpoint(_fastlane_self_review_checkpoint())
+    result = evaluate_checkpoint(
+        _fastlane_self_review_checkpoint(), repo=ROOT, config=load_pack(ROOT)
+    )
 
     assert result["decision"] == "allowed"
     assert result["errors"] == []
@@ -139,7 +158,7 @@ def test_runtime_ledger_gate_blocks_fastlane_self_review_on_sensitive_item() -> 
 
     assert result["decision"] == "blocked"
     assert any(
-        "enforcement-sensitive item cannot use fastlane_policy" in error
+        "fastlane_policy self-review requires enforcement_sensitive false" in error
         for error in result["errors"]
     )
 
@@ -153,6 +172,88 @@ def test_runtime_ledger_gate_blocks_fastlane_self_review_without_tier_evidence()
     assert result["decision"] == "blocked"
     assert any(
         "requires pr_tier_evidence" in error for error in result["errors"]
+    )
+
+
+def test_runtime_ledger_gate_blocks_fastlane_self_review_without_explicit_non_sensitive() -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    checkpoint["items"][0].pop("enforcement_sensitive")
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("requires enforcement_sensitive false" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_fastlane_self_review_over_line_limit() -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    checkpoint["items"][0]["pr_tier_evidence"]["changed_lines"] = 100_000
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("changed_lines must be at most 50" in error for error in result["errors"])
+
+
+@pytest.mark.parametrize(
+    "protected_path",
+    [
+        "schemas/pr_review_gate.schema.json",
+        ".github/workflows/ci.yml",
+        "src/auth.py",
+        "src/security.py",
+        "src/gate.py",
+    ],
+)
+def test_runtime_ledger_gate_blocks_fastlane_self_review_on_protected_path(
+    protected_path: str,
+) -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    evidence = checkpoint["items"][0]["pr_tier_evidence"]
+    evidence["touched_paths"] = [protected_path]
+    evidence["paths_sha256"] = hashlib.sha256(
+        json.dumps([protected_path], separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("protected path" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_fastlane_self_review_with_stale_tier_head() -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    checkpoint["items"][0]["pr_tier_evidence"]["head_sha"] = "0" * 40
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any("head_sha must match" in error for error in result["errors"])
+
+
+def test_runtime_ledger_gate_blocks_fastlane_tier_drift_from_pr_gate() -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    checkpoint["items"][0]["pr_tier_evidence"]["changed_lines"] = 11
+
+    result = evaluate_checkpoint(checkpoint, repo=ROOT, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "must copy current pr_gate pr_tier_evidence exactly" in error
+        for error in result["errors"]
+    )
+
+
+def test_runtime_ledger_gate_blocks_fastlane_base_drift_from_pr_gate() -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    checkpoint["items"][0]["pr_tier_evidence"]["base_sha"] = "0" * 40
+
+    result = evaluate_checkpoint(checkpoint, repo=ROOT, config=load_pack(ROOT))
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "must copy current pr_gate pr_tier_evidence exactly" in error
+        for error in result["errors"]
     )
 
 
@@ -527,7 +628,7 @@ def test_runtime_ledger_passes_explicit_repo_for_raw_sensitive_pr_evidence(
             "enforcement_sensitive": True,
         }
 
-    monkeypatch.setattr("runtime_ledger_gate.evaluate_pr_gate", fake_gate)
+    monkeypatch.setattr("runtime_pr_gate_evidence.evaluate_pr_gate", fake_gate)
     config = object()
 
     result = evaluate_checkpoint(checkpoint, repo=ROOT, config=config)  # type: ignore[arg-type]

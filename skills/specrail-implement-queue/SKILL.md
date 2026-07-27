@@ -10,863 +10,391 @@ route to `skills/specrail-implement/SKILL.md` instead.
 
 ## Startup
 
-1. Run the SpecRail workflow startup:
-   - read `AGENTS.md`, `AGENT_USAGE.md`, `workflow.yaml`, `states.yaml`,
-     `labels.yaml`, and `skills/specrail-workflow/SKILL.md` when present
-   - select the locale
-   - identify the `implement` route and human gates
-2. Fetch current remote state before mapping the queue.
-3. List open issues, open PRs, local branch, dirty files, and worktrees.
-   Apply queue skip labels before anything else enters the queue: any issue or
-   PR carrying a label in `QUEUE_SKIP_LABELS` (default: `parked`) is excluded
-   from the actionable queue, and so is any open PR whose linked issue carries
-   a skip label. Draft PRs are also excluded. Skipped items are reported once
-   in `human_decisions` and never re-entered within the run, including after
-   compaction re-fetches. A skip label always wins over `ready_to_implement`
-   or any other actionable state label on the same item.
-4. For each candidate issue, read:
-   - the GitHub issue
-   - `specs/GH<issue-number>/product.md`
-   - `specs/GH<issue-number>/tech.md`
-   - `specs/GH<issue-number>/tasks.md`
-5. Map existing PRs before creating replacement PRs.
-6. Collect duplicate-work evidence before opening an implementation lane:
+1. Startup: read `AGENTS.md`, `AGENT_USAGE.md`, `workflow.yaml`, `states.yaml`,
+   `labels.yaml`, delegating `implx`, this file, `templates/queue_plan.yaml`;
+   select locale/human gates. Load `skills/specrail-workflow/SKILL.md` only if the `implement` route is ambiguous.
+2. Fetch remote state; list open issues/PRs, local branch, dirty files,
+   worktrees. Exclude items carrying a `QUEUE_SKIP_LABELS` label (default:
+   `parked`), open PRs whose linked issue carries one, and draft PRs; report
+   skips once in `human_decisions`, never re-enter them in-run (including
+   after compaction); a skip label wins over any actionable label.
+3. Per candidate issue, read the issue and `specs/GH<n>/{product,tech,tasks}.md`;
+   map existing PRs before creating replacement PRs.
+4. Duplicate-work evidence before opening an implementation lane:
 
 ```sh
-python3 checks/github_duplicate_evidence.py --github-repo <owner/repo> --issue <issue-number> --json > duplicate-work-evidence.json
-python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --duplicate-evidence duplicate-work-evidence.json --json
+python3 checks/github_duplicate_evidence.py --github-repo <owner/repo> --issue <n> --json > duplicate-work-evidence.json
+python3 checks/route_gate.py --repo . --route implement --issue <n> --state ready_to_implement --duplicate-evidence duplicate-work-evidence.json --json
 ```
 
-If duplicate evidence is missing, the implementation route needs human input.
-If it shows an open PR for the issue, the route is blocked. If it shows only a
-matching remote branch, an ownership decision is needed before creating a
-competing branch or PR: in `auth_mode: review`, stop and ask; in
-`auth_mode: auto`, skip the issue, record it in `human_decisions`, and keep
-draining the rest of the queue.
+Missing evidence → human input. Open PR for the issue → blocked. Matching
+remote branch only → ownership decision: `review` stop and ask; `auto` skip
+to `human_decisions` and keep draining.
 
 ## Spec Coverage Gate
 
-Before planning implementation work, classify issues by spec coverage using
-only the canonical `spec_status` values defined by `checks/specrail_lib.py`
-as `SPEC_STATUSES`. The classification scope follows the queue mode:
+Classify by the canonical `spec_status` values (`checks/specrail_lib.py`
+`SPEC_STATUSES`). Scope: `full_queue_drain` classifies every open issue and
+linked PR; `bounded_tranche` classifies only the target issue(s) and their
+linked PRs — never the whole repository.
 
-- `full_queue_drain`: classify every open issue and linked PR — the drain
-  needs the whole map.
-- `bounded_tranche`: classify only the target issue(s) and their linked PRs.
-  Do not spend startup reads classifying the rest of the repository for a
-  scoped tranche; that cost is O(open issues) and buys nothing the tranche
-  uses.
+- `complete`: all three spec files exist and `product.md` is not
+  `status: legacy` (GH142); a legacy packet is NOT complete.
+- `needs_tasks`: product and tech exist, `tasks.md` missing.
+- `needs_spec`: product or tech missing, or packet is `status: legacy` (a
+  depth-gate-passing rewrite is the only way to shed the marker).
+- `umbrella_covered`: another complete GH spec explicitly includes the issue.
+- `exception_allowed`: dependency bump, focused CI fix, docs-only
+  correction, or another explicitly justified small non-spec change.
 
-- `complete`: `product.md`, `tech.md`, and `tasks.md` all exist for the issue,
-  and `product.md` does not declare `status: legacy` in its Linked Issue
-  section (GH142). A legacy-marked packet is NOT `complete` even when all
-  three files exist.
-- `needs_tasks`: product and tech specs exist, but `tasks.md` is missing
-- `needs_spec`: product or tech spec is missing, or the packet is marked
-  `status: legacy` — legacy packets route to `needs_spec` (rewrite the spec so
-  it passes the depth gate; the rewrite is the only way to shed the marker)
-- `umbrella_covered`: another complete GH spec explicitly includes the issue in
-  scope, acceptance criteria, task plan, or linked work
-- `exception_allowed`: dependency bump, focused CI fix, docs-only correction, or
-  another explicitly justified small non-spec change
-
-Implementation candidates are only `complete`, `umbrella_covered`, or
-`exception_allowed`. For `needs_spec` and `needs_tasks`, route to the focused
-SpecRail spec-writing or task-planning skill first. Do not implement from only
-issue text, PR comments, or old chat context unless the user explicitly
-authorizes a non-spec exception and the checkpoint records the reason.
+Only `complete`, `umbrella_covered`, or `exception_allowed` are candidates;
+route the rest to spec-writing/task-planning first. Never implement from
+issue text, PR comments, or old chat context unless the user authorizes a
+non-spec exception recorded in the checkpoint.
 
 ### Done-When Gate
 
-Spec coverage is not enough: an implementation candidate must also have a
-decidable completion criterion before it enters an auto queue. Check the
-issue body (and its spec packet) for at least one of:
-
-- an enumerated checklist of concrete items (finite N, checkable off)
-- explicit acceptance criteria that a reviewer can evaluate as pass/fail
-- a verification command whose success closes the issue
-
-Issues without any of these classify as `needs_scope`. Open-ended phrasing
-is a strong signal: "backlog", "precision gaps", "edge cases as discovered",
-"continuous improvement", 补齐, 持续优化. These issues can regenerate work
-indefinitely — an agent that loses working memory to compaction will re-derive
-"there is still more to do" every round and never converge.
-
-Routing for `needs_scope`:
-
-- `auth_mode: auto`: never implement. Skip the issue, record it in
-  `human_decisions` with the reason `no decidable done-when`, and keep
-  draining. Do not auto-apply readiness labels to `needs_scope` issues.
-- `auth_mode: review`: ask the human to either scope the issue into an
-  enumerated checklist or park it before any implementation lane opens.
-
-Scoping the issue (rewriting it into a finite checklist) is itself valid
-queue work in `full_queue_drain`, like `needs_spec` — but the rewritten
-checklist is a human gate in both auth modes: auto may draft it, never
-self-approve it.
-
-Spec-drafting authorization depends on `auth_mode`:
-
-- `auth_mode: auto`: drafting the missing spec or task packet and then
-  implementing from it is authorized only when the current user message
-  explicitly selected `implx auto` / `implx 自动`. Draft, self-check with the
-  spec-writing skill's own gates, and continue to implementation in the same
-  run, subject to the Spec/Impl Mix Gate. Escalate to `human_decisions` only
-  for architecture-level rewrites or specs the issue lacks evidence to draft.
-- `auth_mode: review`: draft the spec, then wait for human confirmation
-  before implementing from it.
-
-Readiness labels in auto mode: when `auth_mode: auto` and an issue's
-`spec_status` is `complete` or `umbrella_covered`, a missing readiness
-label (for example `ready_to_implement`) is not a blocker. Add the label,
-record `readiness_label_source: auto_drain` on the checkpoint item, list
-every auto-applied label in the report, and continue routing. Issues with
-`needs_spec` or `needs_tasks` must never receive an auto readiness label —
-this includes `status: legacy` packets, which classify as `needs_spec` even
-when all three spec files exist. Auto readiness labeling must never apply to
-a legacy-marked packet. In `auth_mode: review`, readiness labels remain a
-human gate.
-
-For `queue_mode: full_queue_drain`, `needs_spec` and `needs_tasks` are
-actionable planning work, not completion. If no implementation-ready tranche is
-available, select the smallest spec-writing or task-planning tranche instead of
-ending the queue drain. Treat them as blockers only when the user limited the
-run to implementation-only work, the issue lacks enough evidence to draft a
-spec, or a human gate prevents spec creation.
+A candidate also needs a decidable completion criterion: an enumerated
+checklist, pass/fail acceptance criteria, or a closing verification command.
+Otherwise classify `needs_scope` (signals: "backlog", "edge cases as
+discovered", 补齐, 持续优化 — open-ended issues regenerate work forever under
+compaction). Routing: `auto` — never implement; skip with reason
+`no decidable done-when`, never auto-apply readiness labels; `review` — ask
+the human to scope or park. Rescoping into a finite checklist is valid queue
+work, but the checklist is a human gate in both modes: auto drafts, never
+self-approves.
+Spec drafting: `auto` (explicit `implx auto` only) drafts missing packets
+with the spec-writing skill's own gates and continues to implementation
+in-run (subject to the Spec/Impl Mix Gate), escalating only architecture
+rewrites or evidence-starved specs; `review` drafts, then waits for human
+confirmation. Readiness labels: `auto` may add a missing label to
+`complete`/`umbrella_covered` issues (record
+`readiness_label_source: auto_drain`, list all auto-applied labels), never
+to `needs_spec`/`needs_tasks`/legacy packets; in `review` they remain a
+human gate. In `full_queue_drain`, `needs_spec`/`needs_tasks` are
+actionable planning work: with no implementation-ready tranche, select the
+smallest spec/task tranche instead of ending the drain (unless the user
+limited the run to implementation-only work or a human gate blocks it).
 
 ## PR Tier Lanes
 
-Classify every implementation candidate into a `pr_tier` before planning PRs.
-The tier decides process weight — how many PRs carry the work — while the
-verification gates themselves stay identical for every tier.
+Classify every candidate into `pr_tier` before planning PRs; tier decides
+process weight, gates stay identical.
 
-- `heavy`: architecture changes, schema or migration changes, security
-  surfaces, cross-module rewrites, or anything the spec marks high risk.
-  Keep the full two-PR flow: separate spec PR first, then implementation.
-- `standard`: normal feature or fix work. Ship ONE `mixed_impl` PR carrying
-  the spec packet (or spec delta) and the implementation together. Do not
-  open a separate spec-only PR first.
-- `fastlane`: small low-risk changes — roughly ≤50 changed lines and no
-  protected paths (API schema, migrations, auth or security code, CI
-  workflow definitions). One PR; when the repository's gates accept the
-  `exception_allowed` class, the spec content may live in the PR
-  description; otherwise include the minimal spec delta in the same PR.
+- `heavy`: architecture, schema/migration, security surfaces, cross-module
+  rewrites, spec-marked high risk. Two PRs: spec first, then impl.
+- `standard`: normal feature/fix. ONE `mixed_impl` PR carrying spec delta
+  plus implementation; no separate spec-only PR.
+- `fastlane`: ONE changed file, ≤50 lines, no protected path (API schema,
+  migrations, auth/security, CI workflow, or workflow/policy contract). One
+  PR; spec content may live in the PR description under `exception_allowed`.
 
-Rules:
-
-- Record `pr_tier` with its evidence (changed-line count, touched paths) on
-  the checkpoint item. Where the repository ships a CI tier check, that
-  check is the enforcing authority — never self-declare `fastlane`
-  against it.
-- When in doubt between two tiers, pick the heavier one.
-- Tiering never weakens CI, review-thread, or pr_gate evidence requirements.
-  The reviewer-lane requirement has exactly one tier-scoped substitution:
-  `fastlane` items may satisfy review via coordinator self-review under
-  `basis: fastlane_policy` (see Orchestration); the review artifact and all
-  other evidence classes stay mandatory.
-- The tier also decides the `auth_mode: review` merge authorization path
-  (see Merge Authorization): `fastlane`/`standard` may qualify for
-  `standard_auto`, `heavy` keeps per-PR human authorization, and the
-  pick-the-heavier-when-in-doubt rule applies to authorization too.
+Record `pr_tier` with current-head adapter evidence (file and line counts,
+complete touched paths, `source: github_changed_files`, head SHA, path
+digest) — self-declaration is never evidence. When in doubt, pick the
+heavier tier (authorization included). Tiering never weakens CI,
+review-thread, or pr_gate evidence; the only substitution is `fastlane`
+self-review under `basis: fastlane_policy` (see Orchestration).
 
 ## Queue Planning
 
-Build an issue-to-PR plan:
+One issue per implementation PR by default; `standard`/`fastlane` spec
+content travels in the same `mixed_impl` PR; multiple PRs per issue only
+when the task plan or risk justifies slices; combined PRs only when specs
+share one acceptance surface; `Refs #<issue>` for partial slices; closing
+keywords only for the final slice satisfying every acceptance criterion.
+Gate partial slices with `--issue <n>` on the evidence adapter. Deprecation
+windows in auto: default to the next minor release, record
+`deprecation_default: true` on the item and PR description, continue.
+Record the plan as the `specrail_implementation_queue` YAML shape in
+`templates/queue_plan.yaml` (objective, modes, spec coverage, per-issue
+plan, gates, context budget ratios 0.50/0.65/0.75, checkpoint, stop policy).
+Default `auth_mode: review` when not provided; never promote to auto from
+persisted configuration. Broad queues execute as bounded tranches: from
+`implx` (or an ask to finish actionable issues/PRs) set
+`queue_mode: full_queue_drain` unless the prompt limits scope; pick the
+smallest mergeable tranche, checkpoint, repeat until drained or every
+remaining item is blocked/deferred/waiting/needs-human. A blocked tranche
+does not stop the drain — checkpoint, refresh remote truth, pick an
+independent tranche. Stop only when every remaining item has `spec_status`,
+`blocker`, and `next_action` in `remaining_queue`. Without explicit
+full-drain authorization, do the smallest tranche and checkpoint the rest.
 
-- one issue per implementation PR by default
-- for `standard` and `fastlane` tiers, spec content travels in the same
-  `mixed_impl` PR per PR Tier Lanes; separate spec PRs are a `heavy`-tier
-  pattern
-- several PRs per issue only when the task plan or risk justifies smaller slices
-- combined PRs only when the specs explicitly share one acceptance surface
-- `Refs #<issue>` for partial slices
-- closing keywords only for the final slice that satisfies every acceptance
-  criterion
-
-When gating a partial slice, pass that expected issue to the read-only evidence
-adapter with `--issue <issue>`. This verifies the live open issue and keeps any
-other bounded closing references auditable without treating the partial target
-as final or authorizing its closure.
-
-Deprecation windows in auto mode: when a queue item requires a deprecation
-or removal window and the user did not specify a starting version, default
-to the next minor release after the current latest release, record
-`deprecation_default: true` with the chosen version on the checkpoint item
-and in the PR description, and continue. The removal itself stays subject
-to the existing gates; the user can veto the default afterwards.
-
-Record the plan as:
-
-```yaml
-specrail_implementation_queue:
-  overall_objective:
-  queue_mode: bounded_tranche | full_queue_drain
-  auth_mode: auto | review
-  spec_coverage:
-    complete:
-    needs_tasks:
-    needs_spec:
-    umbrella_covered:
-    exception_allowed:
-  current_tranche:
-  remaining_queue:
-  issues:
-    - issue:
-      spec_dir:
-      spec_status: complete | needs_tasks | needs_spec | umbrella_covered | exception_allowed
-      spec_status_reason:
-      acceptance_criteria:
-      existing_prs:
-      planned_prs:
-      completion_mode: partial | final
-      verification:
-  gates:
-    route_gate:
-    pr_gate:
-    review_threads:
-    merge_authorization:
-  context_budget:
-    soft_stop_ratio: 0.50
-    hard_stop_ratio: 0.65
-    critical_stop_ratio: 0.75
-  checkpoint:
-    path:
-    runtime_gate:
-  stop_policy:
-```
-
-If `auth_mode` is not provided by the calling skill, default to
-`auth_mode: review`. Never promote a run to auto mode from persisted repository
-configuration; auto requires the explicit current-message invocation above.
-
-For broad queues, always execute as bounded tranches. If the calling skill is
-`implx`, or the user otherwise asks to finish actionable issues/PRs, set
-`queue_mode: full_queue_drain` unless the prompt explicitly limits scope to one
-issue, one PR, the current tranche, plan-only, status-only, or review-only work.
-In that mode, choose the smallest mergeable current tranche, checkpoint it, then
-continue selecting new implementation, spec-writing, or task-planning tranches
-until the queue is drained or every remaining item is explicitly blocked,
-deferred, waiting on CI, or needs human input.
-
-A blocked or waiting current tranche does not stop full-queue drain. After
-checkpointing that tranche, refresh remote truth and look for an independent
-next tranche. Stop only when every remaining issue and PR is listed in
-`remaining_queue` with `spec_status`, `blocker`, and `next_action`.
-
-If the user only asks for a broad queue without explicit full-queue drain
-authorization, choose the smallest mergeable tranche and leave the rest in the
-checkpoint.
-
-## Spec/Impl Mix Gate
-
-Classify every PR the tranche creates as `pr_kind` on its checkpoint item:
-
-- `spec`: only spec packets, docs, or planning artifacts
-- `impl`: production code or tests
-- `mixed_impl`: any PR that contains production code, even alongside specs
-
-Rules:
-
-- More than 3 consecutive `spec` PRs is a blocking violation unless the user
-  explicitly confirmed a spec-only tranche; ask before exceeding the cap and
-  record the quoted confirmation as `spec_only_declaration` (scope +
-  conversation marker).
-- Items without a `pr_kind` (blocked items, non-PR work) do not reset the
-  streak; only `impl`/`mixed_impl` PRs do.
-- Maintain `tranche_mix` counters (`spec_pr_count`, `impl_pr_count`,
-  `consecutive_spec_only`) derived from the item records;
-  `checks/runtime_ledger_gate.py` cross-checks them and blocks self-reported
-  inflation.
-- Never present spec PR counts as implementation progress in reports.
+Spec/Impl mix gate:
+classify every created PR as `pr_kind`: `spec` (specs/docs/planning only),
+`impl` (production code or tests), `mixed_impl` (any production code). More
+than 3 consecutive `spec` PRs is a blocking violation unless the user
+confirmed a spec-only tranche (quoted `spec_only_declaration`). Non-PR items
+don't reset the streak; `impl`/`mixed_impl` do. Maintain `tranche_mix`
+counters (`spec_pr_count`, `impl_pr_count`, `consecutive_spec_only`);
+`checks/runtime_ledger_gate.py` cross-checks. Never present spec PR counts
+as implementation progress.
 
 ## Orchestration
 
-Use `integrations/threads.md` and an available threads skill for parallel lanes,
-disjoint ownership, review/CI/merge gates, or closure audit. For GitHub queues,
-native dispatch is required when available. Before implementation, review,
-push, comment, or merge, record — once, in the runtime checkpoint (handoffs
-and reports reference it rather than copying the fields):
+Use `integrations/threads.md` and an available threads skill for parallel
+lanes, review/CI/merge gates, or closure audit; native dispatch is required
+for GitHub queues when available. Before implementation, review, push,
+comment, or merge, record the `thread_dispatch_gate` object (shape in
+`templates/tranche_checkpoint.md`) once in the runtime checkpoint;
+handoffs/reports reference it, never copy. When
+`spawn_requirement: required`, dispatch the planned bounded lanes. PR merge
+work needs a real read-only `reviewer`/`merge_reviewer` thread with
+`agent_id_or_thread_id`, wait/close evidence, and output; the coordinator
+is not that reviewer.
+Fastlane exception: only exact-head GitHub evidence proving ≤50 changed
+lines, no protected paths, and `enforcement_sensitive: false` may use
+`basis: fastlane_policy`: the coordinator records
+`review_source: self_review`, a schema-valid exact-head local
+artifact/manifest, scope, and conversation marker; `lane_failures[]` is not
+required, every other PR-gate class is; runtime copies the allowed tier/
+sensitivity evidence exactly. Otherwise the native reviewer requirement
+stands. If threads is unavailable, record `fallback_mode: single_agent`
+with reason and report that no native threads launched.
 
-```yaml
-thread_dispatch_gate:
-  explicit_thread_request:
-  native_subagents:
-  spawn_requirement:
-  fallback_mode:
-  planned_native_threads:
-  native_thread_evidence:
-    spawned_agents:
-  no_spawn_reason:
-```
+Spawn every lane with a minimal context pack: task statement, exact diff or
+branch ref, linked spec packet paths, compact carry. Never fork coordinator
+history into a lane (`fork_turns: all` and equivalents forbidden for every
+role); a lane needing more gets explicit file paths. Planner/reviewer lanes
+are read-only (low effort when configurable); worker lanes own disjoint
+files; shared verification belongs to one coordinator; dependent specs run
+serially; builds/tests run only in the lane's worktree, one at a time.
 
-When `spawn_requirement: required`, dispatch the planned bounded native lanes.
-PR merge work needs a real read-only `reviewer`/`merge_reviewer` thread with
-`agent_id_or_thread_id`, wait/close evidence, and output; the coordinator is not
-that reviewer.
+## Bounded Review Contract And Reviewer Lanes
 
-Fastlane exception: a `fastlane`-tier, non-enforcement-sensitive PR with valid
-`pr_tier_evidence` does not require a native reviewer thread. The coordinator
-may perform the review itself, recording `review_source: self_review`, a local
-review artifact, and `self_review_authorization` with
-`basis: fastlane_policy` (plus scope and conversation marker); no
-`lane_failures[]` precondition applies to this basis. For a tranche whose PR
-work is entirely fastlane, record `spawn_requirement: not_required` with
-`no_spawn_reason: fastlane_policy`. Any doubt about the tier means the PR is
-not fastlane; `standard` and `heavy` keep the native reviewer requirement.
+Use the canonical manifest-v2 `bounded_diff_v1` contract in
+`skills/specrail-review-pr/SKILL.md`; do not copy it here. Load that Skill
+before review; `checks/review_json_gate.py` plus
+`checks/review_result_semantics.py` remain the deterministic authority.
 
-If threads is unavailable, record `fallback_mode: single_agent` and its reason,
-use the normal SpecRail flow, and report that no native threads launched.
+One reviewer lane per PR is the default and satisfies review for `fastlane`
+and `standard`; do not stack extra lanes (mechanical audit, cross-review,
+adversarial, re-review). Multiple lanes only for `heavy`, an explicit human
+request, or a recorded lane failure forcing a retry. Artifact-defect repair
+is not review: when a review artifact fails schema/manifest validation but
+the review output exists, regenerate the artifact and re-run
+`checks/review_json_gate.py` only — no new round, no test re-run, no fresh
+GitHub evidence for an unchanged head.
+Give the reviewer only the exact diff, linked spec packet, and compact
+carry. Resume/message first; otherwise dispatch the next bounded `diff_only`
+lane. One bounded wait plus one stop request precedes `zero_output`. Record
+every usage-limit/crash/zero-output/early-close in `lane_failures[]` (lane
+id, kind, optional `other`, marker); downgrade to `blocked`/`needs_human`
+with `blocked_reason: reviewer_lane_failure`. Recover via a different local
+lane or authorized local `self_review` (actor, source, quoted scope,
+marker); generic authorization cannot substitute. Two distinct recorded lane
+failures let `implx auto` authorize scoped self-review; one requires retry;
+review mode has no exception. The `basis: fastlane_policy` path is separate
+and needs no lane failures. In `review` mode a fastlane self-review item
+cannot reach `standard_auto` (no independent party) and keeps per-PR human
+authorization; in `auto`, standing authorization covers it once evidence is
+green.
 
-Spawn every lane — implementer, reviewer, audit, or merge — with a minimal
-context pack: the task statement, the exact diff or branch ref, the linked
-spec packet paths, and compact carry. Never fork the coordinator's
-conversation history into a lane (`fork_turns: all` or equivalent
-full-history forks are forbidden for every lane role). A lane that needs
-more context receives explicit file paths, not the parent transcript;
-forked history multiplies input-token cost per lane by the age of the
-session and accelerates coordinator compaction.
+## Context Budget And Bounded Tranche Hard Stop
 
-Keep ownership boundaries explicit:
+Record a parent context budget before spawning lanes — defaults: soft stop
+50%, hard 65%, critical 75% of the active window (record overrides). Soft:
+no new lanes or scope. Hard: finish the current critical step, checkpoint,
+hand off. Critical: checkpoint and resume instructions only. A hard-stop
+handoff in `full_queue_drain` preserves the full objective and next tranche.
 
-- planner/reviewer lanes are read-only and use low effort when configurable
-- worker lanes own disjoint files or modules
-- shared verification belongs to one coordinator
-- dependent specs run serially
-- builds/tests run only in the lane's worktree; never use the primary checkout
-  during other sessions or run two build/test commands in one worktree
+`full_queue_drain` is a sequence of bounded tranches, each declaring a hard
+budget at tranche start in the checkpoint `budget` object
+(checkpoint_version 2): `basis: compaction | item_cap | both` (compaction is
+the primary signal; use `item_cap` where unavailable); `compaction_budget`
+default 1; `item_cap` default 3 in auto (`item_cap: 1` needs a recorded
+`item_cap_reason`); record observed `compaction_count`. Budget exhaustion
+ends the tranche, not necessarily the session: write
+`stop_reason: budget_exhausted` plus `resume_prompt`, then either
+Same-Session Tranche Rollover (`auto` + basis `item_cap` +
+`compaction_count` ≤ `compaction_budget` + context below soft stop: declare
+the next `tranche_id` with a fresh budget and keep draining — not a
+`budget_override`), or fresh-session handoff in every other case, leading
+with the copy-paste `resume_prompt`.
+Goal/session decoupling: a thread goal never exempts a session/tranche from
+the compaction budget. The goal persists (stable `goal_id`); the session
+does not. At compaction budget, goal active or not: checkpoint (increment
+`tranche_id`, record `tranche_started_at`, `tranche_session_offset`), lead
+with `resume_prompt`, hand off; the new session resumes under the same
+`goal_id` from checkpoint plus fresh remote truth; counters restart,
+historical tranche records are append-only.
 
-## Bounded Review Contract
+checkpoint_version 3 adds trusted counters and four hard dimensions —
+`max_wall_clock_minutes` (120), `max_tool_calls` (250),
+`max_review_correction_rounds` (2), `max_full_test_runs_per_head` (1, bound
+to `full_test_head_sha`) — blocking on `observed > limit`;
+`telemetry_source: unavailable` forbids `basis: compaction`/`both`.
+Continuing past any exceeded dimension needs an explicit user override with
+quoted scope and marker (`budget_override` v2, per-dimension
+`budget_overrides` v3); `checks/runtime_ledger_gate.py` blocks over-budget
+continuation without one and drain checkpoints declaring no budget.
+Reviewer lanes stay bounded and do not inherit the parent budget.
 
-<!-- specrail-bounded-review-contract-v1:start -->
-Bounded review contract (`manifest.version: 2`,
-`round_policy: {name: "bounded_diff_v1", cap: 3}`):
+After every compaction, in order: run `python3 -m checks.session_telemetry
+<session-jsonl> --tranche-start-offset <tranche_session_offset>`; write
+`observed_compaction_count`, `telemetry_source`,
+`last_compaction_window_id` into the budget; re-read the checkpoint;
+refresh remote truth; run `checks/runtime_ledger_gate.py` and obey it.
+Never read raw `~/.codex/sessions` logs or old transcripts as queue state —
+the only permitted session-jsonl access is `checks/session_telemetry.py`
+(counters, never content).
+Same-issue circuit breaker:
+bounds one issue across tranches/sessions. Before opening an implementation
+lane, check remote truth: trip on any of ≥5 commits referencing the issue
+without closure, ≥3 consecutive near-identical commit-message prefixes
+targeting it, or ≥3 prior checkpoint tranches on it without closure. When
+tripped: no lane — `auto` applies `parked` to the issue and its PRs,
+converts PRs to draft, records evidence in `human_decisions`, keeps
+draining; `review` stops and presents the evidence. Re-entry only after a
+human removes `parked`; no auto override.
 
-- `rounds[]` is the source of truth. Each entry is the closed set
-  `{artifact_id, review_round, review_mode, base_head_sha, head_sha, diff_sha256, escalation_authorization_id}`;
-  the loader derives continuous rounds `1..N` from the artifact set.
-- Round 1 may use `full`. Every `review_round >= 2` must use `review_mode:
-  resumed | diff_only`, never `full`; `base_head_sha` must equal the previous
-  round's `head_sha`, and the supplied bytes and `diff_sha256` must match the
-  exact `git diff --no-ext-diff --binary <base_head_sha>..<head_sha> --` output.
-- `prior_findings[]` is compact typed carry only:
-  `{finding_id, source_artifact_id, status, evidence_pointer}` with
-  `evidence_pointer.kind: thread | comment | artifact | commit`; do not replay
-  historical finding prose. Carry every still-unresolved historical finding.
-- Before every `review_round >= 4`, stop. Continue exactly once only with an
-  external, role-mapped maintainer authorization whose `decision` is
-  `continue_once` and whose id, PR, prior/target heads, and round match exactly.
-- The over-cap `round_cap_escalation.unresolved_findings[]` must equal the full
-  union of historical unresolved findings and current critical, important, or
-  otherwise actionable findings; no finding may disappear or be invented.
-- `auth_mode: auto` merge authorization and `human_full_review_request` do not
-  authorize an over-cap review round and cannot replace that exact cap evidence.
-<!-- specrail-bounded-review-contract-v1:end -->
+## Cost Discipline: Output Firewall, Turn Batching, Waiting
 
-## Reviewer Lane Execution
+Output firewall: large-output commands run only with raw stdout/stderr
+going to artifact files (`artifacts/logs/<tranche>/...`); the coordinator
+reads exit code, short tail, targeted grep, and the artifact path. No raw
+`gh run view --log`, full test output, or broad `rg`/`git grep` across
+`.codex`, `.claude`, `target`, `node_modules`, session JSONL, or logs in
+parent context; parent stdout tail and subagent final output ≤150 lines.
 
-One reviewer lane per PR is the default. A single independent read-only
-reviewer/merge-reviewer lane satisfies the review requirement for `fastlane`
-and `standard` tiers; do not stack additional lanes (mechanical audit,
-cross-review, adversarial round, final read-only re-review) on the same PR.
-Multiple distinct review lanes are justified only for `heavy` tier items,
-an explicit human request, or a recorded lane failure that forces a retry
-lane. Each extra lane multiplies wait time and token cost without adding a
-required evidence class.
+Turn batching: turn count is a first-order cost (every turn re-sends the
+history). Batch consecutive read-only steps into one scripted call with
+output to an artifact; combine patch set plus focused check into as few
+calls as tooling allows; target <500 turns per single-PR session (>1000
+without a merge is a stall — checkpoint and prefer a fresh scoped session);
+never spend a turn on a no-op poll or unchanged re-read.
 
-Artifact-defect repair is not review: when a review artifact fails schema or
-manifest validation but the underlying review output exists, regenerate the
-artifact from that output and re-run `checks/review_json_gate.py` only. A
-formatting/metadata defect in the artifact does not open a new review round,
-does not re-run tests, and does not re-collect GitHub evidence for an
-unchanged head.
+Waiting: wait inside a single blocking tool call, never a model-driven poll
+loop (openai/codex#13733). CI: `gh pr checks <n> --repo OWNER/REPO --watch
+--fail-fast` or `gh run watch <run-id> --exit-status`. Long local checks:
+foreground with adequate timeout, output to artifact. Reviewer lanes: one
+bounded wait plus one stop request. Through `exec_command`/`wait` sessions,
+request the maximum yield (`background_terminal_max_timeout`), growing
+exponentially across waits.
 
-Give the reviewer only the exact diff, linked spec packet, and compact carry, never
-coordinator history. Resume/message it first; otherwise dispatch the next bounded
-`diff_only` lane. One bounded wait plus one stop request precedes `zero_output`.
-Record every usage-limit, crash, zero-output, or early-close in `lane_failures[]`
-with lane id, kind, optional `other` detail, and marker; report and downgrade to
-`blocked`/`needs_human` with `blocked_reason: reviewer_lane_failure`. Recover via
-a different local lane or authorized local `self_review` recording actor, source,
-quoted scope, and marker; generic authorization cannot substitute.
-Only two distinct recorded lane failures let `implx auto` authorize scoped
-self-review; one requires retry, review mode has no exception, and gates enforce it.
-The `basis: fastlane_policy` self-review path (fastlane tier only, see
-Orchestration) is separate from this failure-recovery path and needs no
-recorded lane failures.
-
-In `auth_mode: review`, a fastlane self-review item cannot qualify for
-`standard_auto` (no independent party): it keeps per-PR human merge
-authorization. In `auth_mode: auto`, the standing merge authorization covers
-it once all evidence is green. Choose per PR: spawn one reviewer lane to
-unlock `standard_auto`, or self-review and leave the merge to the human.
-
-## Context Budget
-
-For long queues, record a parent context budget before spawning lanes:
-
-- default soft stop: 50% of the active context window
-- default hard stop: 65% of the active context window
-- default critical stop: 75% of the active context window
-
-These are defaults, not universal limits. If the runtime exposes a different
-budget or the user provides one, record the override.
-
-At soft stop, do not spawn new lanes or broaden scope. At hard stop, finish the
-current critical step, write the runtime checkpoint, and hand off to a fresh
-parent thread. At critical stop, only write checkpoint and resume instructions.
-For `queue_mode: full_queue_drain`, a hard-stop handoff preserves the full queue
-objective and records the next actionable tranche; it does not redefine success
-as completing only the current tranche.
-
-### Bounded Tranche Hard Stop
-
-`full_queue_drain` never runs as one unbounded session. It is a sequence of
-bounded tranches, each with a hard budget declared at tranche start in the
-checkpoint `budget` object (checkpoint_version 2):
-
-- `basis`: `compaction` | `item_cap` | `both`. Compaction events are the
-  primary observable degradation signal; use `item_cap` where the runtime
-  does not expose compaction.
-- `compaction_budget` default 1: stop before the second compaction.
-- `item_cap` default 3 when declared in `auth_mode: auto`. Declaring
-  `item_cap: 1` requires a recorded `item_cap_reason` in the budget object
-  (for example one high-risk migration item); do not default to 1.
-- Record observed `compaction_count` as the session runs.
-
-Budget exhaustion ends the tranche, not necessarily the session. It is a
-normal terminal, not a failure: write the checkpoint with
-`stop_reason: budget_exhausted` and a `resume_prompt`, then take one of two
-branches:
-
-- Same-Session Tranche Rollover: when `auth_mode: auto`,
-  `queue_mode: full_queue_drain`, the exhausted basis is `item_cap`,
-  observed `compaction_count` has not exceeded `compaction_budget`, and
-  parent context usage is below the soft-stop ratio, continue in the same
-  session: declare the next tranche with a new `tranche_id` and a fresh
-  budget in the checkpoint, then keep draining. This closes the old budget
-  rather than exceeding it, so it is not a `budget_override` and must not
-  fabricate one.
-- Fresh-session handoff: in every other case (compaction budget reached,
-  context at or above soft stop, user interrupt, queue empty or fully
-  blocked, or `auth_mode: review`), hand off to a fresh session. The handoff
-  report must lead with the copy-paste `resume_prompt` as its first line.
-
-Goal/session decoupling: a thread goal created under Goal Use never exempts
-a session or tranche from the compaction budget. The goal persists across
-sessions — record a stable `goal_id` in the checkpoint — but the session
-does not. When a session/tranche reaches its compaction budget, goal active
-or not, it must end: write the checkpoint (increment `tranche_id`, record
-`tranche_started_at` and `tranche_session_offset` for the next tranche),
-lead the handoff report with the copy-paste `resume_prompt`, and hand off to
-a fresh session. The new session resumes under the same `goal_id` from the
-checkpoint plus fresh remote truth; observed counters start at zero for the
-new tranche while historical tranche records stay append-only and are never
-overwritten. A second compaction while a goal is active produces exactly
-the same gate outcome as without a goal: blocked unless a per-dimension
-override records the authorization.
-
-checkpoint_version 3 adds trusted runtime counters and four hard budget
-dimensions. The gate compares `max(observed_compaction_count,
-compaction_count)` against `compaction_budget`; `telemetry_source:
-unavailable` forbids `basis: compaction`/`both` (downgrade to `item_cap` or
-`runtime_dims`); and `max_wall_clock_minutes` (default 120),
-`max_tool_calls` (default 250), `max_review_correction_rounds` (default 2),
-and `max_full_test_runs_per_head` (default 1, bound to
-`full_test_head_sha`) block on `observed > limit`.
-
-Continuing past any exceeded budget dimension still requires an explicit
-user override recorded with quoted scope and a conversation marker — a
-single `budget_override` object for version-2 checkpoints, one
-per-dimension `budget_overrides` entry per exceeded dimension for
-version 3; overrides never cover another dimension.
-`checks/runtime_ledger_gate.py` blocks over-budget continuation without one
-and blocks version-2/version-3 drain checkpoints that declare no budget.
-Reviewer lanes stay bounded (the audited well-behaved lanes stayed under
-~2M tokens); lanes do not inherit the parent budget.
-
-After every compaction, the first action is the compaction discipline, in
-order: (1) run the read-only telemetry collector
-`python3 -m checks.session_telemetry <session-jsonl> --tranche-start-offset
-<tranche_session_offset>`; (2) write `observed_compaction_count`,
-`telemetry_source`, and `last_compaction_window_id` back into the
-checkpoint budget; (3) re-read the runtime checkpoint; (4) refresh remote
-truth; (5) run `checks/runtime_ledger_gate.py` and obey its decision. Only
-then may other queue work continue.
-
-Do not read raw `~/.codex/sessions` logs, old parent transcripts, or broad
-session JSONL as queue state. The only permitted session-jsonl access is the
-read-only telemetry collector `checks/session_telemetry.py`, which returns
-event counters, never content. Use the checkpoint, repo-local run logs, and
-fresh remote truth.
-
-### Same-Issue Circuit Breaker
-
-Budget dimensions bound a tranche; the circuit breaker bounds a single issue
-across tranches and sessions. It exists because an open-ended issue plus
-compaction produces near-duplicate work rounds that each look reasonable in
-isolation — only the accumulated history reveals the loop.
-
-Before opening an implementation lane for an issue, check loop evidence
-against remote truth (not conversation memory):
-
-- `git log` on the default branch and the issue's PR branch: count commits
-  whose message references this issue (`GH<n>` or `#<n>`).
-- The issue's existing PRs: count prior implementation rounds (pushes or
-  review cycles) that did not end in closure.
-
-Trip conditions (any one trips the breaker):
-
-- 5 or more commits referencing the issue already exist without the issue
-  closing
-- 3 or more consecutive commits with near-identical message prefixes
-  targeting the issue (for example repeated `fix(rules): ... <same area>`)
-- the checkpoint records 3 or more prior tranches that worked this issue
-  without closure
-
-When tripped: do not open the lane. In `auth_mode: auto`, apply the `parked`
-label to the issue and its open PRs, convert open PRs for the issue to
-draft, record the trip evidence in `human_decisions`, and keep draining the
-rest of the queue. In `auth_mode: review`, stop and present the evidence.
-A tripped issue re-enters the queue only after a human removes `parked` —
-typically after the Done-When Gate rescope. The breaker has no auto-mode
-override; continuing on a tripped issue always requires a human decision.
-
-## Output Firewall
-
-Large output commands are allowed only when raw stdout and stderr go to artifact
-files. The coordinator may read exit code, a short tail, targeted grep output,
-and the artifact path.
-
-Default rules:
-
-- no raw `gh run view --log` output in parent context
-- no raw full `cargo test` or full workspace test output in parent context
-- no broad `rg` or `git grep` across `.codex`, `.claude`, `target`,
-  `node_modules`, session JSONL, or log files
-- parent stdout tail target: 150 lines or less
-- subagent final output target: 150 lines or less
-
-Prefer artifact paths such as `artifacts/logs/<tranche>/cargo-test.log` and
-summaries such as `artifacts/logs/<tranche>/ci-summary.md`.
-
-## Turn Batching
-
-Every model turn re-sends the whole conversation history, so turn count is a
-first-order cost: a 3000-turn session at a 200K-token context costs an order
-of magnitude more than the same work in 300 turns. Batch aggressively:
-
-- Collect evidence in one scripted call: consecutive read-only steps (git
-  queries, gate scripts, `gh` views, file reads) run as a single script whose
-  raw output goes to an artifact, not as one tool call each.
-- Combine edit-verify micro-loops: apply a patch set, then run the focused
-  check, in as few calls as the tooling allows — never one turn per file.
-- Target under 500 turns for a single-PR session. Crossing 1000 turns without
-  a merged outcome is a stall signal: checkpoint, reassess the plan, and
-  prefer a fresh scoped session over grinding forward.
-- Never spend a turn on a no-op: empty polls, re-checking status that was
-  verified earlier in the same turn, or re-reading unchanged files.
-
-## Waiting Discipline
-
-Waiting happens inside a single blocking tool call, never by looping the model.
-Every model turn re-sends the full history, so poll loops — repeated
-`write_stdin` with empty input against a background process, or
-`for i in 1..N; do gh pr view ...; sleep; done` — burn tokens proportional to
-history size times poll count while doing no work (openai/codex#13733). Replace
-each poll loop with one blocking wait:
-
-- CI on a PR: `gh pr checks <n> --repo OWNER/REPO --watch --fail-fast` blocks in
-  one call until every check settles. For a specific run:
-  `gh run watch <run-id> --repo OWNER/REPO --exit-status`.
-- Long local checks (`cargo test`, `cargo clippy`, deterministic checks): run
-  them in the foreground to completion with an adequate command timeout and raw
-  output redirected to an artifact per the Output Firewall. Do not launch them
-  as a background process and then poll `write_stdin` for output.
-- Reviewer / merge-reviewer lanes: keep the existing bounded-wait rule (one
-  bounded wait plus one stop-and-return; see Reviewer Lane Failures). That
-  bounded wait is a single blocking wait on the lane, not a poll loop.
-- When a wait must happen through `exec_command` / `wait` sessions, request the
-  maximum yield each time: set `yield_time_ms` to the configured
-  `background_terminal_max_timeout` (never the 30s habit), and if a task needs
-  multiple waits, grow the yield exponentially between them. Thirty-second
-  slices against a multi-minute check are poll loops with extra steps.
-
-Test layering, to avoid re-paying a full-suite wait on every fix round:
-
-- During iteration, run only the focused tests for the touched behavior.
-- Run the full suite plus clippy plus deterministic checks once, immediately
-  before claiming PR-ready — not after each individual fix. This is the one
-  local full-suite run the `max_full_test_runs_per_head` budget dimension
-  counts; record its `full_test_head_sha`.
-- A review-fix commit that moves the PR head does NOT restart the local
-  full-suite obligation. For the new head, run the focused tests for the fix,
-  then let the PR's CI rollup provide the full-suite evidence — a green CI
-  rollup on the new head IS current full-coverage evidence for that head.
-  Re-run the local full suite only when CI does not cover the full suite for
-  this repository, or when the fix touched build/test configuration itself.
-- Exact-head evidence discipline applies to the evidence record (which head
-  a result belongs to), not to re-execution: never re-run an expensive check
-  on a new head when a gate-visible CI artifact already covers it.
+Test layering: focused tests during iteration; the full suite plus
+deterministic checks once, immediately before claiming PR-ready — the one
+run counted by `max_full_test_runs_per_head`; record `full_test_head_sha`.
+A review-fix head does NOT restart the full-suite obligation: focused tests
+plus the PR's green CI rollup are full-coverage evidence for that head;
+re-run locally only when CI lacks full-suite coverage or the fix touched
+build/test configuration. Exact-head discipline governs evidence records,
+not re-execution.
 
 ## Runtime Checkpoint
 
-For long queues, create or update an optional local runtime checkpoint at
-three required points:
+Create/update the local checkpoint at three required points: tranche start
+(before the first writable action), before claiming merge readiness (the
+ledger-gate evaluation point), and tranche end (compaction, handoff, close,
+or next-tranche selection). Between them, update only on material change
+(new PR, lane failure, budget event). Shape:
+`templates/tranche_checkpoint.md`; validate with
+`python3 checks/runtime_ledger_gate.py --repo . --checkpoint
+.specrail/runtime/current.json`. The checkpoint is a local handoff layer;
+GitHub and spec packets are the durable truth. For `full_queue_drain`,
+record the overall objective, spec coverage, current tranche, completed
+items, remaining queue, blockers, and next resume action;
+`needs_spec`/`needs_tasks`/`eligible_impl`/`waiting_ci`/`needs_review` do
+not count as drained under status `complete`. Resume from checkpoint plus
+fresh remote truth only.
 
-- tranche start, before the first writable action (spawning writable lanes,
-  pushing, or opening PRs)
-- before claiming merge readiness for a PR (the ledger-gate evaluation point)
-- tranche end: compacting, handing off, closing the parent thread, or
-  selecting the next tranche in a full-queue drain loop
+Goal use — auto drain (all of: `auth_mode: auto`, `queue_mode: full_queue_drain`, goal
+capability available): create a thread goal at startup stating the whole
+drain objective, the four termination conditions (queue empty or fully
+blocked, token budget exhausted, user interrupt, only `human_decisions`
+remaining), and per-turn re-anchoring from checkpoint plus fresh remote
+truth; record a token budget in the checkpoint `goal` object. Every other
+case: no goal; record a `goal_candidate`. Never mark the goal complete
+while actionable items remain; on budget exhaustion, checkpoint and hand
+off leading with `resume_prompt`. Goal status never substitutes for the
+checkpoint, GitHub truth, or gates.
 
-Between these points, update the checkpoint only when material state changed
-(a new PR, a lane failure, a budget event) — not as a per-step ritual. The
-checkpoint mirrors GitHub truth for handoff; every extra write is copy work
-that GitHub already stores.
+## Implementation, Review And Verification
 
-Use `templates/tranche_checkpoint.md` as the shape and validate concrete JSON
-checkpoints with:
+Per issue slice: use `skills/specrail-implement/SKILL.md`; search before
+adding files/APIs/assets/schemas; run duplicate-work evidence and the
+implement route gate before creating a PR; implement only acceptance
+criteria from the linked spec and task plan; add tests proving the changed
+behavior; machine identifiers in English, human-facing text in the locale.
 
-```bash
-python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.json
-```
-
-The runtime checkpoint is a local handoff layer only. GitHub issues, PRs,
-labels, reviews, branches, and SpecRail spec packets remain the durable workflow
-truth.
-
-For `queue_mode: full_queue_drain`, the checkpoint must record the overall
-objective, spec coverage, current tranche, completed items, remaining queue,
-explicit blockers, and next resume action. `needs_spec`, `needs_tasks`,
-`eligible_impl`, `waiting_ci`, and `needs_review` do not count as drained while
-the checkpoint status is `complete`; they require a next action or a non-drain
-handoff status. Resume from the checkpoint plus fresh remote truth; do not
-recover queue state from old parent transcripts.
-
-## Goal Use
-
-Two branches:
-
-- Auto drain (default when ALL hold: `auth_mode: auto`,
-  `queue_mode: full_queue_drain`, and the runtime exposes Codex goal
-  capability): create a thread goal at startup. The goal objective must
-  state the whole drain objective (not just the current tranche), the four
-  termination conditions (queue empty or fully blocked, token budget
-  exhausted, user interrupt, only `human_decisions` remaining), and the
-  instruction to re-anchor every turn from the runtime checkpoint plus
-  fresh remote truth. Set a token budget: use the user-provided budget when
-  given, otherwise a conservative default recorded in the checkpoint `goal`
-  object together with the objective and status.
-- Every other case (goal capability unavailable, `auth_mode: review`, or
-  `queue_mode: bounded_tranche`): do not create a goal. Record a
-  `goal_candidate` in the checkpoint as before.
-
-Goal termination protocol:
-
-- Queue empty, or every remaining item is in `human_decisions`: mark the
-  goal complete and emit the final report. Never mark the goal complete
-  while actionable queue items remain.
-- Token budget exhausted: stop, write the checkpoint, and hand off; the
-  handoff report leads with the copy-paste `resume_prompt`.
-- User interrupt follows native Codex behavior.
-- Goal status never substitutes for the runtime checkpoint.
-
-Goal never replaces the runtime checkpoint, GitHub truth, or SpecRail gates.
-Reviewer-lane, self-review authorization, ledger-gate, spec-coverage, and
-merge-evidence rules apply verbatim while a goal is active.
-
-## Implementation
-
-For each issue slice:
-
-1. Use `skills/specrail-implement/SKILL.md` for the scoped implementation.
-2. Search before adding files, public APIs, workflow assets, schemas, templates,
-   or policies.
-3. Run duplicate-work evidence collection and the implementation route gate
-   before creating a new implementation PR.
-4. Implement only acceptance criteria from the linked spec and task plan.
-5. Add or update tests that prove the changed behavior.
-6. Keep machine IDs, paths, commands, states, routes, and JSON keys in English.
-7. Keep human-facing text in the selected locale.
-
-## Review And Verification
-
-Before readiness, run focused tests, repository deterministic checks, and
-`python3 checks/check_workflow.py --repo .`; when specs changed also use
-`--spec-dir specs/GH<issue>`. Apply the Waiting Discipline test layering:
-one local full-suite run per PR bound to the merge-candidate head; review-fix
-heads rely on focused tests plus the CI rollup, not a fresh local full suite. Compare the diff with the linked specs via
-`skills/specrail-check-impl-against-spec/SKILL.md`, then use
-`skills/specrail-pr-gate/SKILL.md` before reporting merge readiness.
-
-For GitHub PRs, current evidence must include:
-
-- PR head, CI/check rollup, review decision, merge state, and linked issue/closing intent
-- independent reviewer evidence and native reviewer-thread evidence when
-  available; terminal `review_execution: local` (hosted review is supplemental)
-- `review_source`, `lane_failures[]` (empty when none), and required
-  `self_review_authorization`
-- GraphQL threads plus each resolver's identity/lane role
-- serial `pr_gate.py` query timestamp and head SHA
-- `pr_tier`, changed-line/path evidence, optional `authorization_tier`, and
-  merge authorization for the selected `auth_mode`
-
-The runtime checkpoint must not mark a PR item `complete`, `merged`,
-`merge_ready`, or `ready_to_merge` unless `checks/runtime_ledger_gate.py` accepts
-the checkpoint. When the gate is evaluating a merged or merge-ready PR, local
-`pr_gate.evidence` must exist and either be an allowed PR gate result JSON or a
-raw PR evidence JSON that re-evaluates to `allowed`.
+Before readiness: focused tests, repository deterministic checks,
+`python3 checks/check_workflow.py --repo .` (plus `--spec-dir specs/GH<n>`
+when specs changed), applying the test layering above. Compare the diff with
+linked specs via `skills/specrail-check-impl-against-spec/SKILL.md`, then
+use `skills/specrail-pr-gate/SKILL.md` before reporting merge readiness.
+The complete GitHub PR evidence class list (head, CI rollup, review
+decision, merge state, closing intent, reviewer/thread evidence with
+terminal `review_execution: local`, `review_source`, `lane_failures[]`,
+`self_review_authorization`, GraphQL threads with resolver roles, serial
+gate query timestamp/head, `pr_tier` evidence, authorization fields) is
+defined once in `skills/specrail-pr-gate/SKILL.md`; do not restate it. The
+checkpoint must not mark a PR `complete`/`merged`/`merge_ready` unless
+`checks/runtime_ledger_gate.py` accepts it with `pr_gate.evidence` present
+and evaluating to `allowed`.
 
 ### Merge Authorization
 
-`auth_mode: auto`:
+Mode selection and evidence details: `skills/implx/SKILL.md` and
+`skills/specrail-pr-gate/SKILL.md`; runtime enforcement:
+`checks/runtime_ledger_gate.py`. `auto` exists only after the current user
+says `implx auto` / `implx 自动`; its standing authorization applies only
+when every evidence class is green; gaps go to `remaining_queue`; it is
+never self-review authorization. In `review`, `standard_auto` needs
+non-sensitive `fastlane`/`standard` tier evidence, the same green classes,
+and independent substantiation (gate-verifiable CI tier check or an
+`independent_lane` artifact's matching `{pr_tier, attested: true, basis}`);
+record `authorization_tier: standard_auto`,
+`merge_authorization.source: tier_policy_gh143`. Self-review never
+qualifies. Heavy/sensitive/unknown tiers use `heavy_manual` with per-PR
+human actor/source. Missing evidence, malformed artifacts, CI/attestation
+disagreement, or `tier_dispute: true` fails closed; only
+reviewer/merge-reviewer or human roles resolve a dispute; tier
+authorization never fills another evidence gap.
 
-- The current user message must explicitly say `implx auto` / `implx 自动`.
-  That invocation is the standing merge authorization for the run. Do not ask
-  per-PR merge questions.
-- Merge when ALL current evidence is green: CI/check rollup passing, PR gate
-  passed, review threads resolved, reviewer-lane evidence present, merge state
-  clean. Any evidence gap means skip the PR, record the gap in
-  `remaining_queue`, and keep draining.
-- Use closing keywords on final slices; after merge, close issues whose
-  acceptance criteria are fully merged. Merged-but-open issues found during
-  closure audit are closed with a comment linking the merged PRs.
-- Human-gate items (duplicate-ownership conflicts, maintainer waivers, probe
-  or time-window gates, conflicting review feedback, destructive or
-  irreversible actions) never block the queue: skip, continue, and report them
-  once in a final `human_decisions` list with a recommended action each.
-- Auto mode does not weaken reviewer-lane requirements, the self-review
-  authorization rules, the Bounded Tranche Hard Stop, or the runtime ledger
-  gate. Standing merge authorization is not self-review authorization.
-
-`auth_mode: review` — tiered authorization (GH-143 decision B):
-
-- `standard_auto` (no per-PR question): a PR qualifies when ALL of the
-  following hold —
-  - `pr_tier` is `fastlane` or `standard`, recorded with its evidence
-    (`pr_tier_evidence`: changed-line count and touched paths);
-  - all four green evidence classes are current: CI rollup passing, review
-    threads all resolved with `unresolved_count: 0`, pr_gate decision
-    `allowed`, independent reviewer-lane verdict `clean` or `non_blocking`;
-  - the item is not enforcement-sensitive;
-  - at least one independent tier endorsement beyond the self-reported
-    `pr_tier_evidence` exists: (a) a gate-verifiable CI tier-check artifact
-    reference, or (b) a reviewer-lane `tier_attestation`
-    (`{pr_tier, attested: true, basis}`) in the review artifact whose
-    `pr_tier` matches the checkpoint value. Self-reported evidence alone is
-    never sufficient. Until a CI tier check ships, the reviewer-lane
-    attestation is the only accepted endorsement. The attestation counts
-    only when the review artifact validates against
-    `schemas/review_result.schema.json` and the artifact's own
-    `review_source` is `independent_lane`; a malformed artifact is a hard
-    error. A `review_source: self_review` item can never qualify for
-    `standard_auto` — with no independent party it fails closed to
-    `heavy_manual` regardless of attestation content.
-  Record `authorization_tier: standard_auto` and
-  `merge_authorization.source: tier_policy_gh143` (audit anchor — do not
-  rename) on the checkpoint item, with the four green evidence references.
-- `heavy_manual` (per-PR human authorization, unchanged): `heavy` tier PRs
-  and enforcement-sensitive surfaces (gate code, enforcement, contracts,
-  authorization semantics, schemas/migrations, security, any
-  `enforcement_sensitive: true` item). Record
-  `authorization_tier: heavy_manual` with the human actor/source.
-- Fail-closed: missing, unevidenced, or out-of-set `pr_tier` is treated as
-  `heavy`. A tier dispute — CI tier-check disagreement, a reviewer
-  `tier_attestation` that mismatches the checkpoint `pr_tier`, or a
-  reviewer-recorded `tier_dispute: true` — blocks `standard_auto` and routes
-  to a human decision. Only the reviewer/merge-reviewer lane (or a human)
-  may set or clear `tier_dispute`; the implementer lane has no authority
-  over it. `checks/runtime_ledger_gate.py` blocks any violation.
-- Tier authorization never replaces or fills an evidence gap: any non-green
-  evidence means the PR waits or routes to a human, exactly as before.
-
-### Graded Re-confirmation After Authorization (GH-143)
-
-When bot or re-review findings arrive after standard-auto or human authorization:
-
-- Mechanical findings (all severity <= `important`, no intent/path/contract change)
-  stay authorized: fix, independently re-review the post-fix head, then record
-  `finding_ref`, `severity`, `mechanical`, and `disposition: fixed_re_reviewed`.
-- Any critical or intent/path/contract-expanding fix pauses merge and voids the
-  old authorization until human `re_authorization` (actor/source), recorded as `disposition: paused_re_authorized`.
-- Classification counts only when it matches reviewer/merge-reviewer
-  `finding_classifications[]`; missing/mismatched/implementer-only/indeterminate fails closed as critical/expanding.
+Graded re-confirmation (GH-143) for post-authorization findings: mechanical
+findings (severity ≤ `important`, no intent/path/contract change) stay
+authorized — fix, independently re-review the post-fix head, record
+`finding_ref`, `severity`, `mechanical`, `disposition: fixed_re_reviewed`.
+Any critical or intent/path/contract-expanding fix pauses merge and voids
+the authorization until human `re_authorization` (actor/source), recorded
+as `disposition: paused_re_authorized`; classification counts only when it
+matches reviewer/merge-reviewer `finding_classifications[]`, else fails
+closed as critical/expanding.
 
 ### Safe Merge Path
 
-Merging must survive branches that are checked out in local worktrees and
-must never report an outcome without remote confirmation:
-
-1. Run the merge from a neutral cwd with an explicit repo target
-   (`gh pr merge <n> --repo OWNER/REPO ...`).
-2. On local ownership failures (for example `branch ... is checked out at
-   ...` or a worktree lock; the class is "local ownership failure", the
-   messages are examples), fall back to
-   `gh api -X PUT /repos/{owner}/{repo}/pulls/{n}/merge` using a merge
-   method the repo allows (query merge settings first). Do not delete or
-   move the offending worktree — it may belong to another live session.
-3. Always confirm the outcome with a remote query
-   (`gh pr view <n> --json merged,mergeCommit`) before recording success or
-   failure, and write the result into the gate evidence as `merge_record`
-   (`merge_path`: `gh_pr_merge` | `api_fallback` | `merged_by_other`,
-   `remote_confirmed`, `merge_commit_sha`). A PR merged by someone else is a
-   valid confirmed terminal (`merged_by_other`).
-4. Post-merge: delete the remote branch as a separate step and record
-   `branch_deletion_outcome`; run `git worktree prune` in each local
-   checkout the tranche used and list stale or removed worktrees in the
-   closure report.
-
-`checks/pr_gate.py` blocks merge records without `merge_path` or without
-`remote_confirmed: true`.
+Merge from a neutral cwd with explicit repo target
+(`gh pr merge <n> --repo OWNER/REPO ...`); on local ownership failures
+(e.g. `branch ... is checked out at ...`) fall back to
+`gh api -X PUT /repos/{owner}/{repo}/pulls/{n}/merge` with an allowed
+method, never deleting or moving the offending worktree. Confirm with
+`gh pr view <n> --json merged,mergeCommit` before recording the outcome;
+write `merge_record` (`merge_path`: `gh_pr_merge` | `api_fallback` |
+`merged_by_other`, `remote_confirmed`, `merge_commit_sha`);
+`merged_by_other` is a valid confirmed terminal. Post-merge: delete the
+remote branch separately, record `branch_deletion_outcome`,
+`git worktree prune` used checkouts, list stale/removed worktrees in the
+closure report. `checks/pr_gate.py` blocks merge records without
+`merge_path` or `remote_confirmed: true`.
 
 ## Boundaries
 
-- In `auth_mode: auto`, merge only on complete current evidence; evidence gaps
-  mean skip and report, not ask.
-- In `auth_mode: review`, do not merge without current PR-gate evidence and
-  either explicit human authorization or a valid GH-143 `standard_auto` tier
-  authorization (fastlane/standard tier, full green evidence, independent
-  tier endorsement, no dispute). Heavy or sensitive PRs and any tier
-  ambiguity always require per-PR human authorization.
-- Do not dispatch review-thread/pr_gate queries and the merge command in the
-  same parallel tool batch or parallel lane; the gate query must complete first.
-- Reviewer-lane thread resolution and self-review recovery must follow Reviewer
-  Lane Execution; implementation/coordinator roles cannot resolve those threads.
-- Do not treat green CI as merge readiness without review-thread and merge-state
-  truth.
-- Do not close an issue from a partial implementation.
-- Do not replace an existing maintainer-writable PR unless it is stale, unsafe,
-  unwritable, or a human approves replacement.
-- Do not vendor a local threads skill into SpecRail.
+- Never dispatch gate queries and the merge command in one parallel batch;
+  the gate query completes first. Reviewer-lane thread resolution and
+  self-review recovery follow the reviewer-lane rules above.
+- Green CI alone is not merge readiness. Never close an issue from a partial
+  implementation. Never replace a maintainer-writable PR unless stale,
+  unsafe, unwritable, or human-approved. Do not vendor a local threads
+  skill into SpecRail.
 
-## Output
+Output: report objective/mode/tranche/remaining queue; issue-to-PR mapping and
+acceptance coverage; PR/head/merge links; fresh tests, CI, review-thread,
+merge-state and PR-gate evidence; open blockers; local worktree state; one
+consolidated `human_decisions` list with a recommendation per item.
 
-Report:
-
-- overall objective, queue mode, current tranche, and remaining queue
-- issue-to-PR mapping
-- PR links, head SHAs, and merge commits when merged
-- acceptance criteria covered or remaining
-- tests and deterministic checks run
-- review-thread, CI, merge-state, and PR-gate evidence
-- issues still open and why
-- `human_decisions`: the consolidated list of items needing a human choice,
-  each with a recommended action (auto mode reports this once at the end
-  instead of asking mid-run)
-- local dirty or stale worktree state
-
-## Rejection Persistence And Retry
-
-When a gate command in this skill (`checks/route_gate.py`,
-`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
-other than `allowed`, the caller persists the gate's JSON output to
-`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
-missing). This write is orchestrator behavior; the gate itself stays
-read-only. Use the `rejection_items[]` list to fix every defect in a single
-round instead of guessing one item per retry.
-
-On the next retry of the same gate for the same issue or PR, pass
-`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
-the new output contains a `repeat_rejection` section, the same item was
-rejected verbatim twice: stop retrying and report the contract violation to a
-human instead of starting another round.
+Rejection persistence and retry:
+persist every non-`allowed` route/review/PR gate result at
+`.specrail/runtime/rejections/<gate>-<issue|pr>.json`, fix the complete
+`rejection_items[]` set, and pass it back with `--prior-rejection`. A
+`repeat_rejection` means stop retrying and report the repeated contract
+violation; gates themselves remain read-only.

@@ -29,7 +29,12 @@ python3 checks/route_gate.py --repo . --route implement --issue <issue-number> -
 python3 checks/check_workflow.py --repo .
 ```
 
-7. Record changed files, commands, results, and remaining human gates.
+7. For a GitHub PR, compare the diff with the linked packet, produce the
+   exact-head local review JSON and manifest, validate it with
+   `checks/review_json_gate.py`, collect current PR evidence using
+   `--review-manifest`, then run `checks/pr_gate.py` serially. A hosted review or
+   `--review-source` alone is not terminal evidence.
+8. Record changed files, commands, results, and remaining human gates.
 
 ## Boundaries
 

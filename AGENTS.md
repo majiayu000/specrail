@@ -23,6 +23,21 @@ small, explicit, and verifiable.
   consumer overlays.
 - Preserve the dry-run default for all GitHub automation.
 
+## Contract Size Discipline (GH-208)
+
+- Hard line caps, enforced by `checks/skill_size_gate.py` in CI:
+  `skills/specrail-implement-queue/SKILL.md` ≤ 400,
+  `skills/implx/SKILL.md` ≤ 150, every other `skills/*/SKILL.md` ≤ 200.
+  Tiered read-set byte budgets: fastlane ≤ 30KB, full-drain startup ≤ 60KB.
+- One-in-one-out: when a contract file is at its cap, adding a new clause
+  requires deleting or condensing an equal amount of existing text in the
+  same PR. Never raise a cap to make room.
+- Every new gate module in `checks/` must name its motivating incident
+  (issue number) and expected interception scenario in its docstring. A
+  gate with no real interception in 30 days and no security property is a
+  candidate for downgrade to warning or deletion at the next audit
+  (`docs/GATE_AUDIT_*.md`).
+
 ## Long Queue Guardrails
 
 - For approved-spec issue/PR queues, route through `skills/implx/SKILL.md` and

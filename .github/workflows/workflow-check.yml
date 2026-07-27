@@ -26,6 +26,8 @@ jobs:
         run: python3 -m pip install pytest
       - name: Check workflow pack and spec packets
         run: python3 checks/check_workflow.py --repo . --all-specs
+      - name: Enforce skill contract size caps
+        run: python3 checks/skill_size_gate.py --repo .
       - name: Evaluate adoption matrix
         run: python3 evaluate.py --repo . --spec-dir specs/GH13 --format json
       - name: Run tests

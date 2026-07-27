@@ -1,281 +1,148 @@
 ---
 name: implx
-description: "Use when the user says \"implx\", \"use implx\", \"用 implx\", or asks for the one-line SpecRail queue shortcut. Plain implx means drain the full actionable issue/PR queue in review mode: run SpecRail preflight, create missing spec/task PR work before implementation, use threads for reviewer/merge-reviewer lanes when available, create per-issue implementation PRs, require CI/reviewThreads/pr_gate evidence, preserve per-PR human merge authorization, and perform closure audit. Say \"implx auto\" / \"implx 自动\" for the explicit auto mode that treats the invocation as standing merge authorization for this run."
+description: "Use only for explicit implx requests. Plain implx drains the actionable issue/PR queue in review mode with SpecRail gates and GH-143 tiered merge authorization: green fastlane/standard PRs with independent tier substantiation merge as standard_auto; heavy or sensitive items keep per-PR human authorization. `implx auto` is the explicit run-scoped auto mode."
 ---
 
 # Implx
 
-Use this skill as a short operational entrypoint. It only recognizes the
-`implx` shorthand, records the queue mode, performs the minimum startup checks,
-and delegates execution policy to the focused SpecRail skills.
-
-Do not duplicate the implementation-queue contract here. The authoritative
-queue planning, spec coverage gate, context budget, runtime checkpoint, threads
-orchestration, PR gate, and closure-audit rules live in
+Recognize the shorthand, record mode, run the bounded startup, then delegate
+to focused SpecRail skills. Queue policy lives in
 `skills/specrail-implement-queue/SKILL.md`.
 
-## Startup
+## Tiered Read Set
 
-1. Run the normal SpecRail startup before remote writes:
-   - read the repository `AGENTS.md`
-   - read `AGENT_USAGE.md`, `workflow.yaml`, `states.yaml`, `labels.yaml`, and
-     `skills/specrail-workflow/SKILL.md` when present
-   - select the human-facing locale
-   - identify human gates and route-gate requirements
-2. Fetch current remote state before mapping a GitHub queue.
-3. List open issues, open PRs, current branch, dirty files, and worktrees.
-4. Map existing PRs before creating replacement PRs.
-5. Record queue scope. Plain `implx`, `use implx`, or `用 implx` means full
-   actionable queue drain unless the prompt explicitly narrows the scope.
+The measured bootstrap set is `AGENTS.md`, `AGENT_USAGE.md`, `workflow.yaml`,
+`states.yaml`, `labels.yaml`, and this file. Do not call phase-loaded files
+startup evidence.
 
-## Queue Mode
+Single-issue shortcut: after qualification load
+`skills/specrail-implement/SKILL.md`; on entering review load the canonical
+`skills/specrail-review-pr/SKILL.md` and, when native review dispatch applies,
+`integrations/threads.md`; before PR evidence/gating load
+`skills/specrail-pr-gate/SKILL.md`. The queue skill stays excluded.
 
-Use `queue_mode: full_queue_drain` for the plain shorthand:
+Queue startup adds `skills/specrail-implement-queue/SKILL.md` and
+`templates/queue_plan.yaml`. Load review, threads, implement, and PR-gate
+contracts only at their phases; load `skills/specrail-workflow/SKILL.md` only
+for route ambiguity.
 
-- `implx`
-- `use implx`
-- `用 implx`
+## Startup And Queue Mode
 
-These explicit forms are equivalent:
+1. From the bootstrap config select locale, human gates, and route-gate
+   requirements.
+2. Fetch current remote state before mapping a GitHub queue; list open
+   issues, open PRs, current branch, dirty files, worktrees; map existing
+   PRs before creating replacement PRs.
+3. Record queue scope. Plain `implx`, `use implx`, `用 implx` (and explicit
+   equivalents like `implx drain full queue`, `用 implx 做完整队列`) mean
+   `queue_mode: full_queue_drain`. Use `queue_mode: bounded_tranche` only
+   when the prompt explicitly limits scope (one issue, one PR, the current
+   tranche, plan-only, status-only, review-only).
 
-- `implx drain full queue`
-- `implx resume full queue`
-- `用 implx 完成所有 actionable issues 和 PRs`
-- `用 implx 做完整队列`
-
-Use `queue_mode: bounded_tranche` only when the prompt explicitly limits scope,
-for example one issue, one PR, the current tranche, plan-only, status-only, or
-review-only work.
-
-Single-issue short circuit: when the prompt targets exactly one issue whose
-spec coverage is already `complete` (or `exception_allowed`) and the change is
-plausibly `fastlane`/`standard` tier, skip the queue skill entirely — run the
-startup checks above, then route straight to
-`skills/specrail-implement/SKILL.md` plus
-`skills/specrail-pr-gate/SKILL.md`. Do not build the full-queue coverage
-classification, queue-planning YAML, or tranche budget for one scoped issue.
-Fall back to the queue skill only when the short circuit discovers multi-issue
-coupling, a `heavy` tier surface, or missing spec coverage.
+Single-issue short circuit: use it only when the prompt names exactly one
+issue, its non-legacy product/tech/tasks packet is `complete`, its
+done-when is decidable, and the surface is plausibly `fastlane`/`standard`.
+Skip only the full-queue coverage map, queue-planning YAML, and tranche
+budget. Still map existing PRs, collect duplicate-work evidence, pass the
+`implement` route, verify against the packet, produce and validate an
+exact-head local review artifact/manifest, collect current PR evidence with
+`--review-manifest`, and run the serial PR gate plus applicable merge
+  authorization through the phase-loaded implement, review/threads, and
+  PR-gate contracts. `exception_allowed` is not a complete
+packet and never qualifies. Fall back to the queue skill on multi-issue
+coupling, ownership conflict, heavy risk, packet/head drift, or any
+missing qualification.
 
 ## Authorization Mode
 
-Two modes. Record the selected mode at startup and pass it downstream.
-The repository's persisted `automation_policy.auth_mode` is a `review` safety
-baseline; it never selects or authorizes auto mode.
+Record the mode at startup and pass it downstream. The repository's
+persisted `automation_policy.auth_mode` is a `review` safety baseline; it
+never selects or authorizes auto mode.
 
-`auth_mode: review` — the DEFAULT for plain `implx`, `use implx`, `用 implx`,
-`implx review`, `implx 审核`, and `implx 人工`:
-
-- Tiered merge authorization (GH-143): a PR whose `pr_tier` is `fastlane` or
-  `standard`, with full green evidence (CI rollup passing, review threads all
-  resolved with zero unresolved, pr_gate `allowed`, independent reviewer-lane
-  verdict `clean` or `non_blocking`) AND independent tier substantiation (a
-  gate-verifiable CI tier-check artifact or a reviewer-lane
-  `tier_attestation` in a schema-valid review artifact whose own
-  `review_source` is `independent_lane`), is authorized to merge without
-  a per-PR question. Record `authorization_tier: standard_auto` and
+`auth_mode: review` — the DEFAULT for plain `implx` and its variants:
+- Tiered merge authorization (GH-143): a `fastlane`/`standard` PR with full
+  green evidence (CI rollup passing, all review threads resolved, pr_gate
+  `allowed`, independent reviewer-lane verdict `clean`/`non_blocking`) AND
+  independent tier substantiation (gate-verifiable CI tier-check artifact,
+  or a reviewer-lane `tier_attestation` in a schema-valid artifact whose
+  own `review_source` is `independent_lane`) merges without a per-PR
+  question; record `authorization_tier: standard_auto` and
   `merge_authorization.source: tier_policy_gh143` on the checkpoint item.
-  A `review_source: self_review` item never qualifies for standard_auto.
-- `heavy` tier PRs and enforcement-sensitive surfaces (gate code,
-  enforcement, contracts, authorization semantics, schemas/migrations,
-  security) keep per-PR explicit human merge authorization in the current
-  conversation before any merge (`authorization_tier: heavy_manual`).
-- Missing, unevidenced, or out-of-set `pr_tier` fails closed to `heavy`. A
-  reviewer-lane `tier_dispute` or a `tier_attestation` that disagrees with
-  the checkpoint `pr_tier` is a dispute: standard_auto is blocked until a
-  human decides. Only the reviewer/merge-reviewer lane (or a human) may set
-  or clear the dispute marker.
-- Tier authorization never replaces or fills any evidence gap; any non-green
-  evidence means wait or route to a human, exactly as before.
-- Route `needs_spec` / `needs_tasks` to spec-writing skills but wait for
+  A `review_source: self_review` item never qualifies.
+- `heavy` tier and enforcement-sensitive surfaces (gate code, enforcement,
+  contracts, authorization semantics, schemas/migrations, security) keep
+  per-PR explicit human merge authorization in the current conversation
+  (`authorization_tier: heavy_manual`). Missing, unevidenced, or disputed
+  `pr_tier` fails closed to `heavy`; only the reviewer/merge-reviewer lane
+  or a human sets or clears a tier dispute. Tier authorization never fills
+  an evidence gap — any non-green evidence means wait or route to a human.
+- Route `needs_spec`/`needs_tasks` to spec-writing skills but wait for
   human confirmation before implementing from a freshly drafted spec.
 
-`auth_mode: auto` — selected only by a current user message that explicitly says
-`implx auto` or `implx 自动`:
-
-- The explicit `implx auto` invocation itself IS the standing merge
-  authorization for this run. Do not ask per-PR "can I merge" questions.
-- Merge a PR when ALL evidence is current and green per
-  `skills/specrail-implement-queue/SKILL.md` (CI rollup, PR gate, resolved
-  review threads, clean merge state, reviewer-lane evidence).
-- Use closing keywords for final slices so merged PRs close their issues;
-  close merged-but-open issues during closure audit.
-- `needs_spec` / `needs_tasks` issues are actionable: auto-draft the spec or
-  task packet via the focused SpecRail skills, then implement. Do not park
-  them waiting for human spec approval.
-- Auto-mode standing authorizations (all scoped to this run; see
-  `skills/specrail-implement-queue/SKILL.md` for the exact conditions):
-  add readiness labels to issues whose spec coverage is complete; use
-  scoped coordinator self-review after two distinct independent reviewer
-  lanes failed on the same PR with recorded `lane_failures[]`; work in
-  same-owner repositories explicitly referenced by queue issues; and
-  default a deprecation window to the next minor release when the user
-  did not specify one. None of these go to `human_decisions`.
-- Items that genuinely need a human decision (duplicate-ownership conflicts,
-  maintainer waivers, probe or time-window gates, destructive or irreversible
-  actions, conflicting review feedback, architecture-level rewrites,
-  cross-owner repository work, specs the issue lacks evidence to draft)
-  never block the queue: skip them, keep draining, and report them once in
-  a final `human_decisions` list with a recommended action each.
-- Budget exhaustion without a degradation signal does not pause the run:
-  follow the Same-Session Tranche Rollover rule in
-  `skills/specrail-implement-queue/SKILL.md` and continue with the next
-  tranche in the same session. Hand off to a fresh session only on compaction
-  budget reached, context soft stop, user interrupt, or a queue that is empty
-  or fully blocked.
-- When the runtime exposes Codex goal capability, create a thread goal for
-  the drain per the Goal Use auto-drain branch in
-  `skills/specrail-implement-queue/SKILL.md`. While the goal is active,
-  compaction does not interrupt the run (re-anchor from the checkpoint and
-  fresh remote truth after each compaction); the run ends only on queue
-  empty or fully blocked (goal complete), goal token budget exhausted, user
-  interrupt, or when only `human_decisions` items remain.
-
-## Bounded Review Contract
-
-<!-- specrail-bounded-review-contract-v1:start -->
-Bounded review contract (`manifest.version: 2`,
-`round_policy: {name: "bounded_diff_v1", cap: 3}`):
-
-- `rounds[]` is the source of truth. Each entry is the closed set
-  `{artifact_id, review_round, review_mode, base_head_sha, head_sha, diff_sha256, escalation_authorization_id}`;
-  the loader derives continuous rounds `1..N` from the artifact set.
-- Round 1 may use `full`. Every `review_round >= 2` must use `review_mode:
-  resumed | diff_only`, never `full`; `base_head_sha` must equal the previous
-  round's `head_sha`, and the supplied bytes and `diff_sha256` must match the
-  exact `git diff --no-ext-diff --binary <base_head_sha>..<head_sha> --` output.
-- `prior_findings[]` is compact typed carry only:
-  `{finding_id, source_artifact_id, status, evidence_pointer}` with
-  `evidence_pointer.kind: thread | comment | artifact | commit`; do not replay
-  historical finding prose. Carry every still-unresolved historical finding.
-- Before every `review_round >= 4`, stop. Continue exactly once only with an
-  external, role-mapped maintainer authorization whose `decision` is
-  `continue_once` and whose id, PR, prior/target heads, and round match exactly.
-- The over-cap `round_cap_escalation.unresolved_findings[]` must equal the full
-  union of historical unresolved findings and current critical, important, or
-  otherwise actionable findings; no finding may disappear or be invented.
-- `auth_mode: auto` merge authorization and `human_full_review_request` do not
-  authorize an over-cap review round and cannot replace that exact cap evidence.
-<!-- specrail-bounded-review-contract-v1:end -->
+`auth_mode: auto` — selected only by a current user message that explicitly
+says `implx auto` / `implx 自动`:
+- The invocation itself IS the standing merge authorization for this run:
+  merge whenever ALL evidence is current and green per the queue skill (CI
+  rollup, PR gate, resolved threads, clean merge state, reviewer-lane
+  evidence); use closing keywords for final slices; close merged-but-open
+  issues in the closure audit; never ask per-PR merge questions.
+- `needs_spec`/`needs_tasks` issues are actionable: auto-draft via the
+  focused skills, then implement. Run-scoped standing authorizations (exact
+  conditions in the queue skill): readiness labels for complete-coverage
+  issues, scoped coordinator self-review after two recorded distinct lane
+  failures on one PR, same-owner repositories explicitly referenced by
+  queue issues, and next-minor deprecation-window defaults.
+- Items genuinely needing a human decision (duplicate ownership, waivers,
+  probe/time-window gates, destructive actions, conflicting feedback,
+  architecture rewrites, cross-owner repos, evidence-starved specs) never
+  block the queue: skip, keep draining, report once in `human_decisions`
+  with a recommendation each.
+- Budget exhaustion without degradation follows the queue skill's
+  Same-Session Tranche Rollover; hand off to a fresh session only on
+  compaction budget, context soft stop, user interrupt, or an
+  empty/fully-blocked queue. With Codex goal capability, create the drain
+  goal per the queue skill's Goal Use; compaction then re-anchors from the
+  checkpoint instead of ending the run.
 
 In both modes, never force-push, delete unmerged branches, replace a
 maintainer-writable PR without cause, publish releases, or act outside the
-repository without explicit instruction. In auto mode, a same-owner
-repository explicitly referenced by a queue issue counts as inside the
-authorized scope; cross-owner repositories always require explicit human
-instruction. Auto mode does not weaken the
-Bounded Tranche Hard Stop, reviewer-lane, or self-review authorization rules.
+repository without explicit instruction (auto: same-owner repos referenced
+by queue issues are in scope; cross-owner always needs a human). Auto never
+weakens the Bounded Tranche Hard Stop, reviewer-lane, or self-review rules:
+`full_queue_drain` executes as bounded tranches per the queue skill.
 
-`full_queue_drain` means the objective spans the whole actionable queue, not
-that one session runs unbounded. Execution is a sequence of bounded tranches:
-each session declares a hard budget (compaction count and/or item cap) in the
-runtime checkpoint at tranche start, stops when the budget is exhausted, and
-hands off to a fresh session via the checkpoint. See the Bounded Tranche Hard
-Stop rules in `skills/specrail-implement-queue/SKILL.md`.
+## Review Contract And Threads
 
-Pass the selected modes to `skills/specrail-implement-queue/SKILL.md`:
+The canonical `manifest.version: 2` / `bounded_diff_v1` contract lives in
+`skills/specrail-review-pr/SKILL.md`; do not copy it here; load it at review entry.
 
-```yaml
-implx_context:
-  overall_objective:
-  queue_mode: bounded_tranche | full_queue_drain
-  auth_mode: auto | review
-  user_authorization:
-  current_branch:
-  dirty_files:
-  open_issues:
-  open_prs:
-```
+For GitHub queues, reviewer lanes, merge gates, and closure audit make
+native thread dispatch required whenever native subagent capability is
+available: load `integrations/threads.md`, follow the queue skill's
+orchestration rules, and record `thread_dispatch_gate` in the runtime
+checkpoint before implementation, review, or merge work. A coordinator
+self-review is not a native thread and satisfies merge review only for PRs
+whose current-head GitHub evidence passes the closed
+`basis: fastlane_policy` path in the queue skill; checkpoint
+self-declaration is not tier evidence. Primary reviewer evidence must be
+produced locally (`review_execution: local` on the exact-head terminal
+artifact) via `codex review --base <base>` or a native
+reviewer/merge-reviewer lane; hosted `@codex review` comments are
+supplemental only and never populate the primary artifact. If no native
+threads capability exists, record the fallback and report it. Wait for CI
+and long checks with single blocking calls per the queue skill's Waiting
+Discipline — never a model-driven poll loop.
 
-## Delegate
+## Delegate, Boundaries, Handoff
 
-After startup, load `skills/specrail-implement-queue/SKILL.md` for any issue or
-PR queue. That skill owns:
-
-- spec coverage classification
-- PR tier lanes (`fastlane` / `standard` / `heavy` — tier decides one-PR
-  versus two-PR process weight; gates stay identical)
-- implementation candidate selection
-- one-issue-per-PR planning
-- partial versus final closing semantics
-- context-budget and runtime-checkpoint behavior
-- optional threads orchestration
-- verification, PR-gate evidence, and closure audit
-
-For one small scoped issue, follow that skill's instruction to route to
-`skills/specrail-implement/SKILL.md`.
-
-## Threads
-
-If the queue needs native parallel lanes, reviewer lanes, CI waits,
-review-thread checks, merge gates, or closure audit, load
-`integrations/threads.md` and then follow the orchestration rules in
-`skills/specrail-implement-queue/SKILL.md`.
-
-For GitHub issue or PR queues, reviewer lanes, merge gates, and closure audit
-make native thread dispatch required whenever native subagent capability is
-available. Record `thread_dispatch_gate` before implementation, review, or
-merge work. A coordinator self-review is not a native thread and does not
-satisfy merge review, except for `fastlane`-tier PRs under the
-`basis: fastlane_policy` self-review path defined in
-`skills/specrail-implement-queue/SKILL.md`.
-
-Primary reviewer evidence must be produced by a local reviewer execution and
-record `review_execution: local` on the exact-head terminal artifact. A local
-`codex review --base <base>` invocation or a native reviewer/merge-reviewer
-lane may produce that artifact. GitHub comments such as `@codex review` invoke
-a hosted service: they may be requested and reported as supplemental hosted
-review, but they must not populate the primary reviewer artifact, satisfy the
-reviewer-lane gate, or be described simply as "Codex review" without the
-hosted qualifier.
-
-If no native threads capability is available, continue with the single-agent
-SpecRail flow only after recording the fallback and reporting that no native
-threads were launched.
-
-Wait for CI and long local checks with a single blocking call (e.g.
-`gh pr checks <n> --watch --fail-fast`, or a foreground `cargo test`), never a
-model-driven poll loop. See Waiting Discipline in
-`skills/specrail-implement-queue/SKILL.md`.
-
-## Boundaries
-
-- In `auto` mode, merge only on complete current evidence (CI, review threads,
-  merge state, PR gate, reviewer lane); evidence gaps mean skip and report,
-  not ask.
-- In `review` mode, do not merge without explicit human authorization in the
-  current conversation, except via GH-143 `standard_auto`: `fastlane` or
-  `standard` tier, full green evidence, independent tier substantiation, and
-  no tier dispute. Heavy or sensitive PRs and any tier ambiguity always
-  require per-PR human authorization.
-- Do not treat green CI as merge readiness without review-thread and merge-state
-  truth.
-- Do not treat hosted review as the primary local reviewer lane; hosted review
-  is supplemental even when it is independent of the implementer.
-- Do not close an issue from a partial implementation.
-- Do not replace an existing maintainer-writable PR unless it is stale, unsafe,
-  unwritable, or a human approves replacement.
-- Do not use old Codex session logs as queue state.
-
-## Handoff
-
-Report the compact handoff produced by the focused queue skill. Include this
-`implx` wrapper context when useful:
-
-```yaml
-implx_handoff:
-  route: implement_queue
-  overall_objective:
-  queue_mode:
-  auth_mode:
-  delegated_skill: skills/specrail-implement-queue/SKILL.md
-  queue_truth:
-    open_issues:
-    open_prs:
-    current_branch:
-    dirty_files:
-  human_decisions:
-  focused_handoff:
-  thread_dispatch_gate_ref: <checkpoint path>  # recorded once in the runtime
-                                               # checkpoint; do not copy fields
-```
+After startup, load `skills/specrail-implement-queue/SKILL.md` for any
+issue/PR queue and pass `implx_context` (overall_objective, queue_mode,
+auth_mode, user_authorization, current_branch, dirty_files, open_issues,
+open_prs). Report the compact handoff produced by the queue skill
+(`implx_handoff`: route, modes, delegated skill, queue truth,
+`human_decisions`, focused handoff, checkpoint reference for
+`thread_dispatch_gate` — never copy its fields). Boundaries: green CI alone
+is not merge readiness; hosted review is never the primary reviewer lane;
+never close an issue from a partial implementation; never replace a
+maintainer-writable PR unless stale, unsafe, unwritable, or human-approved;
+never use old Codex session logs as queue state.

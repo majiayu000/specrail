@@ -508,9 +508,13 @@ def build_self_review_authorization(
     source: str | None,
     scope: str | None,
     summary: str | None,
+    basis: str | None = None,
+    conversation_marker: str | None = None,
 ) -> dict[str, str] | None:
     provided = [
-        value for value in [actor, source, scope, summary]
+        value for value in [
+            actor, source, scope, summary, basis, conversation_marker,
+        ]
         if value is not None and value.strip()
     ]
     if not provided:
@@ -523,6 +527,23 @@ def build_self_review_authorization(
     authorization = {"actor": actor.strip(), "source": source.strip(), "scope": scope.strip()}
     if summary and summary.strip():
         authorization["summary"] = summary.strip()
+    if basis is not None:
+        if basis.strip() != "fastlane_policy":
+            raise EvidenceError(
+                "--self-review-authorization-basis must be fastlane_policy"
+            )
+        if not conversation_marker or not conversation_marker.strip():
+            raise EvidenceError(
+                "--self-review-authorization-conversation-marker is required "
+                "with fastlane_policy"
+            )
+        authorization["basis"] = basis.strip()
+        authorization["conversation_marker"] = conversation_marker.strip()
+    elif conversation_marker is not None:
+        raise EvidenceError(
+            "--self-review-authorization-conversation-marker requires "
+            "--self-review-authorization-basis"
+        )
     return authorization
 
 

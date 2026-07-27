@@ -118,6 +118,55 @@ def test_build_evidence_matches_pr_gate_contract() -> None:
     assert evaluate_pr_gate(evidence)["decision"] == "allowed"
 
 
+def test_build_evidence_derives_trusted_fastlane_tier_from_snapshot() -> None:
+    review_evidence = clean_review_evidence()
+    review_evidence["review_source"] = "self_review"
+    review_evidence["human_final_review_required"] = True
+    artifact = review_evidence["artifacts"][0]
+    artifact["review_source"] = "self_review"
+    artifact["human_final_review_required"] = True
+    snapshot = file_snapshot(["docs/notes.md"])
+    snapshot["changed_lines"] = 12
+    evidence = build_evidence(
+        pr_payload(),
+        threads_payload(),
+        {
+            "actor": "user",
+            "source": "chat",
+            "summary": "merge approved",
+        },
+        review_source="self_review",
+        self_review_authorization={
+            "actor": "coordinator",
+            "source": "fastlane policy",
+            "scope": (
+                "PR #10 exact head "
+                "e36d97517d8d0b27faca1abe5e5c63f9f88684d9"
+            ),
+            "basis": "fastlane_policy",
+            "conversation_marker": "implx auto 2026-07-26",
+        },
+        review_evidence=review_evidence,
+        pr_snapshot=snapshot,
+    )
+
+    assert evidence["pr_tier"] == "fastlane"
+    assert evidence["enforcement_sensitive"] is False
+    assert evidence["base_ref"] == "main"
+    assert evidence["base_sha"] == base_sha()
+    assert evidence["pr_tier_evidence"] == {
+        "changed_lines": 12,
+        "changed_lines_countable": True,
+        "changed_files": 1,
+        "touched_paths": ["docs/notes.md"],
+        "source": "github_changed_files",
+        "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "base_ref": "main",
+        "base_sha": base_sha(),
+        "paths_sha256": snapshot["paths_sha256"],
+    }
+
+
 def test_build_evidence_rejects_hosted_review_as_primary() -> None:
     review_evidence = clean_review_evidence()
     review_evidence["review_execution"] = "hosted"
