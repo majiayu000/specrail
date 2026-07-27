@@ -232,10 +232,19 @@ manifest 与 integrity library：
    重叠检查也以已打开 descriptor 的 inode ancestry 为权威；
 6. installer 在 target root fd 下以不可预测名称、create-exclusive 建立 staging，并为每个
    skill 使用固定、collision-safe 的 transaction-record basename
-   `.specrail-install-txn-<sha256(skill-name)>.json`。record 必须 create-exclusive、`0600`、
-   closed JSON，绑定 transaction id、destination/staging 名、old/new manifest identity 与
-   `prepared` phase；写入后依次 fsync staging files/directories、record fd 与 target-root fd。
-   record 已存在即返回 `recovery_required`，不得覆盖。destination 不存在时只允许单次
+   `.specrail-install-txn-<sha256(skill-name)>.json`。record 必须 `0600`、closed JSON，绑定
+   transaction id、destination/staging 名、old/new manifest identity 与 `prepared` phase。
+   record 的发布必须原子：先在 target-root fd 下以不可预测名称 create-exclusive 建立
+   `.specrail-install-txnstage-<skill-sha256>-<transaction-id>.json`，**完整写入并 fsync 该
+   temp record fd** 之后，才用 target-root dirfd 上的单次
+   `renameat2(RENAME_NOREPLACE)` 发布为上述固定 basename，随后依次 fsync staging
+   files/directories 与 target-root fd。不得直接对固定名 create-exclusive 后再写入内容——
+   那会在「已创建、未写完」的窗口被 kill 时于固定名留下空或截断的 record，其 transaction id
+   与 staging identity 均不可恢复，固定名将永久阻断后续安装。固定名 record 已存在即返回
+   `recovery_required`，不得覆盖。发布 rename 失败或此前被中断时，固定名要么不存在、要么是
+   完整 closed JSON，二者皆可继续；残留的 temp record 由 preflight 按其固定前缀与
+   `0600`/`S_ISREG`/`st_nlink == 1` 校验后经所持 target-root fd 安全删除，不构成
+   `recovery_required`。destination 不存在时只允许单次
    `renameat2(RENAME_NOREPLACE)` commit；destination 已存在时只允许同一 target-root dirfd
    上的单次 `renameat2(RENAME_EXCHANGE)`（或语义完全等价、保证 canonical name 始终存在的
    原子 exchange）交换 staging 与 destination，禁止
@@ -259,7 +268,14 @@ manifest 与 integrity library：
    NUL、非规范编码、相等或与 record basename 相等。随后仅在所持 target-root dirfd 下以
    `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS|RESOLVE_NO_MAGICLINKS)`，或可证明等价的
    single-component `openat(O_NOFOLLOW)` + fd ancestry/identity 复核打开；平台无法提供
-   beneath-root 等价保证时 recovery fail closed。伪造/矛盾 record 保留现场，且不得读取、
+   beneath-root 等价保证时 recovery fail closed。`RESOLVE_BENEATH`、`RESOLVE_NO_SYMLINKS`
+   与 single-component `openat(O_NOFOLLOW)` 都不阻止跨越挂载点：staging tree 内的 bind mount
+   或用户可控 FUSE mount 其 pathname 仍在 target root 之下，descriptor-relative 的递归
+   cleanup 会就此下降进外部文件系统并删除其内容。因此 recovery 的每一次下降都必须拒绝跨越
+   mount 边界——使用 `RESOLVE_NO_XDEV`，或在无该 flag 时对每个打开的 directory/file fd
+   `fstat` 并要求其 `st_dev` 逐层等于所持 target-root fd 的 `st_dev`；`st_dev` 不等即保留现场
+   并 fail closed，不得删除该对象或其子树。平台既无 `RESOLVE_NO_XDEV` 也无法可靠比较
+   `st_dev` 时，recovery 同样 fail closed。伪造/矛盾 record 保留现场，且不得读取、
    删除或改写 target root 外对象。通过该 gate 后才以 record 的 old/new manifest identities
    对两棵 tree 分类。若
    destination 完整匹配 old identity，说明 exchange 未发生：无论 staging 等于 new，还是
@@ -271,8 +287,14 @@ manifest 与 integrity library：
    post-check 后清理 record；staging 残留的分类不要求匹配 old identity，因为 exchange 后
    canonical destination 的正确性只由 new identity 证明。若 staging 已不存在，则在
    destination 完整匹配 new identity 时判定 old cleanup 已完成并删除 record，或完整匹配
-   old identity 时判定 transaction 未生效/已 rollback 并删除 record；只有 destination 既不
-   匹配 old 也不匹配 new identity，或任一对象不安全时才保留现场并 fail closed，
+   old identity 时判定 transaction 未生效/已 rollback 并删除 record；若 destination **不存在**
+   （首次安装走 `RENAME_NOREPLACE` 路径，step 7 填充 staging 期间被 kill，exchange 从未发生，
+   因而 record 中的 old identity 为空/absent），同样属于可恢复的 pre-exchange 状态：无论
+   staging 完整、不完整还是已不存在，都只经所持 target-root fd 安全删除 staging 残留与 record
+   并保持 destination 缺失，后续显式 apply 不得被永久阻断；只有 destination 存在却既不
+   匹配 old 也不匹配 new identity，或 record 声明了非空 old identity 而 destination 缺失
+   （说明已安装 tree 被外部删除，现场需人工判断），或任一对象不安全时才保留现场并 fail
+   closed，
    不得猜测删除或交换。恢复的 cleanup、exchange rollback、record 删除与每个阶段的 fsync 都只用
    stable descriptor chain。由此任意 kill/power-loss 点 canonical destination 都存在，且
    下次显式 apply 能确定恢复。
@@ -359,7 +381,19 @@ directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 
   gate：同时消费 runtime provider
   交付的 closed evidence envelope、provider-attested current session/route、shared lock
   manifest 与 doctor 的完整 closed JSON（含 target identity/status），逐项执行 required
-  role set、origin/path/hash/session/freshness/manifest/doctor cross-binding。任一输入
+  role set、origin/path/hash/session/freshness/manifest/doctor cross-binding。
+  freshness 是确定性谓词，不留实现自选区间：时间源唯一为 provider 在 envelope 内 attest 的
+  `captured_at`（RFC 3339 UTC，秒精度）与同一 envelope 内 provider attest 的
+  `session_started_at`；gate 侧不读本地时钟、不接受 caller 时间，也不用磁盘 mtime。判定为
+  `session_started_at <= captured_at <= provider_now`，其中 `provider_now` 是同一次
+  provider 响应中 attest 的当前时间；允许的时钟偏移是 `0`——三者来自同一 provider 响应，
+  不存在跨时钟比较。**不设最大存活时长**：长期开启的合法 session 不因时间流逝失效，
+  evidence 的新鲜性由非时间性身份证明——`session_id` 精确等于 provider-attested current
+  session、每个 role 的 resolved path 与 loaded bytes sha256 精确等于当前 lock manifest 与
+  doctor target identity——单独保证。任一时间字段缺失、非规范编码、越出上述闭区间，或
+  provider 未在同一响应中 attest 全部三个时间值时，返回 `session_restart_required`。
+  该谓词是闭集：符合实现不得再追加额外的时间性拒绝条件，因此两个符合实现对同一 envelope
+  的判定必然一致。任一输入
   missing/malformed/stale/route-inconsistent 都返回 closed
   `decision: blocked, reason_id: session_restart_required`；只有全部精确匹配才返回
   `decision: allowed, allowed_actions: [open_queue_lane]`。CLI 不接受 caller 覆盖
@@ -584,15 +618,24 @@ explicit --apply authorization
       `python3 -m pytest -q tests/test_installed_skill_integrity.py
       -k "target_snapshot_no_write"`；fixture 对 doctor 前后目标的相对路径、类型、mode、mtime_ns
       与 regular-file sha256 做闭合 snapshot 并要求完全一致。
-- [ ] Scope/manifest/file ceiling:
+- [ ] Scope/manifest/file ceiling：manifest 自洽、**实现 diff 的路径集合是 manifest `.paths`
+      的子集**（不允许任何未声明的额外路径）、未触碰 `specs/GH160`、且所有声明的 Python /
+      SKILL 文件仍 `<800` 行。仅校验 `.paths` 的基数与唯一性不够——那样改动
+      `README.md` 之类任意未声明路径仍会通过：
       `sed -n '9p' specs/GH172/tech.md |
       jq -e '(.paths|length)==17 and (.paths|unique|length)==17 and
       ([.paths[]|select(startswith("specs/GH160/"))]|length)==0' &&
-      test -z "$(git diff --name-only "$(git merge-base HEAD origin/main)"..HEAD --
-      specs/GH160)" &&
+      base="$(git merge-base HEAD origin/main)" &&
+      sed -n '9p' specs/GH172/tech.md | jq -r '.paths[]' | sort > /tmp/gh172-declared &&
+      git diff --name-only "$base"..HEAD | grep -v '^specs/GH172/' | sort > /tmp/gh172-changed &&
+      comm -23 /tmp/gh172-changed /tmp/gh172-declared > /tmp/gh172-extra &&
+      test ! -s /tmp/gh172-extra &&
+      test -z "$(git diff --name-only "$base"..HEAD -- specs/GH160)" &&
       for path in $(sed -n '9p' specs/GH172/tech.md |
       jq -r '.paths[]|select(endswith(".py") or endswith("/SKILL.md"))');
-      do test "$(wc -l < "$path")" -lt 800 || exit 1; done`。
+      do test "$(wc -l < "$path")" -lt 800 || exit 1; done`
+      （`specs/GH172/` 是本 issue 的 approved spec packet，按既有约定不计入实现路径，
+      因此在比较前排除；`/tmp/gh172-extra` 非空即为越界改动，必须 fail）。
 
 ## 回滚方案
 
