@@ -464,6 +464,19 @@ def test_pr_gate_allows_trusted_fastlane_self_review_without_lane_failure() -> N
     assert result["enforcement_sensitive"] is False
 
 
+@pytest.mark.parametrize("field", ["base_ref", "base_sha"])
+def test_pr_gate_blocks_trusted_tier_without_current_base_identity(
+    field: str,
+) -> None:
+    evidence = _fastlane_self_review_evidence()
+    evidence.pop(field)
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert field in result["missing"]
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected"),
     [

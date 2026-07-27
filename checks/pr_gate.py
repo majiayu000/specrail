@@ -394,6 +394,27 @@ def _authorization_item(
     )
 
 
+def _tier_base_identity_items(
+    evidence: dict[str, Any],
+) -> tuple[list[str], list[str], list[str]]:
+    """Bind trusted tier evidence to the current PR base snapshot."""
+
+    tier_evidence = evidence.get("pr_tier_evidence")
+    if not isinstance(tier_evidence, dict):
+        return [], [], []
+    missing: list[str] = []
+    reasons: list[str] = []
+    for field in ["base_ref", "base_sha"]:
+        current = evidence.get(field)
+        if not _non_empty_string(current):
+            missing.append(field)
+        elif current != tier_evidence.get(field):
+            reasons.append(f"{field} must match pr_tier_evidence.{field}")
+    if missing or reasons:
+        return [], missing, reasons
+    return ["trusted tier evidence matches current PR base identity"], [], []
+
+
 def evaluate_pr_gate(
     evidence: dict[str, Any],
     repo: Path | None = None,
@@ -493,6 +514,16 @@ def evaluate_pr_gate(
     items.extend(items_from_legacy(
         binding_missing,
         binding_reasons,
+        missing_category="missing_evidence_field",
+        reason_category="invalid_evidence_value",
+    ))
+    tier_satisfied, tier_missing, tier_reasons = _tier_base_identity_items(evidence)
+    satisfied.extend(tier_satisfied)
+    missing.extend(tier_missing)
+    reasons.extend(tier_reasons)
+    items.extend(items_from_legacy(
+        tier_missing,
+        tier_reasons,
         missing_category="missing_evidence_field",
         reason_category="invalid_evidence_value",
     ))
