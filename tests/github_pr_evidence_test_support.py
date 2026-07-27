@@ -127,7 +127,15 @@ def base_sha() -> str:
     return "b" * 40
 
 
-def file_snapshot(paths: list[str], *, head_sha: str | None = None) -> dict[str, object]:
+def file_snapshot(
+    paths: list[str],
+    *,
+    head_sha: str | None = None,
+    file_count: int | None = None,
+) -> dict[str, object]:
+    """`file_count` defaults to the path count; pass it explicitly to model a
+    rename, where GitHub reports one changed file but two paths."""
+
     normalized = sorted(paths)
     return {
         "head_sha": head_sha or str(pr_payload()["headRefOid"]),
@@ -135,6 +143,7 @@ def file_snapshot(paths: list[str], *, head_sha: str | None = None) -> dict[str,
         "base_sha": base_sha(),
         "default_base_ref": "main",
         "default_base_sha": base_sha(),
+        "file_count": len(normalized) if file_count is None else file_count,
         "path_count": len(normalized),
         "paths": normalized,
         "paths_sha256": __import__("hashlib").sha256(

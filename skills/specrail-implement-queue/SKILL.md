@@ -85,11 +85,11 @@ process weight, gates stay identical.
   rewrites, spec-marked high risk. Two PRs: spec first, then impl.
 - `standard`: normal feature/fix. ONE `mixed_impl` PR carrying spec delta
   plus implementation; no separate spec-only PR.
-- `fastlane`: ≤50 changed lines, no protected paths (API schema, migrations,
-  auth/security code, CI workflow definitions). One PR; spec content may
-  live in the PR description when gates accept `exception_allowed`.
+- `fastlane`: ONE changed file, ≤50 lines, no protected path (API schema,
+  migrations, auth/security, CI workflow, or workflow/policy contract). One
+  PR; spec content may live in the PR description under `exception_allowed`.
 
-Record `pr_tier` with current-head adapter evidence (changed-line count,
+Record `pr_tier` with current-head adapter evidence (file and line counts,
 complete touched paths, `source: github_changed_files`, head SHA, path
 digest) — self-declaration is never evidence. When in doubt, pick the
 heavier tier (authorization included). Tiering never weakens CI,

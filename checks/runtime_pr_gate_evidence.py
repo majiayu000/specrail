@@ -79,22 +79,39 @@ def validate_pr_gate_artifact(
     if payload is None:
         return None
 
-    result = (
-        payload
-        if "decision" in payload
-        else evaluate_pr_gate(payload, repo=repo, config=config)
-    )
+    # specs/GH202 B-009: a recorded `allowed` decision must not survive drift in
+    # the sensitive-path registry. A decision-only artifact carries no raw
+    # classification inputs, so tier-authorized items must supply raw evidence
+    # and be re-evaluated against the current repository configuration.
+    tier_trusted = fastlane_self_review or tier_authorized
+    if "decision" in payload:
+        if tier_trusted:
+            errors.append(
+                f"{label}: tier-authorized item requires raw pr_gate evidence so "
+                "the decision is re-evaluated against the current sensitive-path "
+                "registry; a recorded decision is not accepted"
+            )
+            return None
+        result = payload
+    else:
+        result = evaluate_pr_gate(payload, repo=repo, config=config)
     if result.get("decision") != "allowed":
         reasons = result.get("reasons")
         detail = f": {reasons}" if reasons else ""
         errors.append(f"{label}: pr_gate evidence decision must be allowed{detail}")
 
-    item_pr = raw_item.get("pr")
-    if item_pr and result.get("pr") and result.get("pr") != item_pr:
-        errors.append(f"{label}: pr_gate evidence pr must match item pr")
-    item_head = raw_item.get("head_sha")
-    if item_head and result.get("head_sha") and result.get("head_sha") != item_head:
-        errors.append(f"{label}: pr_gate evidence head_sha must match item head_sha")
+    for key, message in [("pr", "pr"), ("head_sha", "head_sha")]:
+        item_value = raw_item.get(key)
+        result_value = result.get(key)
+        if tier_trusted and not (item_value and result_value):
+            errors.append(
+                f"{label}: tier-authorized item requires pr_gate evidence {message} "
+                "identity on both the item and the evidence"
+            )
+        elif item_value and result_value and result_value != item_value:
+            errors.append(
+                f"{label}: pr_gate evidence {message} must match item {message}"
+            )
 
     binding_keys = [
         "content_binding_version",

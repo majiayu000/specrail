@@ -22,6 +22,9 @@ TIER_POLICY_SOURCE = "tier_policy_gh143"
 # Audit anchor for self_review_authorization.basis; do not rename it.
 FASTLANE_SELF_REVIEW_BASIS = "fastlane_policy"
 FASTLANE_MAX_CHANGED_LINES = 50
+# specs/GH204 B-005: the coordinator self-review exception covers a small
+# SINGLE-file PR only.
+FASTLANE_MAX_CHANGED_FILES = 1
 FASTLANE_TIER_EVIDENCE_SOURCE = "github_changed_files"
 PR_TIERS = {"fastlane", "standard", "heavy"}
 STANDARD_AUTO_TIERS = {"fastlane", "standard"}
@@ -42,11 +45,16 @@ def _git_oid(value: Any) -> bool:
     )
 
 
+def _nonnegative_int(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
 def _valid_pr_tier_evidence(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
-    changed_lines = value.get("changed_lines")
-    if isinstance(changed_lines, bool) or not isinstance(changed_lines, int) or changed_lines < 0:
+    if not _nonnegative_int(value.get("changed_lines")):
+        return False
+    if not _nonnegative_int(value.get("changed_files")):
         return False
     touched_paths = value.get("touched_paths")
     return (
@@ -62,8 +70,53 @@ def _valid_pr_tier_evidence(value: Any) -> bool:
     )
 
 
+PROTECTED_PATH_PREFIXES = (
+    ".github/",
+    "checks/",
+    "integrations/",
+    "migrations/",
+    "review/",
+    "schemas/",
+    "skills/",
+    "templates/",
+)
+# Workflow and policy contract assets. `skills/implx/SKILL.md:72-74` classifies
+# contracts and authorization semantics as enforcement-sensitive surfaces, so a
+# consumer repository with an empty sensitive registry must still fail closed on
+# them rather than fall through to coordinator self-review.
+PROTECTED_CONTRACT_FILES = {
+    "agents.md",
+    "claude.md",
+    "skills-lock.json",
+    "states.yaml",
+    "workflow.yaml",
+}
+PROTECTED_TOKENS = {
+    "api",
+    "auth",
+    "authentication",
+    "authorization",
+    "gate",
+    "gates",
+    "migration",
+    "migrations",
+    "schema",
+    "schemas",
+    "security",
+}
+
+
+def _name_tokens(name: str) -> set[str]:
+    """Split a path component into lowercase tokens on separator and case
+    boundaries, so `auth_service.py`, `securityUtils.ts` and `auth.test.ts` all
+    expose their protected token."""
+
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
+    return {token for token in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if token}
+
+
 def _fastlane_protected_path(path: str) -> bool:
-    normalized = path.strip().replace("\\", "/").lower()
+    normalized = path.strip().replace("\\", "/")
     if normalized.startswith("/") or any(
         part in {".", ".."} for part in normalized.split("/")
     ):
@@ -71,32 +124,15 @@ def _fastlane_protected_path(path: str) -> bool:
     while normalized.startswith("./"):
         normalized = normalized[2:]
     parts = [part for part in normalized.split("/") if part]
-    if normalized.startswith(
-        (
-            ".github/workflows/",
-            "checks/",
-            "migrations/",
-            "schemas/",
-        )
-    ):
+    if normalized.lower().startswith(PROTECTED_PATH_PREFIXES):
         return True
-    protected_parts = {
-        "api",
-        "auth",
-        "authentication",
-        "authorization",
-        "gate",
-        "gates",
-        "migration",
-        "migrations",
-        "schema",
-        "schemas",
-        "security",
-    }
-    if any(part in protected_parts for part in parts):
+    if parts and parts[-1].lower() in PROTECTED_CONTRACT_FILES:
         return True
-    filename_stem = parts[-1].rsplit(".", 1)[0] if parts else ""
-    return filename_stem in protected_parts
+    if any(part.lower() in PROTECTED_TOKENS for part in parts):
+        return True
+    filename = parts[-1] if parts else ""
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return bool(_name_tokens(stem) & PROTECTED_TOKENS)
 
 
 def pr_tier_evidence_identity_errors(
@@ -160,16 +196,24 @@ def fastlane_tier_evidence_errors(
         expected_base_sha=expected_base_sha,
     )
     changed_lines = value.get("changed_lines")
-    if (
-        isinstance(changed_lines, bool)
-        or not isinstance(changed_lines, int)
-        or changed_lines < 0
-    ):
+    if not _nonnegative_int(changed_lines):
         errors.append("fastlane_policy pr_tier_evidence.changed_lines is invalid")
     elif changed_lines > FASTLANE_MAX_CHANGED_LINES:
         errors.append(
             f"fastlane_policy changed_lines must be at most "
             f"{FASTLANE_MAX_CHANGED_LINES}; got {changed_lines}"
+        )
+    # specs/GH204 B-005 limits the coordinator self-review exception to a small
+    # single-file PR. touched_paths cannot carry that condition because a rename
+    # contributes both its previous and current path, so require the trusted
+    # adapter file count instead.
+    changed_files = value.get("changed_files")
+    if not _nonnegative_int(changed_files):
+        errors.append("fastlane_policy pr_tier_evidence.changed_files is invalid")
+    elif changed_files != FASTLANE_MAX_CHANGED_FILES:
+        errors.append(
+            f"fastlane_policy changed_files must be exactly "
+            f"{FASTLANE_MAX_CHANGED_FILES}; got {changed_files}"
         )
     touched_paths = value.get("touched_paths")
     valid_paths = (

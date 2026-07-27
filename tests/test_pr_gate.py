@@ -443,6 +443,7 @@ def _fastlane_self_review_evidence() -> dict[str, object]:
     evidence["pr_tier"] = "fastlane"
     evidence["pr_tier_evidence"] = {
         "changed_lines": 12,
+        "changed_files": 1,
         "touched_paths": touched_paths,
         "source": "github_changed_files",
         "head_sha": evidence["head_sha"],
@@ -732,6 +733,7 @@ def _tier_evidence() -> dict[str, object]:
     evidence["pr_tier"] = "standard"
     evidence["pr_tier_evidence"] = {
         "changed_lines": 42,
+        "changed_files": 2,
         "touched_paths": touched_paths,
         "source": "github_changed_files",
         "head_sha": evidence["head_sha"],

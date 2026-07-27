@@ -51,9 +51,13 @@ from sensitive_enforcement import (
     sensitive_registry,
 )
 from review_result_semantics import ReviewSemanticError, load_review_manifest
+from github_tier_evidence import (
+    TierEvidenceError,
+    adapter_tier_evidence,
+    apply_independent_lane_tier,
+)
 from runtime_tier_authorization import (
     FASTLANE_SELF_REVIEW_BASIS,
-    FASTLANE_TIER_EVIDENCE_SOURCE,
     fastlane_tier_evidence_errors,
 )
 from spec_revision_evidence import SPEC_APPROVAL_FIELDS, spec_revision_route_eligible
@@ -283,15 +287,7 @@ def build_evidence(
             raise EvidenceError(
                 "fastlane_policy requires a complete current-head PR file snapshot"
             )
-        tier_evidence = {
-            "changed_lines": pr_snapshot.get("changed_lines"),
-            "touched_paths": pr_snapshot.get("paths"),
-            "source": FASTLANE_TIER_EVIDENCE_SOURCE,
-            "head_sha": pr_snapshot.get("head_sha"),
-            "base_ref": pr_snapshot.get("base_ref"),
-            "base_sha": pr_snapshot.get("base_sha"),
-            "paths_sha256": pr_snapshot.get("paths_sha256"),
-        }
+        tier_evidence = adapter_tier_evidence(pr_snapshot)
         tier_errors = fastlane_tier_evidence_errors(
             tier_evidence, expected_head_sha=head_sha,
             expected_base_ref=pr_snapshot.get("base_ref"),
@@ -420,6 +416,13 @@ def build_evidence(
         evidence["review_execution"] = derived_execution
         evidence["review_evidence"] = review_evidence
         evidence["review_completed_at"] = review_evidence.get("review_completed_at")
+        if derived_source == "independent_lane":
+            try:
+                apply_independent_lane_tier(
+                    evidence, review_evidence, pr_snapshot, head_sha
+                )
+            except TierEvidenceError as exc:
+                raise EvidenceError(str(exc)) from exc
     if content_binding is not None:
         evidence["reused_components"] = collect_reuse_audits(
             evidence["checks"], review_evidence, content_binding, head_sha
