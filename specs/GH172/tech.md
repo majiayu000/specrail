@@ -417,11 +417,25 @@ directories 的闭集，而不是跟随目录树。这样未来引用/脚本随 
    skill 执行）要求在任何 queue/implx 委派之前先运行
    `tools/check_installed_codex_skills.py --require-installed`；未 `match` 时不得
    委派给 installed queue skill。路由器这一层不依赖用户已安装副本的新旧。
-3. **活动 session 闭锁**：上述源侧 bootstrap 在委派前还验证 runtime-owned
-   `loaded_skill_evidence`；source router 绑定 source checkout manifest，installed
-   `implx`/queue 绑定 installed target，二者 origin 不混用。这一步绑定当前 agent 已加载
-   bytes，而不是重新读取磁盘后自证。`--apply` 后必须新建 session，直到 fresh evidence
-   与 lock/doctor 同一 manifest 匹配。
+3. **活动 session 闭锁**：`loaded_skill_evidence` 按 role 分两个时点校验，不能合成一次。
+   evidence 描述的是「当前 agent 已加载的 bytes」，而 installed `implx`/queue 的 evidence
+   只有在这些 entrypoint 被加载之后才存在；若要求委派前就校验它们，符合规范的 host 只能
+   二选一——要么报 evidence 缺失从而阻断每一次 source-router 调用，要么先加载/委派再校验，
+   两者都违反本合同。因此拆成：
+
+   - **委派前（source router 自身）**：只校验 `entry_role: source_router` 这一条 evidence，
+     绑定 source checkout manifest 的 path/hash，且此时 required role set 只含
+     `source_router`。此阶段不得引用任何 installed entrypoint 的 evidence。
+   - **委派后、开 lane/checkpoint/远端动作前（installed `implx`/queue 自身）**：由已加载的
+     installed entrypoint 校验 `entry_role ∈ {implx, queue}` 的 evidence，绑定 installed
+     target 与 doctor result；此时 required role set 含这些 installed role。任一缺失、
+     origin 混用（source router 声称 `installed_target`，或 installed entrypoint 声称
+     `source_checkout`）、或与 doctor target 不一致，均以 `session_restart_required`
+     在**开 lane 之前**阻断——委派本身不是被授权的动作，被授权的是开 lane。
+
+   两个时点各自 fail closed，且 gate 的 required role set 由 route 决定而非固定全集，
+   所以不存在「必须先违规加载才能通过校验」的循环。`--apply` 后必须新建 session，直到
+   fresh evidence 与 lock/doctor 同一 manifest 匹配。
 
 如果消费者只有安装后的 `SKILL.md`，没有可定位的 SpecRail pack/checker，或 host 不提供可信
 current-session loaded identity，本 issue 的 queue preflight 会明确阻断；把 runtime
