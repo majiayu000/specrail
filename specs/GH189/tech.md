@@ -149,7 +149,17 @@ allocation 必须先逐项匹配 old digests 与允许的 `{old/old, new/old, ne
 `conflict`/reason=`allocation_recovered_token_skipped` 返回并要求 fresh retry；其它组合
 `corrupt`。正常 journal close 先把 outcome 记为 `reserved`，后续 lease mutation 成功可
 durable 改为 `issued`、失败可改为 `skipped`；`reserved` 本身已经 burned，terminal outcome
-更新失败也不得授权复用。因此 normal release 后 lease 已删除、resume 后旧 lease 已替换、takeover audit
+更新失败也不得授权复用。但 `reserved → issued` 这一步必须在 journal 被 unlink **之前**
+就有 durable 依据：resume/takeover durable 替换 canonical lease 后、把 witness 从
+`reserved` 改成 `issued` 之前崩溃时，journal 已不存在，没有任何规定的恢复流程能补完该
+transition，而 rollback invariant 又显式允许「outcome 为 `reserved` 时 held lease token
+小于 high-water」，于是这个中间态与合法的 skipped 态无法区分。因此 allocation journal
+的 unlink 推迟到 lease mutation 的 terminal outcome（`issued` 或 `skipped`）已 durable
+写入 witness 并 fsync 之后：journal 在 `prepared` 之外增加 `lease_committed` phase，
+lease 替换成功后先把 journal 推进到该 phase 并 fsync，再更新 witness outcome，最后才
+unlink journal。恢复时看到 `lease_committed` journal 即依据其记录的 token 与 canonical
+lease 现状补完 outcome——lease 存在且 token 等于 journal token 记 `issued`，否则记
+`skipped`——然后删除 journal；这一分支不得判 `corrupt`。因此 normal release 后 lease 已删除、resume 后旧 lease 已替换、takeover audit
 已 prune 或步骤失败时，witness 仍覆盖所有 acquire/resume/takeover 及 skipped token，下一次
 allocation 必须严格大于 high-water。acquire 必须同时成功创建 lock dir、fsync 其 parent、
 写 temp、fsync、rename 并 fsync lease parent；异常留下的无效目录被 inspect 判为 corrupt，
@@ -176,7 +186,18 @@ lock，再在同一临界区内完成 read → digest compare → state/token co
 → fsync → atomic replace/remove。mutex 获取采用一次 non-blocking 尝试：竞争时返回
 `busy` 并 fail closed，不重试、不 polling；文件描述符关闭或进程退出时由内核释放。
 mutex 必须是以 no-follow 方式打开的稳定 regular file，路径同样拒绝 symlink/escape；
-平台或文件系统不支持该原语时返回 `unsupported`。单独的 atomic rename 只保证文件
+平台或文件系统不支持该原语时返回 `unsupported`。fresh repository 上
+`<git-common-dir>/specrail/` 与 mutex 文件本身尚不存在，而每个 modifying API 都必须先
+取得该 mutex、B-008 又把缺失的 mutex 路径判为 `corrupt`，若不另行规定，第一次 acquire
+永远无法进行（genesis 例外只覆盖「mutex 已持有之后」的 counter/witness 初始化）。因此
+mutex 的 bootstrap 单独定义且必须原子：在已持有的 canonical common-dir descriptor 下，
+先以 `mkdir` 幂等创建 `specrail/` 目录（`EEXIST` 视为成功，随后 `fstat` 校验其为
+directory 且 no-follow/identity 检查通过，否则 `unsafe`），再以
+`openat(O_CREAT|O_EXCL|O_RDWR|O_NOFOLLOW|O_CLOEXEC, 0600)` 创建 mutex 文件并 fsync
+其 parent；`EEXIST` 表示另一进程已 bootstrap，改为 no-follow 打开并走常规校验。
+只有「路径存在但不是 regular file、或 identity 校验失败」才是 `corrupt`/`unsafe`；
+「路径不存在」在 bootstrap 阶段是合法起点，不是 `corrupt`。bootstrap 与随后的
+non-blocking lock 获取是同一次 modifying API 的两个阶段，任一阶段失败均 fail closed。单独的 atomic rename 只保证文件
 完整，不得被描述为 compare-and-swap。`expected_digest` 是上一次 inspect 返回的当前
 lease bytes SHA-256；修改 API 取得 mutex 后必须重新读取并比较它。
 
@@ -522,13 +543,13 @@ evidence 时，只报告 Goal continuity 未验证，不得削弱 checkpoint+lea
 后才可选择；其 JSON 示例强制 v4 `run_lease`，不能作为普通运行的默认模板。
 
 普通 `check_workflow.py` 只校验 checker 与 fencing-counter/fencing-witness/
-fencing-allocation/lease/takeover-audit/takeover-authorization/takeover-consumption 七个
-active-run closed schema 及 `runtime_checkpoint_v4.schema.json` 是 pack assets，不读取
+fencing-allocation/high-water/lease/takeover-audit/takeover-authorization/
+takeover-consumption 八个 active-run closed schema 及 `runtime_checkpoint_v4.schema.json` 是 pack assets，不读取
 common dir counter/witness/journal/lease/audit/authorization consumption/remote-operation
 状态。`implx_checkpoint_v4.md` 必须同时注册进 `checks/pack_asset_validation.py` 的
 `SPEC_TEMPLATE_FILES` deterministic ownership，使 base 与 `templates/zh-CN` localized
 parity、缺失/不可读检测覆盖两个 queue-only checkpoint templates；缺任一份或 parity
-失败时 `check_workflow.py` 必须失败。`tests/test_active_run_schema.py` 独占七个 active-run schema 的 valid/malformed/
+失败时 `check_workflow.py` 必须失败。`tests/test_active_run_schema.py` 独占八个 active-run schema 的 valid/malformed/
 unknown-field/conditional binding 测试；`tests/test_pack_asset_validation.py` 对每个 schema/template
 路径和 owner 建立 exact 集合断言（含 `SPEC_TEMPLATE_FILES` 中的
 `implx_checkpoint_v4.md`），任何漏注册或错误 owner 均失败。
@@ -623,7 +644,7 @@ git common dir → canonical no-follow lease → mutation mutex → inspect/acqu
 ## 测试计划
 
 - [ ] Unit: 派生状态（lease schema 不持久化 `status`）、counter/witness/allocation/
-      lease/audit/authorization/consumption 七个 active-run closed schema、TTL 上限、
+      high-water/lease/audit/authorization/consumption 八个 active-run closed schema、TTL 上限、
       mutex、directory fsync、原子失败、boot/monotonic clock、canonical no-follow 路径、
       remote-independent repo identity、resume/takeover rotation+rebind、counter/witness/journal
       symlink/identity/single-file rollback、normal-release/audit-prune high-water retention、
