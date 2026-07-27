@@ -42,6 +42,6 @@ GH-180
 - 通用 classifier 只识别 workflow-derived product/tech/tasks；`bootstrap-evidence.json` 仅由 GH180 exact-path/content overlay 识别为无授权效果的 `gh180_bootstrap_audit`，禁止跨 issue 复用。
 - staged lifecycle 只属于 `spec_first`。accepted-small-bug `direct_bug` 与 standard/fastlane `mixed_impl` 继续按现有 route gates 运行；sensitive 三类入口的生产实现都保留 existing merged-base/ancestry enforcement。
 - Host integration prerequisite：runtime owner 必须先部署固定 authenticated provider/verifier IPC、session/current-generation registry、user-issued grant registry、Ed25519 issuer 与 OS/runtime-owned active keyset。任一未部署时 SpecRail auto 明确 blocked，不得宣称 available；operator 只能显式选择正常 ordered human-lifecycle review route，不能 silent downgrade。
-- 当前 task-planning 阶段必须把 GH-180 视为 `needs_tasks`；只消费 `task_planning` scope，本文件通过 validator 与 coverage gate 且 complete result 通过 `--consume-for production_implementation` 前禁止生产代码实现。
+- 本文件已存在且通过 repository validator，因此按 B-002 与 queue coverage 合同 GH-180 的 packet 状态是 `complete`，不是 `needs_tasks`——交接时必须如实记为**complete-but-not-authorized**，不得为了取得 `task_planning` scope 而误报 artifact 状态（该 scope 只对 staged packet 签发，误报会让 implementer 拿到无法消费的 result）。授权边界由 route 而非 artifact 状态决定：生产代码实现前必须取得针对当前 head 的 fresh production-scoped route 判定，并以 complete result 通过 `--consume-for production_implementation` 的 consumer 复验；两者任一缺失、过期或与当前 packet snapshot 不一致时禁止实现。
 - 实现阶段只能修改 tech manifest 动态解析出的路径；四个 spec refs 不属于实现路径。
 - B-012 的在途纠偏在 GH-180 validator 落地后由一个以 `main` 为 base 的独立 follow-up PR 执行（PR #179 已合并，原分支不再能改变默认分支）；本 PR 不交付该删除。GH-180 的一次性 bootstrap 不是其它 packet 提前创建 tasks 的先例。

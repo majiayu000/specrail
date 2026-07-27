@@ -116,6 +116,15 @@ direct route 不再被无条件 artifact 要求阻断，也不需要绕过 core 
   GitHub 侧无法判定时以 `needs_human` fail closed。等价地，若独立背书 artifact（CI
   tier-check 或 reviewer-lane `tier_attestation`）自身同时 attest 该 relation，也可作为可信
   来源；但仅有合法 tier 背书 + checkpoint 自写 relation 的组合永远不足以判定 `mixed_impl`。
+  该重算把「唯一未关闭 linked PR」本身变成 duplicate gate 的候选，
+  `checks/duplicate_work_gate.py:134-149` 会无条件拒绝任何引用该 issue 的 open PR，于是
+  mixed 路由被自己证明用的那个 PR 堵死。因此定义一条窄绑定的 current-mixed-PR 排除：
+  duplicate gate 仅排除**恰好这一个** PR，且排除项必须由 route gate 传入并逐字段绑定
+  immutable repository id、PR number、head repository/ref/SHA；该排除只在
+  `implementation_entry_kind` 已判定为 `mixed_impl` 时生效，且排除后剩余候选必须为空
+  （否则说明确有第二个 PR，仍 `blocked`）。任一绑定字段缺失、漂移或排除了非该 PR 的对象，
+  duplicate gate 一律 `blocked`，不得放宽为按 issue 号排除。该排除不产生
+  `approved_spec_pr_exemption`，也不豁免该 PR 自身的 readiness/approval/final-review gate。
   入场分类不得以"PR 已包含生产
   代码"为前提，同一 PR 真实承载 spec/tasks/implementation 的完成态 mixed relation 由该 PR
   既有的 final-review/merge gate 在实现完成后验证。该值不得由 CLI、manifest 或 PR body选择；
@@ -170,7 +179,16 @@ direct route 不再被无条件 artifact 要求阻断，也不需要绕过 core 
   object 额外记录 source PR 的 `createdAt`，被接受的 `spec_pr_open`、`spec_review`、
   `spec_approved` label events 必须全部严格晚于该 `createdAt`；早于它的 event 只能归属另一
   个（例如已关闭的）spec PR，必须以 `lifecycle_event_predates_source_pr` 拒绝，禁止把旧 PR
-  的 open/review 事件与新 PR 的 approval/readiness 拼接成"一条完整生命周期"。source PR 的
+  的 open/review 事件与新 PR 的 approval/readiness 拼接成"一条完整生命周期"。但 `createdAt`
+  只是下界，不能把 event 归属到 selected source PR：PR A 先创建、PR B 触发
+  `spec_pr_open`/`spec_review`、随后 PR A 的 exact-head approval 与 `spec_approved` 会通过
+  上述全部时间戳检查，两个并发 spec PR 的事件仍可被拼接。因此每个被接受的 lifecycle label
+  event 必须**自证归属**：其 GitHub event payload 必须可解析出 selected source PR 的 number
+  与 head SHA（label event 的 issue timeline cross-reference，或 label 命名/描述中携带的
+  PR 绑定），并与 approval source 的闭合 object 逐字段相等。无法从 event 本身识别所属 PR、
+  识别出的 PR 与 selected source 不一致、或同一 label 在窗口内存在归属不同 PR 的多个 event
+  时，一律以 `lifecycle_event_source_ambiguous` fail closed，不得靠时间顺序推断归属。
+  source PR 的
   base 也必须绑定 trusted default base：collector 在同一采集轮次 fresh 查询 trusted default
   branch snapshot，要求 source PR 的 base repository 为同一 repository、base ref 精确等于该
   trusted default branch，并记录当时的 base OID；因此 `changed_paths` 的 spec-only 判定
