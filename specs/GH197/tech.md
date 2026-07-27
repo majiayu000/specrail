@@ -6,7 +6,7 @@ GH-197
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":197,"complete":true,"paths":[".specrail/review_legacy_round1_registry.json","checks/github_pr_evidence.py","checks/github_review_evidence.py","checks/pack_asset_validation.py","checks/pr_gate.py","checks/review_migration.py","checks/review_result_semantics.py","checks/review_round_semantics.py","checks/review_json_gate.py","checks/pr_review_contract.py","schemas/pr_review_gate.schema.json","schemas/review_legacy_registry.schema.json","schemas/review_migration_authorization.schema.json","schemas/review_migration_record.schema.json","schemas/review_result.schema.json","tools/migrate_review_round1.py","skills/specrail-pr-gate/SKILL.md","skills/specrail-review-pr/SKILL.md","tests/test_github_pr_evidence.py","tests/test_pack_asset_validation.py","tests/test_pr_gate_terminal.py","tests/test_review_migration.py","tests/test_review_result_semantics.py","tests/test_review_json_gate.py","tests/test_specrail_schema.py","CHANGELOG.md"],"spec_refs":["specs/GH197/product.md","specs/GH197/tech.md","specs/GH197/tasks.md"]}
+{"version":1,"issue":197,"complete":true,"paths":[".specrail/review_legacy_round1_registry.json","CHANGELOG.md","checks/github_pr_evidence.py","checks/github_review_evidence.py","checks/pack_asset_validation.py","checks/pr_gate.py","checks/pr_review_contract.py","checks/rejection_items.py","checks/review_json_gate.py","checks/review_migration.py","checks/review_result_semantics.py","checks/review_round_semantics.py","schemas/pr_review_gate.schema.json","schemas/review_legacy_registry.schema.json","schemas/review_migration_authorization.schema.json","schemas/review_migration_record.schema.json","schemas/review_result.schema.json","skills/specrail-pr-gate/SKILL.md","skills/specrail-review-pr/SKILL.md","tests/test_github_pr_evidence.py","tests/test_pack_asset_validation.py","tests/test_pr_gate_terminal.py","tests/test_review_json_gate.py","tests/test_review_migration.py","tests/test_review_result_semantics.py","tests/test_specrail_schema.py","tools/migrate_review_round1.py"],"spec_refs":["specs/GH197/product.md","specs/GH197/tech.md","specs/GH197/tasks.md"]}
 -->
 
 ## Product Spec
@@ -88,7 +88,8 @@ source_git_commit_sha, source_git_blob_oid
 新模块 `checks/review_migration.py` 提供 `verify_migration_record()`：
 
 1. 用参数数组执行 `git cat-file -e <source_git_commit_sha>^{commit}`、
-   `git merge-base --is-ancestor <source_git_commit_sha> <migration_base_sha>` 与
+   `git merge-base --is-ancestor <source_git_commit_sha> <pr_head_sha>`（source 提交在
+   受影响 PR 的历史中，不要求它是 default-branch cutoff 的 ancestor）与
    `git show <source_git_commit_sha>:<source_artifact_path>`；commit 必须在授权前已存在且
    可达，返回 blob OID/原始 bytes 必须分别等于授权和记录的
    `source_git_blob_oid`/`source_sha256`，当前 source 文件 bytes 也必须相等（B-002）。
@@ -120,7 +121,13 @@ entries[] = pr, artifact_id, head_sha, source_artifact_path,
 ```
 
 validator 要求 `entries[]` 稳定排序、唯一，并重算 expected PRs/identity keys/count/
-canonical entries digest；每个 source commit 必须是 `cutoff_base_sha` 的 ancestor，
+canonical entries digest；每个 source commit 必须可达且属于该 entry 所声明 PR 的历史——legacy artifact 通常就
+提交在受影响的 open PR 分支上，其 `source_git_commit_sha` 在该 PR 历史中而**不是**
+default-branch `cutoff_base_sha` 的 ancestor，因此不得用
+`git merge-base --is-ancestor <source> <cutoff>` 作为通过条件（那会拒绝全部合法 source）。
+判定改为：source commit 必须是该 entry 的 PR head 的 ancestor（`--is-ancestor <source>
+<pr_head_sha>`），且该 PR 必须在 cutoff provider snapshot 覆盖的受理域内；
+source 既不在 PR 历史也不在 cutoff 祖先链中时 fail closed。
 blob/path/sha 必须匹配。registry 明确覆盖 PR #181/#186/#193 在 cutoff provider snapshot
 中的全量已知 legacy identities；缺 registry、repo/cutoff/snapshot 不符、entries 子集/
 多项或任一 coverage 派生字段漂移都 fail closed。generic schema 注册到 pack ownership，
@@ -158,7 +165,11 @@ role-map loader 规范化的 closed `review_migration_authorizations[]`；PR sch
 - 未迁移的 legacy 形态触发 `validate_bounded_rounds()` 的 round-1 非 null 错误时，
   loader 检测该 artifact 满足受理域且无对应 `migrations[]` 条目，则替换为稳定
   rejection：category `legacy_round1_migration_required`、subject 为 artifact_id、
-  expected 指向本合同（B-008）。相同输入产生相同 items，`pr_gate.py` 直接透传。
+  expected 指向本合同（B-008）。该 category 当前不存在——`checks/rejection_items.py:18-27`
+  的 `CATEGORIES` 是闭集且不含该值，构造会直接失败。因此 `checks/rejection_items.py`
+  进入 planned changes，实现必须把 `legacy_round1_migration_required` 加入该闭集，并为
+  新值补齐既有 category 的同等测试；未注册前 loader 不得改用近似 category 顶替，
+  也不得降级为 warning。相同输入产生相同 items，`pr_gate.py` 直接透传。
 - trusted reload：`checks/pr_review_contract.py` 复核 `round_audit` 时同样从仓库
   安全路径重载固定 base registry，并以同一 exact-set identity/auth 集合重验
   `migrations[]`；`checks/pr_gate.py` 与 `skills/specrail-pr-gate/SKILL.md` 强制该入口，
