@@ -237,9 +237,14 @@ caller-selected repo/path 或 consumer checkout 中的相对 executable。host �
   同源同 hash），不得从 consumer checkout 的 repo-root `checks/` import path 解析；
   source checkout 缺失时 installed skill 仍能完成该 doctor 检查。该 API 只能检查
   binding 的 canonical root/device/inode，结果必须回显
-  `canonical_installed_root`、`installed_root_binding_digest`、host-pinned
-  `installed_bundle_manifest.sha256` 与 `source_lock_manifest_sha256` 并全部相等才是 startup
-  `match`。public
+  `canonical_installed_root`、`installed_root_binding_digest`、
+  `installed_bundle_manifest.sha256` 与 `source_lock_manifest_sha256`，并分别匹配 host
+  attestation 中 `installed_root_binding.canonical_realpath`、
+  `installed_root_binding.binding_digest`、host-pinned
+  `installed_bundle_manifest.sha256` 与 `source_lock_manifest_sha256`；normalized source
+  lock 内记录的 manifest SHA-256 还必须等于 host-pinned
+  `installed_bundle_manifest.sha256`，才是 startup `match`。这些字段语义异构，不得要求
+  彼此相等，尤其不得要求 manifest SHA-256 等于 source-lock SHA-256。public
   `tools/check_installed_codex_skills.py --target-dir` 仍可供人工诊断，但默认目录、CLI target
   或另一 matching installation 的结果不能产生 startup authorization。
 
