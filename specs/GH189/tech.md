@@ -6,7 +6,7 @@ GH-189
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":189,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/active_run_lease.py","checks/active_run_takeover_authorization.py","checks/check_workflow.py","checks/pack_asset_validation.py","checks/runtime_active_run_gate.py","checks/runtime_active_run_rules.py","checks/runtime_budget_dimensions.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/session_telemetry.py","examples/fixtures/runtime-active-run-lease-v4.json","schemas/active_run_fencing_allocation.schema.json","schemas/active_run_fencing_counter.schema.json","schemas/active_run_fencing_witness.schema.json","schemas/active_run_lease.schema.json","schemas/active_run_takeover_audit.schema.json","schemas/active_run_takeover_authorization.schema.json","schemas/active_run_takeover_consumption.schema.json","schemas/runtime_checkpoint.schema.json","schemas/runtime_checkpoint_v4.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement-queue/references/active-run-lease.md","templates/implx_checkpoint_v4.md","templates/zh-CN/implx_checkpoint_v4.md","tests/runtime_ledger_test_support.py","tests/test_active_run_lease.py","tests/test_active_run_schema.py","tests/test_active_run_takeover_authorization.py","tests/test_check_workflow.py","tests/test_pack_asset_validation.py","tests/test_review_runtime_schema.py","tests/test_runtime_gate_rules.py","tests/test_runtime_ledger_budget.py","tests/test_runtime_ledger_gate.py","tests/test_runtime_ledger_queue.py","tests/test_session_telemetry.py","tests/test_specrail_schema.py"],"spec_refs":["specs/GH189/product.md","specs/GH189/tech.md","specs/GH189/tasks.md"]}
+{"version":1,"issue":189,"complete":true,"paths":["AGENT_USAGE.md","CHANGELOG.md","checks/active_run_lease.py","checks/active_run_takeover_authorization.py","checks/check_workflow.py","checks/pack_asset_validation.py","checks/runtime_active_run_gate.py","checks/runtime_active_run_rules.py","checks/runtime_budget_dimensions.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/session_telemetry.py","examples/fixtures/runtime-active-run-lease-v4.json","schemas/active_run_fencing_allocation.schema.json","schemas/active_run_fencing_counter.schema.json","schemas/active_run_fencing_witness.schema.json","schemas/active_run_high_water.schema.json","schemas/active_run_lease.schema.json","schemas/active_run_takeover_audit.schema.json","schemas/active_run_takeover_authorization.schema.json","schemas/active_run_takeover_consumption.schema.json","schemas/runtime_checkpoint.schema.json","schemas/runtime_checkpoint_v4.schema.json","skills-lock.json","skills/specrail-implement-queue/SKILL.md","skills/specrail-implement-queue/references/active-run-lease.md","templates/implx_checkpoint_v4.md","templates/zh-CN/implx_checkpoint_v4.md","tests/runtime_ledger_test_support.py","tests/test_active_run_lease.py","tests/test_active_run_schema.py","tests/test_active_run_takeover_authorization.py","tests/test_check_workflow.py","tests/test_pack_asset_validation.py","tests/test_review_runtime_schema.py","tests/test_runtime_gate_rules.py","tests/test_runtime_ledger_budget.py","tests/test_runtime_ledger_gate.py","tests/test_runtime_ledger_queue.py","tests/test_session_telemetry.py","tests/test_specrail_schema.py"],"spec_refs":["specs/GH189/product.md","specs/GH189/tech.md","specs/GH189/tasks.md"]}
 -->
 
 ## Product Spec
@@ -98,7 +98,31 @@ counter+genesis witness pair（witness 三个 `last_allocation_*` 字段为 `nul
 即 `corrupt`。无 allocation journal 时 counter
 `last_allocated_token` 必须精确等于 witness `high_water_token`，且不小于 canonical
 lease/retained audit token；任一单独回滚、symlink、非普通文件、越界 mode、identity swap
-或内容/schema 损坏均 `unsafe/corrupt`。lease 的单独回滚按是否跨 allocation 边界区分：
+或内容/schema 损坏均 `unsafe/corrupt`。
+
+counter 与 witness 被**成对**回滚到同一个较旧且彼此一致的快照时，上述两项检查都不足以
+检出：两者 high-water 相等，若此时 lease 已 release、更高 token 的 audit 已被 retention
+prune，或该 token 本就只经 acquire/resume 产生而从未写出更高 token 的 audit，则没有任何
+更新的证据可对照，下一次 allocation 会重新发放一个已经发过的 fencing token。product
+非目标只排除「同一 OS principal 协调回滚整个 common dir 的**全部**资产」，而这是一个仅
+涉及两项资产的子集回滚，必须检出。因此 high-water 另行绑定到一个独立保留的 anchor：
+
+- 新增 durable `<git-common-dir>/specrail/active-run-high-water.json` anchor 资产，其
+  closed `active_run_high_water.schema.json` 只允许
+  `version, repo_id, high_water_token, updated_at`；它与 counter/witness 位于同一 common
+  dir 但**不属于任何 retention 或 prune 策略**——normal release、resume replacement、
+  256 条 takeover audit prune 与任何 audit retention 都不得删除或降低它；
+- allocation transaction 在 step 3 durable 推进 counter+witness 之后、step 4 unlink
+  journal 之前，以同一 mutex 内的 durable replace 把 anchor 推进到新 token 并 fsync
+  parent；anchor 只允许单调递增，任何写入试图降低 `high_water_token` 即 `corrupt`；
+- 每次 inspect/allocation preflight 都要求 counter `last_allocated_token` 与 witness
+  `high_water_token` **不小于** anchor `high_water_token`；小于即判定为 counter/witness
+  成对回滚，返回 `corrupt` 并等待人工处理，不得继续分配；
+- anchor 自身缺失只在 fresh repo 的 genesis 分支（counter/witness/journal 全缺失且无
+  lease/audit）合法，否则与单项缺失同样 `corrupt`；anchor 被单独回滚或删除同样 `corrupt`。
+
+`tests/test_active_run_lease.py` 必须覆盖：counter+witness 成对回滚而 anchor 保持较高值
+时检出 `corrupt`；anchor 单独回滚检出 `corrupt`；正常单调推进不误报。lease 的单独回滚按是否跨 allocation 边界区分：
 witness `last_allocation_outcome` 为 `issued` 时，存在的 canonical lease 必须携带
 `fencing_token == high_water_token`；held lease token 小于 high-water 只在最近 outcome 为
 `reserved`/`skipped` 时合法，否则 inspect 判 `corrupt`。该 invariant 检测跨 allocation
@@ -327,7 +351,9 @@ python3 checks/active_run_lease.py --repo <repo> --json end-remote --expected-di
 
 - `operation` 是上述 subcommand enum；只有 subcommand 缺失/未知、无法解析时为 JSON null。
 - `repo_id` 成功解析 canonical common-dir identity 后为 digest；参数错误发生在解析前，
-  非 Git repo 或平台无法形成 identity 的 `unsupported` 时为 null。
+  非 Git repo 或平台无法形成 identity 的 `unsupported` 时为 null。identity 已解析、但
+  之后某个原语（directory fsync、mutation mutex 等）不受支持时 `repo_id` 仍为 digest；
+  两者 nullability 不同，因此必须使用不同 `reason_code`（见下）。
 - `lease_digest` 只有在 no-follow 安全读取 exact canonical lease bytes 后为 digest；
   `free`、路径 unsafe/无法读取、参数/schema error 或 identity 未形成时为 null。禁止
   `""`、`"unknown"`、全零 digest 等 sentinel。
@@ -358,7 +384,12 @@ inspect `free`" 优先于 state→exit 映射：recover abort 成功时 exit 0�
 后续 inspect 才按 `stale`/3 报告。T3 的 closed-schema 测试必须对每个成功 operation
 断言上表映射。同一 state/reason 必须产生唯一 nullability 组合；例如 inspect `free` 为
 `operation:"inspect", repo_id:<digest>, lease_digest:null`，identity `unsupported` 与
-argument error 都是两项 identity null，但各有不同 state/reason/exit。未知 base/conditional
+argument error 都是两项 identity null，但各有不同 state/reason/exit。`unsupported` 因此
+拆成两个 reason：identity 本身无法形成（非 Git repo、平台无法构造 common-dir identity）
+用 `unsupported_identity`，`repo_id` 与 `lease_digest` 均为 null；identity 已解析而后续
+原语（directory fsync、atomic 目录创建、mutation mutex 等）不受支持用
+`unsupported_platform`，`repo_id` 为 digest、`lease_digest` 按其自身规则取值。两者
+exit 同为 5，但 nullability 组合唯一，deterministic consumer 可据 reason 校验 envelope。未知 base/conditional
 字段一律 schema error。输出不含绝对 common-dir/home path、PID、environment、session
 正文、authorization/role-map 内容或 reason 原文。所有 subcommand 禁止 human-output
 parsing 与 ad hoc inline import。
@@ -384,7 +415,7 @@ precondition mismatch 必须返回 `conflict`/2；不得把 nonzero 状态降级
 | `corrupt` | 4 | `corrupt_asset` |
 | `unsafe` | 4 | `unsafe_path` |
 | `clock_unsafe` | 4 | `clock_unsafe` |
-| `unsupported` | 5 | `unsupported_platform` |
+| `unsupported` | 5 | `unsupported_identity`（`repo_id: null`） \| `unsupported_platform`（`repo_id: <digest>`） |
 | `argument_error` | 64 | `argument_error` \| `schema_error` |
 | `internal_error` | 70 | `io_error` \| `internal_error` |
 
