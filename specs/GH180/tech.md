@@ -108,6 +108,14 @@ direct route 不再被无条件 artifact 要求阻断，也不需要绕过 core 
   GH-143 独立背书之一——gate 可验证的 CI tier-check artifact 或 reviewer-lane
   `tier_attestation`——self-declared tier 或缺背书时该 route 以 `needs_human` fail closed，
   不得静默归入 `spec_first`、不得直接 allowed，也不得由 CLI/manifest/PR body 补供 tier。
+  schema/ledger 校验只证明 checkpoint 的结构，不证明来源，因此 single-PR relation 与 tier
+  受同等强度的 provenance 约束，不得作为 agent 自写的 checkpoint 值被信任：route gate 必须
+  由 `checks/github_duplicate_evidence.py` 对该 issue 现采的 fresh GitHub 状态**独立重算**该
+  relation——同一 issue 当前恰好只有这一个未关闭的 linked PR，且不存在更早的独立 spec-only
+  PR/branch source——并要求重算结果与 checkpoint 记录逐字段相等；两者不一致、采集不完整或
+  GitHub 侧无法判定时以 `needs_human` fail closed。等价地，若独立背书 artifact（CI
+  tier-check 或 reviewer-lane `tier_attestation`）自身同时 attest 该 relation，也可作为可信
+  来源；但仅有合法 tier 背书 + checkpoint 自写 relation 的组合永远不足以判定 `mixed_impl`。
   入场分类不得以"PR 已包含生产
   代码"为前提，同一 PR 真实承载 spec/tasks/implementation 的完成态 mixed relation 由该 PR
   既有的 final-review/merge gate 在实现完成后验证。该值不得由 CLI、manifest 或 PR body选择；
@@ -456,9 +464,11 @@ bytes 与 pinned canonical 全文件 sha256 digest 精确相等时返回
 改名文件、缺字段、把 `partial_unproven`/`none` 改成更强结论或任何其它字节级漂移都必须
 classification invalid。
 
-实现 PR 合并后，PR #179 仍在原分支删除提前生成的 `specs/GH165/tasks.md`，其 product/tech
-以 staged 形态通过新 validator。GH-180 bootstrap evidence 不可复制到其它 issue；后续
-ready_to_spec packet 一律走 staged 路径。
+PR #179 已随 commit `5db6971` 合入 `main`，其原分支再推送也不会改变默认分支，因此提前生成的
+`specs/GH165/tasks.md`（在 `main` 上仍然存在）必须改由一个以 `main` 为 base 的独立 follow-up
+PR 删除；该 PR 是 B-012 迁移的交付载体，删除后 `specs/GH165` 的 product/tech 以 staged 形态
+通过新 validator。本实现 PR 不承担该删除，也不得把它记为已完成。GH-180 bootstrap evidence
+不可复制到其它 issue；后续 ready_to_spec packet 一律走 staged 路径。
 
 ### 5. 文档、分发与审计一致性
 
@@ -507,7 +517,7 @@ hash 自比较后声称 implementation-ready。
 | B-007 B-013 | route gate、evaluation-result schema、shared runtime mapping/ledger regression、plan-tasks、direct implement、implx 与 queue coverage | staged result 只含 `task_planning`/`plan_tasks` 且阻断 implement；`needs_tasks` 精确映射 `ready_to_implement` 而非 `spec_approved`；production `--consume-for` 确定性拒绝 staged/legacy/missing-scope result；tasks 后以 complete `production_implementation` scope 才能进代码 lane |
 | B-008 B-009 | issue/lifecycle/spec-PR evidence collector、closed artifact-role classifier、duplicate collector/gate、runtime provider/grant registry/portable verifier integration、context schema、route gate、PLAN/docs、labels 与 fixtures/tests | review 验证 same-repo exact-head maintainer approval、`APPROVED submittedAt < spec_approved < ready_to_implement`、readiness actor permission，并只排除 deterministic allowlist 中且与 implementation paths disjoint 的 exact spec-only source PR/head；source PR base 必须绑定 fresh trusted default base（`spec_pr_base_untrusted` 负例），lifecycle label events 必须晚于 selected source PR `createdAt`（`lifecycle_event_predates_source_pr` 负例）；PLAN 与正常 lifecycle 一致；auto 只接受 repository-bound runtime registry active grant 和 fixed authenticated provider/verifier IPC |
 | B-011 | all existing packets + full suite | `--all-specs` 中既有三文件 packet 全部 `complete`，无需迁移 |
-| B-012 | PR #179 follow-up fixture/verification | 删除 GH165 tasks 后新 validator 报 staged 且 CI 绿，issue 仍非 implementation-ready |
+| B-012 | 以 `main` 为 base 的 GH165 follow-up PR fixture/verification | 该 follow-up PR 删除 `specs/GH165/tasks.md` 后新 validator 报 staged 且 CI 绿，issue 仍非 implementation-ready |
 | B-014 B-015 | validator/route authorization/runtime challenge-response/evidence/spec+packet snapshots + scoped `--verify-result` | repository id+name 贯穿 selector/grant/request/response/digests/result；fresh envelope 与 semantic snapshot、spec 与 packet snapshot、task-planning 与 production scope 分别校验；合法 key rotation只排除 `key_id` |
 | B-016 B-017 | tracked bootstrap evidence | direct transition、reported decisions/waiver claim 与 unproven invocation/route/waived gates/exact trigger/collected_at/hash 分栏；authorization_effect=none |
 | B-018 | CLI + route evidence pair | shape 行含 path/shape/readiness/snapshot；route JSON 含 issue/state/auth_mode/authorization kind 与 hash/evidence hashes/decision/reasons |

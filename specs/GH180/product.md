@@ -171,7 +171,7 @@ SpecRail 目前对同一个 spec packet 给出互相冲突的生命周期要求�
 17. B-017 B-016 只审计 GH-180 本次 lifecycle-contract 迁移，不是正常 route success、
     当前实现授权或其它 issue 的先例。tracked evidence 缺失、字段标为 `unproven`、采集失败、
     权限不足、issue/head/packet 不匹配，均不得被宽泛授权补齐或复用。新 validator 落地后，
-    在途 `ready_to_spec` packet 必须使用 B-012 的 staged 纠偏路径，不能继续提前创建 tasks；
+    在途 `ready_to_spec` packet 必须使用 B-012 的 staged 纠偏路径（source PR 已合并时经独立 follow-up PR 执行），不能继续提前创建 tasks；
     所有 spec-first packet 都必须遵守 B-008；合法 direct/mixed 入口按 B-021 判定。
 18. B-018 每次 packet 判定必须给出可审计结果，至少能区分 linked issue、artifact
     shape、发现的 artifact、各 artifact 校验结果、readiness 是否被证明、evidence
