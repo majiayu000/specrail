@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from shutil import copyfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "checks"))
@@ -9,6 +10,7 @@ from skill_size_gate import (  # noqa: E402
     FASTLANE_BYTE_BUDGET,
     FASTLANE_READ_SET,
     FULL_DRAIN_STARTUP_BYTE_BUDGET,
+    FULL_DRAIN_STARTUP_READ_SET,
     LINE_CAPS,
     evaluate,
 )
@@ -27,13 +29,19 @@ def test_hard_caps_match_gh208_contract() -> None:
     assert FULL_DRAIN_STARTUP_BYTE_BUDGET == 60 * 1024
 
 
-def test_fastlane_read_set_is_three_skill_files() -> None:
-    assert len(FASTLANE_READ_SET) == 3
+def test_fastlane_read_set_matches_complete_bootstrap_contract() -> None:
     assert set(FASTLANE_READ_SET) == {
+        "AGENTS.md",
+        "AGENT_USAGE.md",
+        "workflow.yaml",
+        "states.yaml",
+        "labels.yaml",
         "skills/implx/SKILL.md",
-        "skills/specrail-implement/SKILL.md",
-        "skills/specrail-pr-gate/SKILL.md",
     }
+    result = evaluate(ROOT)
+    assert result["read_sets"]["fastlane"]["bytes"] == sum(
+        (ROOT / path).stat().st_size for path in FASTLANE_READ_SET
+    )
 
 
 def test_gate_blocks_oversized_skill(tmp_path: Path) -> None:
@@ -48,6 +56,20 @@ def test_gate_blocks_oversized_skill(tmp_path: Path) -> None:
     assert any("exceeds hard cap" in error for error in result["errors"])
 
 
+def test_gate_counts_large_startup_config_in_fastlane_budget(tmp_path: Path) -> None:
+    for rel in set(FASTLANE_READ_SET) | set(FULL_DRAIN_STARTUP_READ_SET):
+        destination = tmp_path / rel
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        copyfile(ROOT / rel, destination)
+    workflow = tmp_path / "workflow.yaml"
+    workflow.write_text("x" * FASTLANE_BYTE_BUDGET, encoding="utf-8")
+
+    result = evaluate(tmp_path)
+
+    assert result["decision"] == "blocked"
+    assert any("fastlane read set" in error for error in result["errors"])
+
+
 def test_queue_skill_keeps_single_review_lane_default() -> None:
     text = (ROOT / "skills/specrail-implement-queue/SKILL.md").read_text(
         encoding="utf-8"
@@ -58,4 +80,14 @@ def test_queue_skill_keeps_single_review_lane_default() -> None:
 def test_implx_declares_tiered_read_set() -> None:
     text = (ROOT / "skills/implx/SKILL.md").read_text(encoding="utf-8")
     assert "## Tiered Read Set" in text
-    assert "at most three skill files" in text
+    assert "The measured bootstrap set is" in text
+    assert "on entering review load the canonical" in text
+    assert "`integrations/threads.md`" in text
+
+
+def test_queue_contract_phase_loads_router_and_review_assets() -> None:
+    text = (ROOT / "skills/specrail-implement-queue/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Load `skills/specrail-workflow/SKILL.md` only" in text
+    assert "Load that Skill" in text and "before review" in text

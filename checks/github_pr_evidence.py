@@ -288,16 +288,22 @@ def build_evidence(
             "touched_paths": pr_snapshot.get("paths"),
             "source": FASTLANE_TIER_EVIDENCE_SOURCE,
             "head_sha": pr_snapshot.get("head_sha"),
+            "base_ref": pr_snapshot.get("base_ref"),
+            "base_sha": pr_snapshot.get("base_sha"),
             "paths_sha256": pr_snapshot.get("paths_sha256"),
         }
         tier_errors = fastlane_tier_evidence_errors(
-            tier_evidence, expected_head_sha=head_sha
+            tier_evidence, expected_head_sha=head_sha,
+            expected_base_ref=pr_snapshot.get("base_ref"),
+            expected_base_sha=pr_snapshot.get("base_sha"),
         )
         if tier_errors:
             raise EvidenceError("; ".join(tier_errors))
         evidence["pr_tier"] = "fastlane"
         evidence["pr_tier_evidence"] = tier_evidence
         evidence["enforcement_sensitive"] = False
+        evidence["base_ref"] = pr_snapshot.get("base_ref")
+        evidence["base_sha"] = pr_snapshot.get("base_sha")
     if repo is not None and config is not None:
         declaration = enforcement_declaration(pr_payload.get("body"))
         registry = sensitive_registry(config)
@@ -496,10 +502,11 @@ def collect_evidence(
             owner, name, pr_number, run_gh_json, run_gh_json)
         if file_snapshot_before["head_sha"] != head_sha_before:
             raise EvidenceError("PR view and file snapshot head SHA disagree")
-        if file_snapshot_before["base_sha"] != _require_string(
-            pr_payload_before, "baseRefOid"
+        if (file_snapshot_before["base_ref"], file_snapshot_before["base_sha"]) != (
+            _require_string(pr_payload_before, "baseRefName"),
+            _require_string(pr_payload_before, "baseRefOid"),
         ):
-            raise EvidenceError("PR view and file snapshot base SHA disagree")
+            raise EvidenceError("PR view and file snapshot base identity disagree")
     threads_payload = collect_review_threads(owner, name, pr_number)
 
     issue_payload = None
@@ -580,10 +587,13 @@ def collect_evidence(
         raise EvidenceError(
             "PR issue relation changed while collecting gate evidence; rerun PR evidence collection"
         )
-    if file_snapshot_after is not None and file_snapshot_after["base_sha"] != _require_string(
-        pr_payload_after, "baseRefOid"
+    if file_snapshot_after is not None and (
+        file_snapshot_after["base_ref"], file_snapshot_after["base_sha"]
+    ) != (
+        _require_string(pr_payload_after, "baseRefName"),
+        _require_string(pr_payload_after, "baseRefOid"),
     ):
-        raise EvidenceError("PR view and file snapshot base SHA disagree")
+        raise EvidenceError("PR view and file snapshot base identity disagree")
 
     if partial_issue_relation_before is not None:
         assert expected_issue is not None

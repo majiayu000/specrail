@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 
@@ -34,6 +35,13 @@ def _nonempty_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _git_oid(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"[0-9a-fA-F]{40}([0-9a-fA-F]{24})?", value) is not None
+    )
+
+
 def _valid_pr_tier_evidence(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
@@ -45,6 +53,12 @@ def _valid_pr_tier_evidence(value: Any) -> bool:
         isinstance(touched_paths, list)
         and bool(touched_paths)
         and all(_nonempty_string(path) for path in touched_paths)
+        and value.get("source") == FASTLANE_TIER_EVIDENCE_SOURCE
+        and _git_oid(value.get("head_sha"))
+        and _nonempty_string(value.get("base_ref"))
+        and _git_oid(value.get("base_sha"))
+        and isinstance(value.get("paths_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["paths_sha256"]) is not None
     )
 
 
@@ -79,33 +93,98 @@ def _fastlane_protected_path(path: str) -> bool:
         "schemas",
         "security",
     }
-    return any(part in protected_parts for part in parts)
+    if any(part in protected_parts for part in parts):
+        return True
+    filename_stem = parts[-1].rsplit(".", 1)[0] if parts else ""
+    return filename_stem in protected_parts
+
+
+def pr_tier_evidence_identity_errors(
+    value: Any,
+    *,
+    expected_head_sha: Any = None,
+    expected_base_ref: Any = None,
+    expected_base_sha: Any = None,
+) -> list[str]:
+    """Validate adapter provenance and the complete PR diff identity."""
+
+    if not isinstance(value, dict):
+        return ["pr_tier_evidence must be an object"]
+    errors: list[str] = []
+    if value.get("source") != FASTLANE_TIER_EVIDENCE_SOURCE:
+        errors.append(
+            "pr_tier_evidence.source must be "
+            f"{FASTLANE_TIER_EVIDENCE_SOURCE}"
+        )
+    evidence_head = value.get("head_sha")
+    if not _git_oid(evidence_head):
+        errors.append("pr_tier_evidence.head_sha is required")
+    elif _nonempty_string(expected_head_sha) and evidence_head != expected_head_sha:
+        errors.append("pr_tier_evidence.head_sha must match current head_sha")
+    evidence_base_ref = value.get("base_ref")
+    if not _nonempty_string(evidence_base_ref):
+        errors.append("pr_tier_evidence.base_ref is required")
+    elif (
+        _nonempty_string(expected_base_ref)
+        and evidence_base_ref != expected_base_ref
+    ):
+        errors.append("pr_tier_evidence.base_ref must match current base_ref")
+    evidence_base_sha = value.get("base_sha")
+    if not _git_oid(evidence_base_sha):
+        errors.append("pr_tier_evidence.base_sha is required")
+    elif _nonempty_string(expected_base_sha) and evidence_base_sha != expected_base_sha:
+        errors.append("pr_tier_evidence.base_sha must match current base_sha")
+    return errors
 
 
 def fastlane_tier_evidence_errors(
     value: Any,
     *,
     expected_head_sha: Any = None,
+    expected_base_ref: Any = None,
+    expected_base_sha: Any = None,
 ) -> list[str]:
-    """Validate exact-head, adapter-derived evidence for fastlane self-review."""
+    """Validate exact-diff, adapter-derived evidence for fastlane self-review."""
 
     if not _valid_pr_tier_evidence(value):
-        return [
-            "fastlane_policy requires pr_tier_evidence with changed_lines and "
-            "touched_paths"
-        ]
+        if not isinstance(value, dict):
+            return [
+                "fastlane_policy requires pr_tier_evidence with changed_lines, "
+                "touched_paths, and complete diff identity"
+            ]
     assert isinstance(value, dict)
-    errors: list[str] = []
-    changed_lines = value["changed_lines"]
-    if changed_lines > FASTLANE_MAX_CHANGED_LINES:
+    errors = pr_tier_evidence_identity_errors(
+        value,
+        expected_head_sha=expected_head_sha,
+        expected_base_ref=expected_base_ref,
+        expected_base_sha=expected_base_sha,
+    )
+    changed_lines = value.get("changed_lines")
+    if (
+        isinstance(changed_lines, bool)
+        or not isinstance(changed_lines, int)
+        or changed_lines < 0
+    ):
+        errors.append("fastlane_policy pr_tier_evidence.changed_lines is invalid")
+    elif changed_lines > FASTLANE_MAX_CHANGED_LINES:
         errors.append(
             f"fastlane_policy changed_lines must be at most "
             f"{FASTLANE_MAX_CHANGED_LINES}; got {changed_lines}"
         )
-    touched_paths = value["touched_paths"]
-    assert isinstance(touched_paths, list)
-    normalized_paths = sorted(str(path).strip() for path in touched_paths)
-    if touched_paths != normalized_paths or len(set(normalized_paths)) != len(
+    touched_paths = value.get("touched_paths")
+    valid_paths = (
+        isinstance(touched_paths, list)
+        and bool(touched_paths)
+        and all(_nonempty_string(path) for path in touched_paths)
+    )
+    normalized_paths = (
+        sorted(str(path).strip() for path in touched_paths)
+        if valid_paths
+        else []
+    )
+    if not valid_paths:
+        errors.append("fastlane_policy pr_tier_evidence.touched_paths is invalid")
+    elif touched_paths != normalized_paths or len(set(normalized_paths)) != len(
         normalized_paths
     ):
         errors.append(
@@ -116,18 +195,6 @@ def fastlane_tier_evidence_errors(
         errors.append(
             "fastlane_policy cannot cover protected path(s): "
             + ", ".join(protected)
-        )
-    if value.get("source") != FASTLANE_TIER_EVIDENCE_SOURCE:
-        errors.append(
-            "fastlane_policy pr_tier_evidence.source must be "
-            f"{FASTLANE_TIER_EVIDENCE_SOURCE}"
-        )
-    evidence_head = value.get("head_sha")
-    if not _nonempty_string(evidence_head):
-        errors.append("fastlane_policy pr_tier_evidence.head_sha is required")
-    elif _nonempty_string(expected_head_sha) and evidence_head != expected_head_sha:
-        errors.append(
-            "fastlane_policy pr_tier_evidence.head_sha must match current head_sha"
         )
     expected_digest = hashlib.sha256(
         json.dumps(normalized_paths, separators=(",", ":")).encode("utf-8")
@@ -256,11 +323,17 @@ def _validate_tier_authorization(
         )
         return
 
-    if not _valid_pr_tier_evidence(raw_item.get("pr_tier_evidence")):
+    tier_errors = pr_tier_evidence_identity_errors(
+        raw_item.get("pr_tier_evidence"),
+        expected_head_sha=raw_item.get("head_sha"),
+    )
+    if not _valid_pr_tier_evidence(raw_item.get("pr_tier_evidence")) or tier_errors:
+        detail = "; ".join(tier_errors)
+        suffix = f": {detail}" if detail else ""
         errors.append(
-            f"{label}: standard_auto requires pr_tier_evidence with "
-            "changed_lines and touched_paths; missing tier evidence fails "
-            "closed to heavy_manual"
+            f"{label}: standard_auto requires pr_tier_evidence derived by the "
+            f"adapter and bound to the current head and base{suffix}; missing tier evidence "
+            "fails closed to heavy_manual"
         )
 
     item_is_self_review = _item_review_source(raw_item) == "self_review"

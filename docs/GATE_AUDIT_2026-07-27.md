@@ -1,70 +1,78 @@
-# Gate 事故率审计报告（2026-07-27，#208 Done-When C）
+# Gate 事故率审计报告（2026-07-27，GH208 Done-When C）
 
-范围：`checks/` 全部 34 个模块（14,561 行），逐一列出，无抽样。
-事故判据：仓库生命周期内（2026-06-21 起，≈36 天，覆盖"最近 30 天"窗口）该 gate 是否**拦截过真实缺陷**（有 rejection artifact、review finding 或 fix commit 佐证），还是仅产生流程摩擦（dry-run 状态标签缺失、格式重验等）。
+范围：当前树 `checks/*.py` 全部 **36 个模块、14,779 行**。统计命令：
 
-## 实测拦截证据（.specrail/runtime/rejections/ + artifacts/review/）
+```sh
+for f in checks/*.py; do printf '%s\t%s\n' "${f#checks/}" "$(wc -l < "$f")"; done | sort
+wc -l checks/*.py
+```
 
-| 记录 | 时间 | 性质 |
+审计窗口为 2026-06-28 至 2026-07-27。事故证据只采用仓库内 rejection/review
+artifact、可定位的 issue/PR finding 或修复提交；未找到证据时明确记为“无记录”，
+不把推测写成事故。安全属性即使 30 天零拦截也可保留。
+
+## 已核实证据
+
+| 证据 | 性质 | 关联处置 |
 |---|---|---|
-| `pr_gate-pr-205.json` | 07-26 16:59Z | **真实拦截**：独立审查 lane 记 5 条 blocking findings（含 1 条 critical fail-open），pr_gate 正确 blocked |
-| `route_gate-199.json` | 07-27 | 摩擦：`write_spec` 要求 triaged 标签，dry-run 拒绝 |
-| `route_gate-pr-181/186/193.json` | 07-26 | 摩擦：verification 字段缺失 warn |
+| `.specrail/runtime/rejections/pr_gate-pr-205.json` 与 PR #205 review artifact | 真实拦截：5 条 blocking findings，含 fastlane fail-open | 保留 PR/review 主链与 tier 安全校验 |
+| `.specrail/runtime/rejections/route_gate-199.json`、`route_gate-pr-181/186/193.json` | 流程摩擦：dry-run 状态/verification 缺失 | route/重复工作/预算类降级为 warning 候选 |
+| GH97 | 敏感路径与批准规格信任边界，安全属性 | 保留能力，合并重复模块 |
+| GH116、GH166、GH184 | issue closure、证据内容绑定、非默认 base CI 可用性事故 | 保留相应链路 |
+| GH202 修复提交 `47cbfbf` | runtime/PR-gate tier evidence 绑定缺口 | 保留 runtime PR-gate binder |
+| GH208 / PR #210 review | size gate false-green、protected filename 漏判、base retarget/rewrite 可复用 tier evidence、审计漏项 | 保留并修复 `skill_size_gate.py`、`runtime_tier_authorization.py`、`runtime_pr_gate_evidence.py` |
 
-## 逐模块处置（34/34 全量）
+## 逐模块全量处置（36/36）
 
-### 共享库（6 个，非 gate，保留）
+| # | 模块 | 行数 | 30 天事故或安全依据 | 处置 |
+|---:|---|---:|---|---|
+| 1 | `check_workflow.py` | 526 | CI 主验证链；历史持续拦截 workflow/spec 合同缺陷 | 保留 |
+| 2 | `checks_availability.py` | 123 | GH184 非默认 base 的 CI 结构性不可用 | 保留（共享库） |
+| 3 | `closure_audit.py` | 337 | GH116 merged-but-open | 保留 |
+| 4 | `duplicate_work_gate.py` | 271 | 无真实重复工单拦截记录 | 降级 warning |
+| 5 | `evidence_content_binding.py` | 540 | GH166 旧 head 证据复用 | 合并进单一 content-binding 模块 |
+| 6 | `github_approved_spec_evidence.py` | 592 | GH97 安全属性 | 合并进单一 sensitive-gate 模块 |
+| 7 | `github_duplicate_evidence.py` | 202 | 无真实重复工单拦截记录 | 与 duplicate gate 一并降级 warning |
+| 8 | `github_evidence_common.py` | 165 | adapter 共用解析/信任边界 | 保留（共享库） |
+| 9 | `github_issue_evidence.py` | 326 | issue readiness 证据主 adapter | 保留 |
+| 10 | `github_issue_reference.py` | 230 | partial reference 误闭链路 | 保留 |
+| 11 | `github_pr_evidence.py` | 796 | PR #205；GH208 base-drift finding | 保留 |
+| 12 | `github_pr_snapshot.py` | 244 | GH97 完整 changed-file snapshot 安全属性 | 合并进单一 sensitive-gate 模块 |
+| 13 | `github_review_evidence.py` | 587 | GH97 reviewer/resolver 信任边界 | 合并进单一 sensitive-gate 模块 |
+| 14 | `pack_asset_validation.py` | 139 | 无拦截；consumer 分发工作随 #188 parked | 挂起并从默认链路摘除 |
+| 15 | `pr_evidence_items.py` | 171 | PR gate rejection item 共用转换 | 保留（共享库） |
+| 16 | `pr_gate.py` | 733 | PR #205 真实拦截；GH208 base-drift finding | 保留 |
+| 17 | `pr_review_contract.py` | 754 | PR #205 review 主链，但与 review gate 重叠 | 合并进 `review_json_gate.py` |
+| 18 | `rejection_items.py` | 301 | gate rejection 持久化共用合同 | 保留（共享库） |
+| 19 | `review_content_binding.py` | 269 | GH166 review 证据复用 | 合并进单一 content-binding 模块 |
+| 20 | `review_json_gate.py` | 791 | PR #205 review artifact 验证主链 | 保留，作为 review 合并目标 |
+| 21 | `review_result_semantics.py` | 702 | PR #205 review 主链，但与 review gate 重叠 | 合并进 `review_json_gate.py` |
+| 22 | `review_round_semantics.py` | 192 | 唯一观察为 PR #207 round-4 修复摩擦 | 降级为需确认 |
+| 23 | `route_gate.py` | 705 | 已存记录均为状态/字段摩擦；敏感路由除外 | 普通 invalid-state 降级 warning，敏感路由保留 block |
+| 24 | `runtime_budget_dimensions.py` | 292 | 无真实拦截记录 | 降级 warning |
+| 25 | `runtime_gate_rules.py` | 796 | 无独立真实拦截；checkpoint 第二状态机重复 | 随 #198 收敛 |
+| 26 | `runtime_ledger_gate.py` | 705 | 无独立真实拦截；承载 runtime 聚合 | 随 #198 收敛，保留必要安全绑定 |
+| 27 | `runtime_pr_gate_evidence.py` | 132 | GH202；GH208 base-drift finding | 保留；docstring 记录 GH208 与拦截场景 |
+| 28 | `runtime_review_evidence.py` | 84 | GH166 review 证据复用 | 合并进单一 content-binding 模块 |
+| 29 | `runtime_sensitive_routes.py` | 161 | GH97 安全属性 | 合并进单一 sensitive-gate 模块 |
+| 30 | `runtime_tier_authorization.py` | 525 | PR #205 fail-open；GH208 filename/base findings | 保留并 fail-closed 修复 |
+| 31 | `schema_validation.py` | 418 | 所有 schema gate 的确定性基础 | 保留（共享库） |
+| 32 | `sensitive_enforcement.py` | 716 | GH97 安全属性 | 保留能力，作为 sensitive 合并目标 |
+| 33 | `session_telemetry.py` | 228 | 无真实拦截记录 | 降级 warning |
+| 34 | `skill_size_gate.py` | 109 | GH208 anti-flywheel 验收；PR #210 false-green finding | 保留；实际 startup read-set 纳入预算 |
+| 35 | `spec_revision_evidence.py` | 261 | GH97 spec approval 安全属性 | 合并进单一 sensitive-gate 模块 |
+| 36 | `specrail_lib.py` | 656 | workflow/config/spec 共用基础 | 保留（共享库） |
 
-| 模块 | 行数 | 结论 |
-|---|---|---|
-| specrail_lib.py | 656 | 保留（基础库） |
-| github_evidence_common.py | 165 | 保留 |
-| schema_validation.py | 418 | 保留 |
-| rejection_items.py | 301 | 保留 |
-| checks_availability.py | 123 | 保留（GH184 CI 结构性不可用区分，有真实动机事故） |
-| pr_evidence_items.py | 171 | 保留 |
+行数合计复核：**14,779**。表中模块名与 `checks/*.py` 排序集合完全一致。
 
-### 有真实拦截记录或持续 CI 价值（9 个，保留）
+## 处置汇总
 
-| 模块 | 行数 | 证据 | 结论 |
-|---|---|---|---|
-| pr_gate.py | 718 | 07-26 拦截 PR#205（5 findings，1 critical） | **保留** |
-| check_workflow.py | 526 | CI 每次 PR 运行，历史多次拦截 spec 包缺陷 | **保留** |
-| review_json_gate.py | 791 | PR#205 findings 经此管道产出 | 保留，但与下两项合并（三者共 2,220 行大量重叠） |
-| review_result_semantics.py | 702 | 同上 | **合并**入 review_json_gate |
-| pr_review_contract.py | 727 | 同上 | **合并**入 review_json_gate |
-| github_pr_evidence.py | 734 | merge 证据核验主链路 | 保留 |
-| github_issue_evidence.py | 326 | 同上 | 保留 |
-| github_issue_reference.py | 230 | GH-partial 引用误闭事故（07-12 a62f379） | 保留 |
-| closure_audit.py | 337 | merged-but-open 误留事故（GH116） | 保留 |
+- 保留：16（含 6 个共享库/基础模块）。
+- 合并消重：11 → 3 个既有目标（review、sensitive、content binding）。
+- 降级 warning/需确认：6。
+- 随 #198 收敛：2。
+- 挂起/摘除：1。
 
-### 单一事故衍生集群（消重合并，2 组 9 个）
-
-| 集群 | 模块 | 合计行数 | 结论 |
-|---|---|---|---|
-| GH97 敏感分类（07-14~16 一个事故衍生 6 模块） | sensitive_enforcement (716), github_approved_spec_evidence (592), github_pr_snapshot (233), github_review_evidence (566), spec_revision_evidence (261), runtime_sensitive_routes (161) | 2,529 | 事故真实但防御面过宽：**合并为 1 个 sensitive_gate 模块**，预计 ≤800 行 |
-| GH166 证据内容绑定（07-23 一个事故衍生 3 模块） | evidence_content_binding (540), review_content_binding (269), runtime_review_evidence (84) | 893 | 事故真实（证据复用幻觉）：**合并为 1 个 content_binding 模块** |
-
-### 30 天零真实拦截（8 个，降级或删除）
-
-| 模块 | 行数 | 分析 | 结论 |
-|---|---|---|---|
-| route_gate.py | 705 | 4 条记录全为 dry-run 状态标签摩擦，无真实缺陷拦截 | **降级**：invalid_state 类由 block 改 warn，仅保留敏感路由 block |
-| runtime_gate_rules.py | 796 | checkpoint 第二状态机字段校验，无拦截记录 | **删除大部**（PR#198 已实测 795→107 行方案） |
-| runtime_ledger_gate.py | 788 | 同上 | **随 #198 收敛** |
-| runtime_budget_dimensions.py | 292 | 预算维度校验，无拦截；实际超预算靠会话自觉 | **降级 warning** |
-| session_telemetry.py | 228 | telemetry 交叉校验，无拦截 | **降级 warning** |
-| review_round_semantics.py | 192 | 唯一"拦截"是挡 PR#207 round-4 修复（摩擦大于收益） | 保留 cap 但**降级**为需确认而非硬 block |
-| duplicate_work_gate.py + github_duplicate_evidence.py | 473 | 07-04 引入以来无重复工单拦截记录 | **降级 warning** |
-| pack_asset_validation.py | 139 | 服务 consumer 分发（#188 已 parked） | **随 #188 挂起**，从默认链路摘除 |
-| runtime_tier_authorization.py | 355 | 07-26 发现其自身 fail-open（PR205-F001）——gate 本身是缺陷来源 | 保留但按 F001 修复收紧（本 PR 已含 fix） |
-
-## 汇总
-
-- 保留：15（含 6 库）；合并消重：9 → 2；降级 warning：7；挂起/摘除：1；随 #198 收敛：2
-- 预计 checks/ 总行数 14,561 → **≈8,500**（-42%），gate 硬 block 面收窄至有真实拦截记录的链路
-- 执行途径：合并与删除主体由 PR #198（二阶段）承载；本报告作为其评审依据
-
-## 防复发钩子（写入 AGENTS.md）
-
-新 gate 入库必须携带：动机事故的 issue 编号 + 预期拦截场景；连续 30 天零真实拦截且无安全属性的 gate 在月度审计中降级或删除。
+本报告只给出处置结论，不在 GH208 同一修复中实施大规模删除或合并。新 gate
+仍须在 docstring 写明真实 issue 与预期拦截场景；连续 30 天零真实拦截且无安全
+属性的模块，在下一次审计中继续降级或删除。

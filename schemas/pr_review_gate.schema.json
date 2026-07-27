@@ -111,7 +111,9 @@
         "required": ["enforcement_sensitive", "pr_tier", "pr_tier_evidence"],
         "properties": {"enforcement_sensitive": {"const": false}, "pr_tier": {"const": "fastlane"}}
       }
-    }
+    },
+    {"if": {"required": ["pr_tier_evidence"]},
+     "then": {"required": ["base_ref", "base_sha"]}}
   ],
   "properties": {
     "content_binding_version": {"const": 1},

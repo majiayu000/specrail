@@ -50,11 +50,20 @@ def _standard_auto_checkpoint(
     checkpoint["auth_mode"] = "review"
     item = checkpoint["items"][0]  # type: ignore[index]
     assert isinstance(item, dict)
+    touched_paths = ["checks/example.py", "tests/test_example.py"]
     item["pr_tier"] = "standard"
     item["pr_tier_evidence"] = {
         "changed_lines": 42,
-        "touched_paths": ["checks/example.py", "tests/test_example.py"],
+        "touched_paths": touched_paths,
+        "source": "github_changed_files",
+        "head_sha": item["head_sha"],
+        "base_ref": "main",
+        "base_sha": "b" * 40,
+        "paths_sha256": __import__("hashlib").sha256(
+            json.dumps(touched_paths, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
     }
+    item["enforcement_sensitive"] = False
     item["authorization_tier"] = "standard_auto"
     item["merge_authorization"] = {
         "actor": "specrail-tier-policy",
@@ -69,6 +78,16 @@ def _standard_auto_checkpoint(
     review = item["review"]
     assert isinstance(review, dict)
     review["evidence"] = str(artifact_path)
+    gate_path = tmp_path / "pr-gate-standard.json"
+    gate_path.write_text(json.dumps({
+        "decision": "allowed",
+        "pr": item["pr"],
+        "head_sha": item["head_sha"],
+        "pr_tier": item["pr_tier"],
+        "pr_tier_evidence": item["pr_tier_evidence"],
+        "enforcement_sensitive": False,
+    }), encoding="utf-8")
+    item["pr_gate"]["evidence"] = str(gate_path)
     return checkpoint
 
 

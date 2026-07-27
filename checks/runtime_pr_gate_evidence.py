@@ -1,4 +1,11 @@
-"""Load and bind local PR-gate evidence to runtime checkpoint items."""
+"""Load and bind local PR-gate evidence to runtime checkpoint items.
+
+Motivating incident: GH-208 / PR #210 review found that trusted tier evidence
+could be reused after a PR base retarget or rewrite while the head stayed
+unchanged. This module intercepts that drift by requiring tier-authorized
+runtime items to copy the current allowed PR-gate tier evidence, including its
+base-bound diff identity, exactly.
+"""
 
 from __future__ import annotations
 
@@ -55,11 +62,16 @@ def validate_pr_gate_artifact(
         isinstance(authorization, dict)
         and authorization.get("basis") == FASTLANE_SELF_REVIEW_BASIS
     )
+    tier_authorized = raw_item.get("authorization_tier") == "standard_auto"
     path = resolve_local_evidence_path(evidence)
     if path is None:
-        if raw_item.get("enforcement_sensitive") is True or fastlane_self_review:
+        if (
+            raw_item.get("enforcement_sensitive") is True
+            or fastlane_self_review
+            or tier_authorized
+        ):
             errors.append(
-                f"{label}: sensitive or fastlane self-review item requires "
+                f"{label}: sensitive or tier-authorized item requires "
                 "local machine-readable pr_gate evidence"
             )
         return None
@@ -101,16 +113,14 @@ def validate_pr_gate_artifact(
                     f"{label}: runtime item must copy current pr_gate {key} exactly"
                 )
 
-    if fastlane_self_review:
-        for key in [
-            "review_source",
-            "pr_tier",
-            "pr_tier_evidence",
-            "enforcement_sensitive",
-        ]:
+    if fastlane_self_review or tier_authorized:
+        tier_keys = ["pr_tier", "pr_tier_evidence", "enforcement_sensitive"]
+        if fastlane_self_review:
+            tier_keys.insert(0, "review_source")
+        for key in tier_keys:
             if key not in raw_item or raw_item.get(key) != result.get(key):
                 errors.append(
-                    f"{label}: fastlane runtime item must copy current pr_gate "
+                    f"{label}: tier-authorized runtime item must copy current pr_gate "
                     f"{key} exactly"
                 )
     elif raw_item.get("enforcement_sensitive") is True and result.get(

@@ -19,11 +19,15 @@ LINE_CAPS = {
 }
 DEFAULT_SKILL_LINE_CAP = 200
 
-# Files read before any work starts on the single-issue short circuit.
+# Complete bootstrap set read before selecting the single-issue phase.
+# Implementation, review/threads, and PR-gate contracts load at phase entry.
 FASTLANE_READ_SET = (
+    "AGENTS.md",
+    "AGENT_USAGE.md",
+    "workflow.yaml",
+    "states.yaml",
+    "labels.yaml",
     "skills/implx/SKILL.md",
-    "skills/specrail-implement/SKILL.md",
-    "skills/specrail-pr-gate/SKILL.md",
 )
 FASTLANE_BYTE_BUDGET = 30 * 1024
 

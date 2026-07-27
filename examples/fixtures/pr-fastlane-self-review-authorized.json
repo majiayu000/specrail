@@ -11,6 +11,8 @@
   "gate_query_head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
   "gate_started_at": "2026-07-03T23:59:00Z",
   "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "base_ref": "main",
+  "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "human_authorization": {
     "actor": "maintainer",
     "source": "chat",
@@ -25,6 +27,8 @@
   "pr_tier_evidence": {
     "changed_lines": 12,
     "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+    "base_ref": "main",
+    "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "paths_sha256": "2a03c7922500347660df4b25d304de239d7c8ce7546a5ae8edf7527d166f9594",
     "source": "github_changed_files",
     "touched_paths": [

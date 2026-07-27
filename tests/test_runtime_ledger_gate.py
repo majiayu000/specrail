@@ -110,6 +110,8 @@ def _fastlane_self_review_checkpoint() -> dict[str, object]:
         "touched_paths": touched_paths,
         "source": "github_changed_files",
         "head_sha": item["head_sha"],
+        "base_ref": "main",
+        "base_sha": "b" * 40,
         "paths_sha256": hashlib.sha256(
             json.dumps(touched_paths, separators=(",", ":")).encode("utf-8")
         ).hexdigest(),
@@ -193,6 +195,9 @@ def test_runtime_ledger_gate_blocks_fastlane_self_review_over_line_limit() -> No
     [
         "schemas/pr_review_gate.schema.json",
         ".github/workflows/ci.yml",
+        "src/auth.py",
+        "src/security.py",
+        "src/gate.py",
     ],
 )
 def test_runtime_ledger_gate_blocks_fastlane_self_review_on_protected_path(
@@ -224,6 +229,19 @@ def test_runtime_ledger_gate_blocks_fastlane_self_review_with_stale_tier_head() 
 def test_runtime_ledger_gate_blocks_fastlane_tier_drift_from_pr_gate() -> None:
     checkpoint = _fastlane_self_review_checkpoint()
     checkpoint["items"][0]["pr_tier_evidence"]["changed_lines"] = 11
+
+    result = evaluate_checkpoint(checkpoint)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "must copy current pr_gate pr_tier_evidence exactly" in error
+        for error in result["errors"]
+    )
+
+
+def test_runtime_ledger_gate_blocks_fastlane_base_drift_from_pr_gate() -> None:
+    checkpoint = _fastlane_self_review_checkpoint()
+    checkpoint["items"][0]["pr_tier_evidence"]["base_sha"] = "0" * 40
 
     result = evaluate_checkpoint(checkpoint)
 

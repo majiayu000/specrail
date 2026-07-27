@@ -427,6 +427,8 @@ def test_pr_gate_blocks_authorized_self_review_without_lane_failure() -> None:
 def _fastlane_self_review_evidence() -> dict[str, object]:
     evidence = fixture("pr-self-review-unauthorized.json")
     touched_paths = ["docs/notes.md"]
+    evidence["base_ref"] = "main"
+    evidence["base_sha"] = "b" * 40
     evidence["lane_failures"] = []
     evidence["self_review_authorization"] = {
         "actor": "coordinator",
@@ -444,6 +446,8 @@ def _fastlane_self_review_evidence() -> dict[str, object]:
         "touched_paths": touched_paths,
         "source": "github_changed_files",
         "head_sha": evidence["head_sha"],
+        "base_ref": evidence["base_ref"],
+        "base_sha": evidence["base_sha"],
         "paths_sha256": hashlib.sha256(
             json.dumps(touched_paths, separators=(",", ":")).encode("utf-8")
         ).hexdigest(),
@@ -467,6 +471,8 @@ def test_pr_gate_allows_trusted_fastlane_self_review_without_lane_failure() -> N
         ("too_large", "changed_lines must be at most 50"),
         ("protected", "protected path"),
         ("stale_head", "head_sha must match"),
+        ("stale_base_ref", "base_ref must match"),
+        ("stale_base_sha", "base_sha must match"),
     ],
 )
 def test_pr_gate_blocks_untrusted_fastlane_self_review(
@@ -484,8 +490,12 @@ def test_pr_gate_blocks_untrusted_fastlane_self_review(
         tier_evidence["paths_sha256"] = hashlib.sha256(
             b'["checks/pr_gate.py"]'
         ).hexdigest()
-    else:
+    elif mutation == "stale_head":
         tier_evidence["head_sha"] = "0" * 40
+    elif mutation == "stale_base_ref":
+        tier_evidence["base_ref"] = "release"
+    else:
+        tier_evidence["base_sha"] = "0" * 40
 
     result = evaluate_pr_gate(evidence)
 
@@ -702,11 +712,21 @@ def test_pr_gate_allowed_result_has_empty_rejection_items() -> None:
 
 def _tier_evidence() -> dict[str, object]:
     evidence = fixture("pr-missing-human-auth.json")
+    touched_paths = ["checks/example.py", "tests/test_example.py"]
+    evidence["base_ref"] = "main"
+    evidence["base_sha"] = "b" * 40
     evidence["authorization_tier"] = "standard_auto"
     evidence["pr_tier"] = "standard"
     evidence["pr_tier_evidence"] = {
         "changed_lines": 42,
-        "touched_paths": ["checks/example.py", "tests/test_example.py"],
+        "touched_paths": touched_paths,
+        "source": "github_changed_files",
+        "head_sha": evidence["head_sha"],
+        "base_ref": evidence["base_ref"],
+        "base_sha": evidence["base_sha"],
+        "paths_sha256": hashlib.sha256(
+            json.dumps(touched_paths, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
     }
     # GH-143 P1 fix: standard_auto additionally requires a reference to
     # independent substantiation (the fixture's review_evidence is
@@ -724,6 +744,20 @@ def test_pr_gate_tier_scoped_authorization_allowed() -> None:
         for item in result["satisfied"]
     )
     assert "human_authorization" not in result["missing"]
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("base_ref", "release"),
+    ("base_sha", "0" * 40),
+])
+def test_pr_gate_blocks_tier_evidence_base_drift(field: str, value: str) -> None:
+    evidence = _tier_evidence()
+    evidence["pr_tier_evidence"][field] = value
+
+    result = evaluate_pr_gate(evidence)
+
+    assert result["decision"] == "blocked"
+    assert any(f"{field} must match" in reason for reason in result["reasons"])
 
 
 def test_pr_gate_tier_authorization_heavy_needs_human() -> None:

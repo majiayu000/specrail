@@ -244,6 +244,13 @@ def test_runtime_v1_allows_all_existing_gh143_item_fields(tmp_path: Path) -> Non
             "pr_tier_evidence": {
                 "changed_lines": 42,
                 "touched_paths": ["checks/runtime_gate_rules.py"],
+                "source": "github_changed_files",
+                "head_sha": CURRENT_HEAD,
+                "base_ref": "main",
+                "base_sha": "e" * 40,
+                "paths_sha256": hashlib.sha256(
+                    b'["checks/runtime_gate_rules.py"]'
+                ).hexdigest(),
             },
             "authorization_tier": "heavy_manual",
             "ci_tier_check": {"evidence": str(ci_tier_path)},

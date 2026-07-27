@@ -469,6 +469,8 @@ def _self_review_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], 
             fastlane_tier_evidence_errors(
                 evidence.get("pr_tier_evidence"),
                 expected_head_sha=evidence.get("head_sha"),
+                expected_base_ref=evidence.get("base_ref"),
+                expected_base_sha=evidence.get("base_sha"),
             )
         )
         if not reasons and not missing:

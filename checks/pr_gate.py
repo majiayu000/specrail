@@ -33,6 +33,7 @@ from runtime_tier_authorization import (
     AUTHORIZATION_TIERS,
     STANDARD_AUTO_TIERS,
     _valid_pr_tier_evidence,
+    pr_tier_evidence_identity_errors,
 )
 from sensitive_enforcement import (
     evaluate_sensitive_evidence_with_items,
@@ -350,9 +351,22 @@ def _authorization_item(
     if tier == "standard_auto":
         pr_tier = evidence.get("pr_tier")
         substantiation = _tier_substantiation_reference(evidence)
+        tier_value = evidence.get("pr_tier_evidence")
+        tier_errors = (
+            pr_tier_evidence_identity_errors(
+                tier_value,
+                expected_head_sha=evidence.get("head_sha"),
+                expected_base_ref=evidence.get("base_ref"),
+                expected_base_sha=evidence.get("base_sha"),
+            )
+            if tier_value is not None
+            else []
+        )
+        reasons.extend(tier_errors)
         if (
             pr_tier in STANDARD_AUTO_TIERS
             and _valid_pr_tier_evidence(evidence.get("pr_tier_evidence"))
+            and not tier_errors
             and not enforcement_sensitive
             and substantiation is not None
         ):

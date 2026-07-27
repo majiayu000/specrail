@@ -10,9 +10,9 @@ route to `skills/specrail-implement/SKILL.md` instead.
 
 ## Startup
 
-1. SpecRail startup: read `AGENTS.md`, `AGENT_USAGE.md`, `workflow.yaml`,
-   `states.yaml`, `labels.yaml`, `skills/specrail-workflow/SKILL.md` when
-   present; select the locale; identify the `implement` route and human gates.
+1. Startup: read `AGENTS.md`, `AGENT_USAGE.md`, `workflow.yaml`, `states.yaml`,
+   `labels.yaml`, delegating `implx`, this file, `templates/queue_plan.yaml`;
+   select locale/human gates. Load `skills/specrail-workflow/SKILL.md` only if the `implement` route is ambiguous.
 2. Fetch remote state; list open issues/PRs, local branch, dirty files,
    worktrees. Exclude items carrying a `QUEUE_SKIP_LABELS` label (default:
    `parked`), open PRs whose linked issue carries one, and draft PRs; report

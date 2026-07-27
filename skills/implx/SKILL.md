@@ -1,36 +1,35 @@
 ---
 name: implx
-description: "Use when the user says \"implx\", \"use implx\", \"用 implx\", or asks for the one-line SpecRail queue shortcut. Plain implx means drain the full actionable issue/PR queue in review mode: run SpecRail preflight, create missing spec/task PR work before implementation, use threads for reviewer/merge-reviewer lanes when available, create per-issue implementation PRs, require CI/reviewThreads/pr_gate evidence, preserve per-PR human merge authorization, and perform closure audit. Say \"implx auto\" / \"implx 自动\" for the explicit auto mode that treats the invocation as standing merge authorization for this run."
+description: "Use only for explicit implx requests. Plain implx drains the actionable issue/PR queue in review mode with SpecRail gates and per-PR human merge authorization. `implx auto` is the explicit run-scoped auto mode."
 ---
 
 # Implx
 
-Short operational entrypoint: recognize the `implx` shorthand, record the
-queue mode, run the minimum startup checks, and delegate execution policy
-to the focused SpecRail skills. The authoritative queue contract lives in
-`skills/specrail-implement-queue/SKILL.md`; do not duplicate it here.
+Recognize the shorthand, record mode, run the bounded startup, then delegate
+to focused SpecRail skills. Queue policy lives in
+`skills/specrail-implement-queue/SKILL.md`.
 
 ## Tiered Read Set
 
-Load only what the selected route needs:
-- Single-issue short circuit: at most three skill files — this file,
-  `skills/specrail-implement/SKILL.md`, `skills/specrail-pr-gate/SKILL.md` —
-  plus the repo config files in Startup. Do not load the queue skill,
-  threads integration, or review-lane contracts for one scoped issue.
-- Queue work (`bounded_tranche`/`full_queue_drain`): startup set is the
-  repo config files, this file, `skills/specrail-implement-queue/SKILL.md`,
-  and `templates/queue_plan.yaml`. Load lazily per phase:
-  `skills/specrail-review-pr/SKILL.md` before the first review,
-  `integrations/threads.md` when dispatching native lanes,
-  `skills/specrail-implement/SKILL.md` + `skills/specrail-pr-gate/SKILL.md`
-  per issue slice, and `skills/specrail-workflow/SKILL.md` only on route
-  ambiguity (implx already fixes the route).
+The measured bootstrap set is `AGENTS.md`, `AGENT_USAGE.md`, `workflow.yaml`,
+`states.yaml`, `labels.yaml`, and this file. Do not call phase-loaded files
+startup evidence.
+
+Single-issue shortcut: after qualification load
+`skills/specrail-implement/SKILL.md`; on entering review load the canonical
+`skills/specrail-review-pr/SKILL.md` and, when native review dispatch applies,
+`integrations/threads.md`; before PR evidence/gating load
+`skills/specrail-pr-gate/SKILL.md`. The queue skill stays excluded.
+
+Queue startup adds `skills/specrail-implement-queue/SKILL.md` and
+`templates/queue_plan.yaml`. Load review, threads, implement, and PR-gate
+contracts only at their phases; load `skills/specrail-workflow/SKILL.md` only
+for route ambiguity.
 
 ## Startup And Queue Mode
 
-1. Read the repository `AGENTS.md`, plus `AGENT_USAGE.md`, `workflow.yaml`,
-   `states.yaml`, `labels.yaml` when present; select the human-facing
-   locale; identify human gates and route-gate requirements.
+1. From the bootstrap config select locale, human gates, and route-gate
+   requirements.
 2. Fetch current remote state before mapping a GitHub queue; list open
    issues, open PRs, current branch, dirty files, worktrees; map existing
    PRs before creating replacement PRs.
@@ -48,8 +47,8 @@ budget. Still map existing PRs, collect duplicate-work evidence, pass the
 `implement` route, verify against the packet, produce and validate an
 exact-head local review artifact/manifest, collect current PR evidence with
 `--review-manifest`, and run the serial PR gate plus applicable merge
-authorization, via `skills/specrail-implement/SKILL.md` and
-`skills/specrail-pr-gate/SKILL.md`. `exception_allowed` is not a complete
+  authorization through the phase-loaded implement, review/threads, and
+  PR-gate contracts. `exception_allowed` is not a complete
 packet and never qualifies. Fall back to the queue skill on multi-issue
 coupling, ownership conflict, heavy risk, packet/head drift, or any
 missing qualification.
@@ -114,9 +113,8 @@ weakens the Bounded Tranche Hard Stop, reviewer-lane, or self-review rules:
 
 ## Review Contract And Threads
 
-The canonical bounded review contract (`manifest.version: 2`,
-`bounded_diff_v1`) lives in `skills/specrail-review-pr/SKILL.md`;
-do not copy it here — load that Skill before any review lane.
+The canonical `manifest.version: 2` / `bounded_diff_v1` contract lives in
+`skills/specrail-review-pr/SKILL.md`; do not copy it here; load it at review entry.
 
 For GitHub queues, reviewer lanes, merge gates, and closure audit make
 native thread dispatch required whenever native subagent capability is

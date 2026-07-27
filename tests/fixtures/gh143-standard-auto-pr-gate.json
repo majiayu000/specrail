@@ -1,0 +1,19 @@
+{
+  "decision": "allowed",
+  "pr": 718,
+  "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+  "pr_tier": "standard",
+  "pr_tier_evidence": {
+    "changed_lines": 42,
+    "touched_paths": [
+      "checks/example.py",
+      "tests/test_example.py"
+    ],
+    "source": "github_changed_files",
+    "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+    "base_ref": "main",
+    "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "paths_sha256": "48af4e7c366698ace675551dc12c43e918c7fb69cb4b753844a90cdf2d53125e"
+  },
+  "enforcement_sensitive": false
+}

@@ -152,11 +152,15 @@ def test_build_evidence_derives_trusted_fastlane_tier_from_snapshot() -> None:
 
     assert evidence["pr_tier"] == "fastlane"
     assert evidence["enforcement_sensitive"] is False
+    assert evidence["base_ref"] == "main"
+    assert evidence["base_sha"] == base_sha()
     assert evidence["pr_tier_evidence"] == {
         "changed_lines": 12,
         "touched_paths": ["docs/notes.md"],
         "source": "github_changed_files",
         "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "base_ref": "main",
+        "base_sha": base_sha(),
         "paths_sha256": snapshot["paths_sha256"],
     }
 
