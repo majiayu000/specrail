@@ -14,6 +14,8 @@ guard. Two responsibilities:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from runtime_tier_authorization import (
@@ -168,3 +170,50 @@ def apply_independent_lane_tier(
     evidence["tier_attestation_ref"] = attestation["artifact_path"]
     evidence["base_ref"] = pr_snapshot.get("base_ref")
     evidence["base_sha"] = pr_snapshot.get("base_sha")
+
+
+def manifest_may_carry_tier_attestation(repo: Any, manifest_path: Any) -> bool:
+    """Cheap, unvalidated pre-scan: does this review manifest reference any
+    artifact carrying a `tier_attestation`?
+
+    The collector must decide whether to fetch the PR file snapshot *before*
+    the manifest is authoritatively loaded. Forcing the snapshot for every
+    manifest breaks stacked PRs, whose base differs from the default branch and
+    which `collect_pr_file_snapshot` therefore rejects. This read only gates
+    that decision — the authoritative validation still happens in
+    `load_review_manifest`. Any parse or IO problem errs toward True so a real
+    attestation is never missed on the strength of a failed guess.
+    """
+
+    if not isinstance(manifest_path, str) or not manifest_path.strip():
+        return False
+    root = Path(repo) if repo is not None else Path(".")
+    try:
+        manifest = json.loads((root / manifest_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    if not isinstance(manifest, dict):
+        return True
+    lanes = manifest.get("lanes")
+    if not isinstance(lanes, list):
+        return True
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            return True
+        paths = lane.get("artifact_paths")
+        if not isinstance(paths, list):
+            return True
+        for artifact_path in paths:
+            if not isinstance(artifact_path, str):
+                return True
+            try:
+                artifact = json.loads(
+                    (root / artifact_path).read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                return True
+            if not isinstance(artifact, dict):
+                return True
+            if artifact.get("tier_attestation") is not None:
+                return True
+    return False

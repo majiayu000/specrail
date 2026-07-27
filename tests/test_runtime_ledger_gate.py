@@ -21,6 +21,7 @@ from runtime_ledger_gate import (  # noqa: E402
 )
 from specrail_lib import (  # noqa: E402
     RUNTIME_ONLY_STATE,
+    load_pack,
     RUNTIME_STATE_MAPPING,
     SPEC_STATUSES,
     load_yaml_file,
@@ -131,7 +132,9 @@ def _fastlane_self_review_checkpoint() -> dict[str, object]:
 
 
 def test_runtime_ledger_gate_allows_fastlane_self_review_without_lane_failures() -> None:
-    result = evaluate_checkpoint(_fastlane_self_review_checkpoint())
+    result = evaluate_checkpoint(
+        _fastlane_self_review_checkpoint(), repo=ROOT, config=load_pack(ROOT)
+    )
 
     assert result["decision"] == "allowed"
     assert result["errors"] == []
@@ -232,7 +235,7 @@ def test_runtime_ledger_gate_blocks_fastlane_tier_drift_from_pr_gate() -> None:
     checkpoint = _fastlane_self_review_checkpoint()
     checkpoint["items"][0]["pr_tier_evidence"]["changed_lines"] = 11
 
-    result = evaluate_checkpoint(checkpoint)
+    result = evaluate_checkpoint(checkpoint, repo=ROOT, config=load_pack(ROOT))
 
     assert result["decision"] == "blocked"
     assert any(
@@ -245,7 +248,7 @@ def test_runtime_ledger_gate_blocks_fastlane_base_drift_from_pr_gate() -> None:
     checkpoint = _fastlane_self_review_checkpoint()
     checkpoint["items"][0]["pr_tier_evidence"]["base_sha"] = "0" * 40
 
-    result = evaluate_checkpoint(checkpoint)
+    result = evaluate_checkpoint(checkpoint, repo=ROOT, config=load_pack(ROOT))
 
     assert result["decision"] == "blocked"
     assert any(

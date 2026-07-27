@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 from runtime_ledger_test_support import ROOT, clean_checkpoint  # noqa: E402
-from runtime_ledger_gate import evaluate_checkpoint  # noqa: E402
+from runtime_ledger_gate import evaluate_checkpoint
+from specrail_lib import load_pack  # noqa: E402
 
 
 # --- GH-143: tiered merge authorization ---
@@ -104,7 +105,7 @@ def _standard_auto_checkpoint(
 def test_standard_auto_merge_ready_allowed(tmp_path: Path) -> None:
     checkpoint = _standard_auto_checkpoint(tmp_path)
 
-    result = evaluate_checkpoint(checkpoint)
+    result = evaluate_checkpoint(checkpoint, repo=ROOT, config=load_pack(ROOT))
 
     assert result["decision"] == "allowed"
     assert result["errors"] == []
@@ -124,7 +125,7 @@ def test_standard_auto_allowed_via_ci_tier_check_artifact(tmp_path: Path) -> Non
     )
     item["ci_tier_check"] = {"evidence": str(ci_path)}
 
-    result = evaluate_checkpoint(checkpoint)
+    result = evaluate_checkpoint(checkpoint, repo=ROOT, config=load_pack(ROOT))
 
     assert result["decision"] == "allowed"
     assert result["errors"] == []

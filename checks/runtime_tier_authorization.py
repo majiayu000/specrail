@@ -71,7 +71,10 @@ def _valid_pr_tier_evidence(value: Any) -> bool:
 
 
 PROTECTED_PATH_PREFIXES = (
+    ".buildkite/",
+    ".circleci/",
     ".github/",
+    ".gitlab/",
     "checks/",
     "integrations/",
     "migrations/",
@@ -87,12 +90,23 @@ PROTECTED_PATH_PREFIXES = (
 PROTECTED_CONTRACT_FILES = {
     "agent_usage.md",
     "agents.md",
+    "azure-pipelines.yaml",
+    "azure-pipelines.yml",
     "claude.md",
+    "jenkinsfile",
     "labels.yaml",
+    "openapi.json",
+    "openapi.yaml",
+    "openapi.yml",
     "skills-lock.json",
     "spec.md",
     "states.yaml",
+    "swagger.json",
+    "swagger.yaml",
+    "swagger.yml",
     "workflow.yaml",
+    ".gitlab-ci.yml",
+    ".gitlab-ci.yaml",
 }
 # Mirrors the enforcement-sensitive surfaces named in
 # skills/implx/SKILL.md:72-74: gate code, enforcement, contracts, authorization

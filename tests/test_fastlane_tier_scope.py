@@ -17,13 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from pr_gate_test_support import CHECKS  # noqa: F401  (adds checks/ to sys.path)
+from pr_gate_test_support import CHECKS, ROOT  # noqa: F401  (adds checks/ to sys.path)
 from github_tier_evidence import (
     TierEvidenceError,
     adapter_tier_evidence,
     trusted_tier_attestation,
 )
 from runtime_pr_gate_evidence import validate_pr_gate_artifact
+from specrail_lib import load_pack
 from runtime_tier_authorization import (
     _fastlane_protected_path,
     fastlane_tier_evidence_errors,
@@ -149,11 +150,33 @@ def test_recorded_decision_is_rejected_for_tier_authorized_items(
     errors: list[str] = []
 
     result = validate_pr_gate_artifact(
-        raw_item, str(gate_path), "item #1", errors, None, None
+        raw_item, str(gate_path), "item #1", errors, ROOT, load_pack(ROOT)
     )
 
     assert result is None
     assert any("requires raw pr_gate evidence" in error for error in errors)
+
+
+def test_tier_authorized_item_without_repository_context_fails_closed(
+    tmp_path: Path,
+) -> None:
+    # Without repo/config the re-evaluation would silently use the config-less
+    # classification, which is the drift this check exists to catch.
+    gate_path = tmp_path / "pr-gate.json"
+    gate_path.write_text(json.dumps({"pr": 718, "head_sha": HEAD}), encoding="utf-8")
+    errors: list[str] = []
+
+    result = validate_pr_gate_artifact(
+        {"pr": 718, "head_sha": HEAD, "authorization_tier": "standard_auto"},
+        str(gate_path),
+        "item #1",
+        errors,
+        None,
+        None,
+    )
+
+    assert result is None
+    assert any("requires repository context" in error for error in errors)
 
 
 def test_recorded_decision_still_accepted_for_untiered_items(

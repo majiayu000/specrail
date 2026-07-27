@@ -289,7 +289,7 @@ ledger-gate evaluation point), and tranche end (compaction, handoff, close,
 or next-tranche selection). Between them, update only on material change
 (new PR, lane failure, budget event). Shape:
 `templates/tranche_checkpoint.md`; validate with
-`python3 checks/runtime_ledger_gate.py --checkpoint
+`python3 checks/runtime_ledger_gate.py --repo . --checkpoint
 .specrail/runtime/current.json`. The checkpoint is a local handoff layer;
 GitHub and spec packets are the durable truth. For `full_queue_drain`,
 record the overall objective, spec coverage, current tranche, completed

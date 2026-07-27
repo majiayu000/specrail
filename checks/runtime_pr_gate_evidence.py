@@ -84,6 +84,16 @@ def validate_pr_gate_artifact(
     # classification inputs, so tier-authorized items must supply raw evidence
     # and be re-evaluated against the current repository configuration.
     tier_trusted = fastlane_self_review or tier_authorized
+    # Re-evaluation is only meaningful against a loaded sensitive-path registry.
+    # Without repo/config the classification would silently be the config-less
+    # one, which is exactly the drift this check exists to catch.
+    if tier_trusted and (repo is None or config is None):
+        errors.append(
+            f"{label}: tier-authorized item requires repository context "
+            "(pass --repo) so pr_gate evidence is re-evaluated against the "
+            "current sensitive-path registry"
+        )
+        return None
     if "decision" in payload:
         if tier_trusted:
             errors.append(

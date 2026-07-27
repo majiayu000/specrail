@@ -55,6 +55,7 @@ from github_tier_evidence import (
     TierEvidenceError,
     adapter_tier_evidence,
     apply_independent_lane_tier,
+    manifest_may_carry_tier_attestation,
 )
 from runtime_tier_authorization import (
     FASTLANE_SELF_REVIEW_BASIS,
@@ -496,11 +497,11 @@ def collect_evidence(
         isinstance(self_review_authorization, dict)
         and self_review_authorization.get("basis") == FASTLANE_SELF_REVIEW_BASIS
     )
-    if binding_enabled or fastlane_self_review or review_manifest is not None or (
+    if binding_enabled or fastlane_self_review or (
         repo is not None and config is not None
         and (enforcement_declaration(pr_payload_before.get("body")) is not None
              or any(sensitive_registry(config).values()))
-    ):
+    ) or manifest_may_carry_tier_attestation(repo, review_manifest):
         file_snapshot_before = collect_pr_file_snapshot(
             owner, name, pr_number, run_gh_json, run_gh_json)
         if file_snapshot_before["head_sha"] != head_sha_before:
