@@ -107,6 +107,7 @@ def _fastlane_self_review_checkpoint() -> dict[str, object]:
     touched_paths = ["docs/notes.md"]
     item["pr_tier_evidence"] = {
         "changed_lines": 12,
+        "changed_lines_countable": True,
         "changed_files": 1,
         "touched_paths": touched_paths,
         "source": "github_changed_files",

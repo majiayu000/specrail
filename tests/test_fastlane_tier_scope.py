@@ -37,6 +37,7 @@ def _tier_evidence(paths: list[str], *, changed_files: int) -> dict[str, object]
     normalized = sorted(paths)
     return {
         "changed_lines": 10,
+        "changed_lines_countable": True,
         "changed_files": changed_files,
         "touched_paths": normalized,
         "source": "github_changed_files",
@@ -248,6 +249,30 @@ def test_contract_and_enforcement_tokens_are_protected(path: str) -> None:
     assert _fastlane_protected_path(path) is True
 
 
+@pytest.mark.parametrize("path", ["AGENT_USAGE.md", "labels.yaml", "SPEC.md"])
+def test_bootstrap_contracts_are_protected(path: str) -> None:
+    # These root files define the agent operating contract and workflow
+    # labels; an empty consumer registry must not leave them fastlane-eligible.
+    assert _fastlane_protected_path(path) is True
+
+
+def test_uncountable_diff_is_rejected() -> None:
+    # A binary change reports zero additions and deletions, so an arbitrarily
+    # large one would otherwise satisfy the 50-line bound unmeasured.
+    evidence = _tier_evidence(["assets/logo.png"], changed_files=1)
+    evidence["changed_lines"] = 0
+    evidence["changed_lines_countable"] = False
+
+    assert any("countable textual diff" in error for error in _errors(evidence))
+
+
+def test_missing_countability_flag_fails_closed() -> None:
+    evidence = _tier_evidence(["docs/notes.md"], changed_files=1)
+    evidence.pop("changed_lines_countable")
+
+    assert any("countable textual diff" in error for error in _errors(evidence))
+
+
 def test_disagreeing_lanes_fail_closed() -> None:
     manifest = {
         "review_source": "independent_lane",
@@ -283,6 +308,7 @@ def test_adapter_tier_evidence_uses_github_file_count_not_path_count() -> None:
         "base_ref": "main",
         "base_sha": BASE,
         "changed_lines": 10,
+        "changed_lines_countable": True,
         "file_count": 1,
         "paths": ["docs/new.md", "docs/old.md"],
         "paths_sha256": "0" * 64,

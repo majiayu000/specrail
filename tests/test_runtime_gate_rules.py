@@ -243,6 +243,7 @@ def test_runtime_v1_allows_all_existing_gh143_item_fields(tmp_path: Path) -> Non
             "pr_tier": "heavy",
             "pr_tier_evidence": {
                 "changed_lines": 42,
+                "changed_lines_countable": True,
                 "changed_files": 1,
                 "touched_paths": ["checks/runtime_gate_rules.py"],
                 "source": "github_changed_files",

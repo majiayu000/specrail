@@ -97,6 +97,7 @@ def collect_pr_file_snapshot(
     identity: tuple[str, str, str, str, str] | None = None
     expected_count: int | None = None
     changed_lines: int | None = None
+    uncountable_paths: list[str] = []
     paths: list[str] = []
     seen_cursors: set[str] = set()
 
@@ -198,6 +199,17 @@ def collect_pr_file_snapshot(
             item = json_object(raw, f"pull files[{index}]")
             filename = _string(item.get("filename"), f"pull files[{index}].filename")
             rest_current.add(filename)
+            # A binary or otherwise non-textual change carries no patch and
+            # reports zero additions/deletions, so changed_lines would silently
+            # measure it as 0. Record it so size-bounded tiers fail closed
+            # instead of accepting an unmeasured change. A pure rename also has
+            # no patch, but genuinely changes no lines.
+            if item.get("patch") is None and not (
+                item.get("status") == "renamed" and _count(
+                    item.get("changes"), f"pull files[{index}].changes"
+                ) == 0
+            ):
+                uncountable_paths.append(filename)
             changed_lines += _count(
                 item.get("additions"), f"pull files[{index}].additions"
             )
@@ -232,6 +244,8 @@ def collect_pr_file_snapshot(
     }
     if changed_lines is not None:
         result["changed_lines"] = changed_lines
+        result["changed_lines_countable"] = not uncountable_paths
+        result["uncountable_paths"] = sorted(uncountable_paths)
     return result
 
 

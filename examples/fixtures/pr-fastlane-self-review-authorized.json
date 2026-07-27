@@ -26,6 +26,7 @@
   "pr_tier": "fastlane",
   "pr_tier_evidence": {
     "changed_lines": 12,
+    "changed_lines_countable": true,
     "changed_files": 1,
     "head_sha": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
     "base_ref": "main",

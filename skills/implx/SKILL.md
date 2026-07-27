@@ -1,6 +1,6 @@
 ---
 name: implx
-description: "Use only for explicit implx requests. Plain implx drains the actionable issue/PR queue in review mode with SpecRail gates and per-PR human merge authorization. `implx auto` is the explicit run-scoped auto mode."
+description: "Use only for explicit implx requests. Plain implx drains the actionable issue/PR queue in review mode with SpecRail gates and GH-143 tiered merge authorization: green fastlane/standard PRs with independent tier substantiation merge as standard_auto; heavy or sensitive items keep per-PR human authorization. `implx auto` is the explicit run-scoped auto mode."
 ---
 
 # Implx

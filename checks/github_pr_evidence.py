@@ -496,7 +496,7 @@ def collect_evidence(
         isinstance(self_review_authorization, dict)
         and self_review_authorization.get("basis") == FASTLANE_SELF_REVIEW_BASIS
     )
-    if binding_enabled or fastlane_self_review or (
+    if binding_enabled or fastlane_self_review or review_manifest is not None or (
         repo is not None and config is not None
         and (enforcement_declaration(pr_payload_before.get("body")) is not None
              or any(sensitive_registry(config).values()))

@@ -144,6 +144,7 @@ def file_snapshot(
         "default_base_ref": "main",
         "default_base_sha": base_sha(),
         "file_count": len(normalized) if file_count is None else file_count,
+        "changed_lines_countable": True,
         "path_count": len(normalized),
         "paths": normalized,
         "paths_sha256": __import__("hashlib").sha256(
@@ -204,3 +205,46 @@ def snapshot_page(
             }
         }
     }
+
+
+def files_payload(paths: list[str] | None = None) -> dict[str, object]:
+    """GraphQL response for PR_FILES_QUERY, matching pr_payload() identity."""
+
+    names = sorted(paths or ["docs/notes.md"])
+    return {
+        "data": {
+            "repository": {
+                "defaultBranchRef": {
+                    "name": "main",
+                    "target": {"oid": base_sha()},
+                },
+                "pullRequest": {
+                    "headRefOid": str(pr_payload()["headRefOid"]),
+                    "baseRefName": "main",
+                    "baseRefOid": base_sha(),
+                    "changedFiles": len(names),
+                    "files": {
+                        "totalCount": len(names),
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [{"path": name} for name in names],
+                    },
+                },
+            }
+        }
+    }
+
+
+def rest_files_payload(paths: list[str] | None = None) -> list[dict[str, object]]:
+    """REST /pulls/{n}/files response with a countable textual diff."""
+
+    return [
+        {
+            "filename": name,
+            "status": "modified",
+            "additions": 6,
+            "deletions": 6,
+            "changes": 12,
+            "patch": "@@ -1,1 +1,1 @@\n-old\n+new",
+        }
+        for name in sorted(paths or ["docs/notes.md"])
+    ]

@@ -61,6 +61,7 @@
       "pr_tier": "standard",
       "pr_tier_evidence": {
         "changed_lines": 42,
+        "changed_lines_countable": true,
         "changed_files": 2,
         "touched_paths": ["checks/example.py", "tests/test_example.py"],
         "source": "github_changed_files",

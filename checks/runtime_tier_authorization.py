@@ -85,9 +85,12 @@ PROTECTED_PATH_PREFIXES = (
 # consumer repository with an empty sensitive registry must still fail closed on
 # them rather than fall through to coordinator self-review.
 PROTECTED_CONTRACT_FILES = {
+    "agent_usage.md",
     "agents.md",
     "claude.md",
+    "labels.yaml",
     "skills-lock.json",
+    "spec.md",
     "states.yaml",
     "workflow.yaml",
 }
@@ -222,6 +225,14 @@ def fastlane_tier_evidence_errors(
     # single-file PR. touched_paths cannot carry that condition because a rename
     # contributes both its previous and current path, so require the trusted
     # adapter file count instead.
+    # A binary or otherwise non-textual change reports zero additions and
+    # deletions, so an arbitrarily large one would satisfy the line bound
+    # without ever being measured.
+    if value.get("changed_lines_countable") is not True:
+        errors.append(
+            "fastlane_policy requires a countable textual diff; "
+            "pr_tier_evidence.changed_lines_countable must be true"
+        )
     changed_files = value.get("changed_files")
     if not _nonnegative_int(changed_files):
         errors.append("fastlane_policy pr_tier_evidence.changed_files is invalid")

@@ -32,10 +32,15 @@ def adapter_tier_evidence(pr_snapshot: dict[str, Any]) -> dict[str, Any]:
     `changed_files` is GitHub's own `changedFiles` count, not `len(paths)`:
     a rename contributes both its previous and current path, so the path list
     cannot carry the single-file eligibility condition.
+
+    `changed_lines_countable` is false when any file carries no textual diff
+    (a binary change reports zero additions and deletions), so a size-bounded
+    tier can fail closed instead of measuring an unmeasured change as 0.
     """
 
     return {
         "changed_lines": pr_snapshot.get("changed_lines"),
+        "changed_lines_countable": pr_snapshot.get("changed_lines_countable"),
         "changed_files": pr_snapshot.get("file_count"),
         "touched_paths": pr_snapshot.get("paths"),
         "source": FASTLANE_TIER_EVIDENCE_SOURCE,

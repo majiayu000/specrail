@@ -54,6 +54,7 @@ def _standard_auto_checkpoint(
     item["pr_tier"] = "standard"
     item["pr_tier_evidence"] = {
         "changed_lines": 42,
+        "changed_lines_countable": True,
         "changed_files": 2,
         "touched_paths": touched_paths,
         "source": "github_changed_files",
