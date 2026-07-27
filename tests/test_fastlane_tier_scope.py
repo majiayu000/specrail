@@ -218,6 +218,36 @@ def test_untrusted_attestation_fails_closed(overrides: dict[str, object]) -> Non
         trusted_tier_attestation(manifest, HEAD)
 
 
+def test_dispute_without_own_attestation_still_fails_closed() -> None:
+    # A reviewer who raises a dispute without writing their own attestation is
+    # the ordinary case. Skipping that artifact would let a second lane's
+    # attestation through.
+    manifest = {
+        "review_source": "independent_lane",
+        "artifacts": [
+            {
+                "artifact_path": "artifacts/review-1.json",
+                "head_sha": HEAD,
+                "review_source": "independent_lane",
+                "tier_dispute": True,
+            },
+            _artifact(artifact_path="artifacts/review-2.json"),
+        ],
+    }
+
+    with pytest.raises(TierEvidenceError, match="tier_dispute"):
+        trusted_tier_attestation(manifest, HEAD)
+
+
+@pytest.mark.parametrize(
+    "path", ["src/enforcement_policy.py", "src/contract_loader.py"]
+)
+def test_contract_and_enforcement_tokens_are_protected(path: str) -> None:
+    # skills/implx/SKILL.md:72-74 names enforcement and contracts as
+    # enforcement-sensitive surfaces.
+    assert _fastlane_protected_path(path) is True
+
+
 def test_disagreeing_lanes_fail_closed() -> None:
     manifest = {
         "review_source": "independent_lane",

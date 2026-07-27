@@ -91,11 +91,17 @@ PROTECTED_CONTRACT_FILES = {
     "states.yaml",
     "workflow.yaml",
 }
+# Mirrors the enforcement-sensitive surfaces named in
+# skills/implx/SKILL.md:72-74: gate code, enforcement, contracts, authorization
+# semantics, schemas/migrations, security.
 PROTECTED_TOKENS = {
     "api",
     "auth",
     "authentication",
     "authorization",
+    "contract",
+    "contracts",
+    "enforcement",
     "gate",
     "gates",
     "migration",
@@ -109,7 +115,16 @@ PROTECTED_TOKENS = {
 def _name_tokens(name: str) -> set[str]:
     """Split a path component into lowercase tokens on separator and case
     boundaries, so `auth_service.py`, `securityUtils.ts` and `auth.test.ts` all
-    expose their protected token."""
+    expose their protected token.
+
+    Known limitation: matching is boundary-based, so a name that concatenates
+    the token with no separator and no case change — `authservice.py`,
+    `apiclient.py` — is not detected. Substring matching is not a safe
+    substitute: short tokens like `api` and `gate` would also flag `capital`
+    and `delegate`. Repositories that need those names covered must list them
+    in the sensitive-path registry, which takes precedence over this fallback
+    classifier.
+    """
 
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
     return {token for token in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if token}

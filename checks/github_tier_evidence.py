@@ -62,6 +62,23 @@ def trusted_tier_attestation(
     if not isinstance(artifacts, list):
         return None
 
+    # A dispute blocks tier authorization on its own, so it must be checked
+    # before any per-artifact filtering. A reviewer that raises a dispute
+    # without writing an attestation of their own is the ordinary case, and
+    # skipping such an artifact would let a second lane's attestation through
+    # — the runtime-side check in runtime_tier_authorization.py is likewise
+    # unconditional.
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        if artifact.get("head_sha") != head_sha:
+            continue
+        if artifact.get("tier_dispute") is True:
+            raise TierEvidenceError(
+                "reviewer lane recorded tier_dispute at the current head; "
+                "tier authorization is blocked until a human resolves it"
+            )
+
     endorsements: list[dict[str, Any]] = []
     for artifact in artifacts:
         if not isinstance(artifact, dict):
@@ -71,11 +88,6 @@ def trusted_tier_attestation(
             continue
         if artifact.get("head_sha") != head_sha:
             continue
-        if artifact.get("tier_dispute") is True:
-            raise TierEvidenceError(
-                "reviewer lane recorded tier_dispute at the current head; "
-                "tier authorization is blocked until a human resolves it"
-            )
         if artifact.get("review_source") != "independent_lane":
             raise TierEvidenceError(
                 "tier_attestation is trusted only from a review artifact whose "
