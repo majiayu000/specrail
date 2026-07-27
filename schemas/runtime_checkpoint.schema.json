@@ -457,6 +457,28 @@
                 {"properties": {"sensitive_route": {"const": "spec_revision"}, "approved_spec_evidence": {"const": null}, "spec_approval_evidence": {"type": "string", "minLength": 1}}, "required": ["spec_approval_evidence"]}
               ]
             }
+          },
+          {
+            "if": {
+              "properties": {
+                "self_review_authorization": {
+                  "properties": {"basis": {"const": "fastlane_policy"}},
+                  "required": ["basis"]
+                }
+              },
+              "required": ["self_review_authorization"]
+            },
+            "then": {
+              "required": [
+                "enforcement_sensitive",
+                "pr_tier",
+                "pr_tier_evidence"
+              ],
+              "properties": {
+                "enforcement_sensitive": {"const": false},
+                "pr_tier": {"const": "fastlane"}
+              }
+            }
           }
         ],
         "properties": {

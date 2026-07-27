@@ -11,6 +11,9 @@ Every ambiguity fails closed to the heavy/critical side.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from typing import Any
 
 
@@ -18,6 +21,11 @@ from typing import Any
 TIER_POLICY_SOURCE = "tier_policy_gh143"
 # Audit anchor for self_review_authorization.basis; do not rename it.
 FASTLANE_SELF_REVIEW_BASIS = "fastlane_policy"
+FASTLANE_MAX_CHANGED_LINES = 50
+# specs/GH204 B-005: the coordinator self-review exception covers a small
+# SINGLE-file PR only.
+FASTLANE_MAX_CHANGED_FILES = 1
+FASTLANE_TIER_EVIDENCE_SOURCE = "github_changed_files"
 PR_TIERS = {"fastlane", "standard", "heavy"}
 STANDARD_AUTO_TIERS = {"fastlane", "standard"}
 AUTHORIZATION_TIERS = {"standard_auto", "heavy_manual"}
@@ -30,18 +38,256 @@ def _nonempty_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _git_oid(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"[0-9a-fA-F]{40}([0-9a-fA-F]{24})?", value) is not None
+    )
+
+
+def _nonnegative_int(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
 def _valid_pr_tier_evidence(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
-    changed_lines = value.get("changed_lines")
-    if isinstance(changed_lines, bool) or not isinstance(changed_lines, int) or changed_lines < 0:
+    if not _nonnegative_int(value.get("changed_lines")):
+        return False
+    if not _nonnegative_int(value.get("changed_files")):
         return False
     touched_paths = value.get("touched_paths")
     return (
         isinstance(touched_paths, list)
         and bool(touched_paths)
         and all(_nonempty_string(path) for path in touched_paths)
+        and value.get("source") == FASTLANE_TIER_EVIDENCE_SOURCE
+        and _git_oid(value.get("head_sha"))
+        and _nonempty_string(value.get("base_ref"))
+        and _git_oid(value.get("base_sha"))
+        and isinstance(value.get("paths_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", value["paths_sha256"]) is not None
     )
+
+
+PROTECTED_PATH_PREFIXES = (
+    ".buildkite/",
+    ".circleci/",
+    ".github/",
+    ".gitlab/",
+    "checks/",
+    "integrations/",
+    "migrations/",
+    "review/",
+    "schemas/",
+    "skills/",
+    "templates/",
+)
+# Workflow and policy contract assets. `skills/implx/SKILL.md:72-74` classifies
+# contracts and authorization semantics as enforcement-sensitive surfaces, so a
+# consumer repository with an empty sensitive registry must still fail closed on
+# them rather than fall through to coordinator self-review.
+PROTECTED_CONTRACT_FILES = {
+    "agent_usage.md",
+    "agents.md",
+    "azure-pipelines.yaml",
+    "azure-pipelines.yml",
+    "claude.md",
+    "jenkinsfile",
+    "labels.yaml",
+    "openapi.json",
+    "openapi.yaml",
+    "openapi.yml",
+    "skills-lock.json",
+    "spec.md",
+    "states.yaml",
+    "swagger.json",
+    "swagger.yaml",
+    "swagger.yml",
+    "workflow.yaml",
+    ".gitlab-ci.yml",
+    ".gitlab-ci.yaml",
+}
+# Mirrors the enforcement-sensitive surfaces named in
+# skills/implx/SKILL.md:72-74: gate code, enforcement, contracts, authorization
+# semantics, schemas/migrations, security.
+PROTECTED_TOKENS = {
+    "api",
+    "auth",
+    "authentication",
+    "authorization",
+    "contract",
+    "contracts",
+    "enforcement",
+    "gate",
+    "gates",
+    "migration",
+    "migrations",
+    "schema",
+    "schemas",
+    "security",
+}
+
+
+def _name_tokens(name: str) -> set[str]:
+    """Split a path component into lowercase tokens on separator and case
+    boundaries, so `auth_service.py`, `securityUtils.ts` and `auth.test.ts` all
+    expose their protected token.
+
+    Known limitation: matching is boundary-based, so a name that concatenates
+    the token with no separator and no case change — `authservice.py`,
+    `apiclient.py` — is not detected. Substring matching is not a safe
+    substitute: short tokens like `api` and `gate` would also flag `capital`
+    and `delegate`. Repositories that need those names covered must list them
+    in the sensitive-path registry, which takes precedence over this fallback
+    classifier.
+    """
+
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
+    return {token for token in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if token}
+
+
+def _fastlane_protected_path(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/")
+    if normalized.startswith("/") or any(
+        part in {".", ".."} for part in normalized.split("/")
+    ):
+        return True
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    parts = [part for part in normalized.split("/") if part]
+    if normalized.lower().startswith(PROTECTED_PATH_PREFIXES):
+        return True
+    if parts and parts[-1].lower() in PROTECTED_CONTRACT_FILES:
+        return True
+    if any(part.lower() in PROTECTED_TOKENS for part in parts):
+        return True
+    filename = parts[-1] if parts else ""
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return bool(_name_tokens(stem) & PROTECTED_TOKENS)
+
+
+def pr_tier_evidence_identity_errors(
+    value: Any,
+    *,
+    expected_head_sha: Any = None,
+    expected_base_ref: Any = None,
+    expected_base_sha: Any = None,
+) -> list[str]:
+    """Validate adapter provenance and the complete PR diff identity."""
+
+    if not isinstance(value, dict):
+        return ["pr_tier_evidence must be an object"]
+    errors: list[str] = []
+    if value.get("source") != FASTLANE_TIER_EVIDENCE_SOURCE:
+        errors.append(
+            "pr_tier_evidence.source must be "
+            f"{FASTLANE_TIER_EVIDENCE_SOURCE}"
+        )
+    evidence_head = value.get("head_sha")
+    if not _git_oid(evidence_head):
+        errors.append("pr_tier_evidence.head_sha is required")
+    elif _nonempty_string(expected_head_sha) and evidence_head != expected_head_sha:
+        errors.append("pr_tier_evidence.head_sha must match current head_sha")
+    evidence_base_ref = value.get("base_ref")
+    if not _nonempty_string(evidence_base_ref):
+        errors.append("pr_tier_evidence.base_ref is required")
+    elif (
+        _nonempty_string(expected_base_ref)
+        and evidence_base_ref != expected_base_ref
+    ):
+        errors.append("pr_tier_evidence.base_ref must match current base_ref")
+    evidence_base_sha = value.get("base_sha")
+    if not _git_oid(evidence_base_sha):
+        errors.append("pr_tier_evidence.base_sha is required")
+    elif _nonempty_string(expected_base_sha) and evidence_base_sha != expected_base_sha:
+        errors.append("pr_tier_evidence.base_sha must match current base_sha")
+    return errors
+
+
+def fastlane_tier_evidence_errors(
+    value: Any,
+    *,
+    expected_head_sha: Any = None,
+    expected_base_ref: Any = None,
+    expected_base_sha: Any = None,
+) -> list[str]:
+    """Validate exact-diff, adapter-derived evidence for fastlane self-review."""
+
+    if not _valid_pr_tier_evidence(value):
+        if not isinstance(value, dict):
+            return [
+                "fastlane_policy requires pr_tier_evidence with changed_lines, "
+                "touched_paths, and complete diff identity"
+            ]
+    assert isinstance(value, dict)
+    errors = pr_tier_evidence_identity_errors(
+        value,
+        expected_head_sha=expected_head_sha,
+        expected_base_ref=expected_base_ref,
+        expected_base_sha=expected_base_sha,
+    )
+    changed_lines = value.get("changed_lines")
+    if not _nonnegative_int(changed_lines):
+        errors.append("fastlane_policy pr_tier_evidence.changed_lines is invalid")
+    elif changed_lines > FASTLANE_MAX_CHANGED_LINES:
+        errors.append(
+            f"fastlane_policy changed_lines must be at most "
+            f"{FASTLANE_MAX_CHANGED_LINES}; got {changed_lines}"
+        )
+    # specs/GH204 B-005 limits the coordinator self-review exception to a small
+    # single-file PR. touched_paths cannot carry that condition because a rename
+    # contributes both its previous and current path, so require the trusted
+    # adapter file count instead.
+    # A binary or otherwise non-textual change reports zero additions and
+    # deletions, so an arbitrarily large one would satisfy the line bound
+    # without ever being measured.
+    if value.get("changed_lines_countable") is not True:
+        errors.append(
+            "fastlane_policy requires a countable textual diff; "
+            "pr_tier_evidence.changed_lines_countable must be true"
+        )
+    changed_files = value.get("changed_files")
+    if not _nonnegative_int(changed_files):
+        errors.append("fastlane_policy pr_tier_evidence.changed_files is invalid")
+    elif changed_files != FASTLANE_MAX_CHANGED_FILES:
+        errors.append(
+            f"fastlane_policy changed_files must be exactly "
+            f"{FASTLANE_MAX_CHANGED_FILES}; got {changed_files}"
+        )
+    touched_paths = value.get("touched_paths")
+    valid_paths = (
+        isinstance(touched_paths, list)
+        and bool(touched_paths)
+        and all(_nonempty_string(path) for path in touched_paths)
+    )
+    normalized_paths = (
+        sorted(str(path).strip() for path in touched_paths)
+        if valid_paths
+        else []
+    )
+    if not valid_paths:
+        errors.append("fastlane_policy pr_tier_evidence.touched_paths is invalid")
+    elif touched_paths != normalized_paths or len(set(normalized_paths)) != len(
+        normalized_paths
+    ):
+        errors.append(
+            "fastlane_policy touched_paths must be the complete sorted unique snapshot"
+        )
+    protected = [path for path in normalized_paths if _fastlane_protected_path(path)]
+    if protected:
+        errors.append(
+            "fastlane_policy cannot cover protected path(s): "
+            + ", ".join(protected)
+        )
+    expected_digest = hashlib.sha256(
+        json.dumps(normalized_paths, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if value.get("paths_sha256") != expected_digest:
+        errors.append(
+            "fastlane_policy pr_tier_evidence.paths_sha256 must bind touched_paths"
+        )
+    return errors
 
 
 def _validate_fastlane_self_review(
@@ -61,16 +307,18 @@ def _validate_fastlane_self_review(
             f"{label}: self_review_authorization.basis {FASTLANE_SELF_REVIEW_BASIS} "
             "requires pr_tier fastlane"
         )
-    if raw_item.get("enforcement_sensitive") is True:
-        errors.append(
-            f"{label}: enforcement-sensitive item cannot use "
-            f"{FASTLANE_SELF_REVIEW_BASIS} self-review"
-        )
-    if not _valid_pr_tier_evidence(raw_item.get("pr_tier_evidence")):
+    if raw_item.get("enforcement_sensitive") is not False:
         errors.append(
             f"{label}: {FASTLANE_SELF_REVIEW_BASIS} self-review requires "
-            "pr_tier_evidence with changed_lines and touched_paths"
+            "enforcement_sensitive false"
         )
+    errors.extend(
+        f"{label}: {error}"
+        for error in fastlane_tier_evidence_errors(
+            raw_item.get("pr_tier_evidence"),
+            expected_head_sha=raw_item.get("head_sha"),
+        )
+    )
     for key in ["scope", "conversation_marker"]:
         if not _nonempty_string(authorization.get(key)):
             errors.append(f"{label}: self_review_authorization.{key} is required")
@@ -159,11 +407,17 @@ def _validate_tier_authorization(
         )
         return
 
-    if not _valid_pr_tier_evidence(raw_item.get("pr_tier_evidence")):
+    tier_errors = pr_tier_evidence_identity_errors(
+        raw_item.get("pr_tier_evidence"),
+        expected_head_sha=raw_item.get("head_sha"),
+    )
+    if not _valid_pr_tier_evidence(raw_item.get("pr_tier_evidence")) or tier_errors:
+        detail = "; ".join(tier_errors)
+        suffix = f": {detail}" if detail else ""
         errors.append(
-            f"{label}: standard_auto requires pr_tier_evidence with "
-            "changed_lines and touched_paths; missing tier evidence fails "
-            "closed to heavy_manual"
+            f"{label}: standard_auto requires pr_tier_evidence derived by the "
+            f"adapter and bound to the current head and base{suffix}; missing tier evidence "
+            "fails closed to heavy_manual"
         )
 
     item_is_self_review = _item_review_source(raw_item) == "self_review"

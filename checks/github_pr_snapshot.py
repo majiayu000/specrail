@@ -96,6 +96,8 @@ def collect_pr_file_snapshot(
     cursor: str | None = None
     identity: tuple[str, str, str, str, str] | None = None
     expected_count: int | None = None
+    changed_lines: int | None = None
+    uncountable_paths: list[str] = []
     paths: list[str] = []
     seen_cursors: set[str] = set()
 
@@ -192,10 +194,28 @@ def collect_pr_file_snapshot(
                 f"pull files REST snapshot incomplete: collected {len(rest_files)} of {expected_count}"
             )
         rest_current: set[str] = set()
+        changed_lines = 0
         for index, raw in enumerate(rest_files, start=1):
             item = json_object(raw, f"pull files[{index}]")
             filename = _string(item.get("filename"), f"pull files[{index}].filename")
             rest_current.add(filename)
+            # A binary or otherwise non-textual change carries no patch and
+            # reports zero additions/deletions, so changed_lines would silently
+            # measure it as 0. Record it so size-bounded tiers fail closed
+            # instead of accepting an unmeasured change. A pure rename also has
+            # no patch, but genuinely changes no lines.
+            if item.get("patch") is None and not (
+                item.get("status") == "renamed" and _count(
+                    item.get("changes"), f"pull files[{index}].changes"
+                ) == 0
+            ):
+                uncountable_paths.append(filename)
+            changed_lines += _count(
+                item.get("additions"), f"pull files[{index}].additions"
+            )
+            changed_lines += _count(
+                item.get("deletions"), f"pull files[{index}].deletions"
+            )
             previous = item.get("previous_filename")
             if previous is not None:
                 all_paths.add(_string(previous, f"pull files[{index}].previous_filename"))
@@ -211,7 +231,7 @@ def collect_pr_file_snapshot(
         raise EvidenceError(
             "PR base must match the trusted default-branch snapshot"
         )
-    return {
+    result = {
         "head_sha": head_sha,
         "base_ref": base_ref,
         "base_sha": base_sha,
@@ -222,6 +242,11 @@ def collect_pr_file_snapshot(
         "paths": normalized_paths,
         "paths_sha256": digest,
     }
+    if changed_lines is not None:
+        result["changed_lines"] = changed_lines
+        result["changed_lines_countable"] = not uncountable_paths
+        result["uncountable_paths"] = sorted(uncountable_paths)
+    return result
 
 
 def assert_same_pr_file_snapshot(

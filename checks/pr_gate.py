@@ -33,6 +33,7 @@ from runtime_tier_authorization import (
     AUTHORIZATION_TIERS,
     STANDARD_AUTO_TIERS,
     _valid_pr_tier_evidence,
+    pr_tier_evidence_identity_errors,
 )
 from sensitive_enforcement import (
     evaluate_sensitive_evidence_with_items,
@@ -350,9 +351,22 @@ def _authorization_item(
     if tier == "standard_auto":
         pr_tier = evidence.get("pr_tier")
         substantiation = _tier_substantiation_reference(evidence)
+        tier_value = evidence.get("pr_tier_evidence")
+        tier_errors = (
+            pr_tier_evidence_identity_errors(
+                tier_value,
+                expected_head_sha=evidence.get("head_sha"),
+                expected_base_ref=evidence.get("base_ref"),
+                expected_base_sha=evidence.get("base_sha"),
+            )
+            if tier_value is not None
+            else []
+        )
+        reasons.extend(tier_errors)
         if (
             pr_tier in STANDARD_AUTO_TIERS
             and _valid_pr_tier_evidence(evidence.get("pr_tier_evidence"))
+            and not tier_errors
             and not enforcement_sensitive
             and substantiation is not None
         ):
@@ -378,6 +392,27 @@ def _authorization_item(
         [],
         reasons,
     )
+
+
+def _tier_base_identity_items(
+    evidence: dict[str, Any],
+) -> tuple[list[str], list[str], list[str]]:
+    """Bind trusted tier evidence to the current PR base snapshot."""
+
+    tier_evidence = evidence.get("pr_tier_evidence")
+    if not isinstance(tier_evidence, dict):
+        return [], [], []
+    missing: list[str] = []
+    reasons: list[str] = []
+    for field in ["base_ref", "base_sha"]:
+        current = evidence.get(field)
+        if not _non_empty_string(current):
+            missing.append(field)
+        elif current != tier_evidence.get(field):
+            reasons.append(f"{field} must match pr_tier_evidence.{field}")
+    if missing or reasons:
+        return [], missing, reasons
+    return ["trusted tier evidence matches current PR base identity"], [], []
 
 
 def evaluate_pr_gate(
@@ -482,6 +517,16 @@ def evaluate_pr_gate(
         missing_category="missing_evidence_field",
         reason_category="invalid_evidence_value",
     ))
+    tier_satisfied, tier_missing, tier_reasons = _tier_base_identity_items(evidence)
+    satisfied.extend(tier_satisfied)
+    missing.extend(tier_missing)
+    reasons.extend(tier_reasons)
+    items.extend(items_from_legacy(
+        tier_missing,
+        tier_reasons,
+        missing_category="missing_evidence_field",
+        reason_category="invalid_evidence_value",
+    ))
 
     review_satisfied, review_missing, review_reasons, review_items = (
         evaluate_review_contract_with_items(
@@ -494,10 +539,9 @@ def evaluate_pr_gate(
     reasons.extend(review_reasons)
     items.extend(review_items)
 
-    has_sensitive_evidence = any(
+    has_sensitive_evidence = evidence.get("enforcement_sensitive") is True or any(
         key in evidence
         for key in [
-            "enforcement_sensitive",
             "sensitive_classification",
             "approved_spec",
             "sensitive_route",
@@ -623,6 +667,8 @@ def evaluate_pr_gate(
         "issue_reference": evidence.get("issue_reference"),
         "head_sha": evidence.get("head_sha"),
         "review_source": evidence.get("review_source"),
+        "pr_tier": evidence.get("pr_tier"),
+        "pr_tier_evidence": evidence.get("pr_tier_evidence"),
         "gate_query_completed_at": evidence.get("gate_query_completed_at"),
         "gate_query_head_sha": evidence.get("gate_query_head_sha"),
         "content_binding_version": evidence.get("content_binding_version"),

@@ -51,6 +51,16 @@ from sensitive_enforcement import (
     sensitive_registry,
 )
 from review_result_semantics import ReviewSemanticError, load_review_manifest
+from github_tier_evidence import (
+    TierEvidenceError,
+    adapter_tier_evidence,
+    apply_independent_lane_tier,
+    manifest_may_carry_tier_attestation,
+)
+from runtime_tier_authorization import (
+    FASTLANE_SELF_REVIEW_BASIS,
+    fastlane_tier_evidence_errors,
+)
 from spec_revision_evidence import SPEC_APPROVAL_FIELDS, spec_revision_route_eligible
 from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
@@ -265,6 +275,32 @@ def build_evidence(
         evidence["issue_reference"] = issue_reference
     if content_binding is not None:
         evidence.update(validate_content_binding(content_binding))
+    fastlane_self_review = (
+        isinstance(self_review_authorization, dict)
+        and self_review_authorization.get("basis") == FASTLANE_SELF_REVIEW_BASIS
+    )
+    if fastlane_self_review:
+        if review_source != "self_review":
+            raise EvidenceError(
+                "fastlane_policy requires review_source self_review"
+            )
+        if not isinstance(pr_snapshot, dict) or pr_snapshot.get("head_sha") != head_sha:
+            raise EvidenceError(
+                "fastlane_policy requires a complete current-head PR file snapshot"
+            )
+        tier_evidence = adapter_tier_evidence(pr_snapshot)
+        tier_errors = fastlane_tier_evidence_errors(
+            tier_evidence, expected_head_sha=head_sha,
+            expected_base_ref=pr_snapshot.get("base_ref"),
+            expected_base_sha=pr_snapshot.get("base_sha"),
+        )
+        if tier_errors:
+            raise EvidenceError("; ".join(tier_errors))
+        evidence["pr_tier"] = "fastlane"
+        evidence["pr_tier_evidence"] = tier_evidence
+        evidence["enforcement_sensitive"] = False
+        evidence["base_ref"] = pr_snapshot.get("base_ref")
+        evidence["base_sha"] = pr_snapshot.get("base_sha")
     if repo is not None and config is not None:
         declaration = enforcement_declaration(pr_payload.get("body"))
         registry = sensitive_registry(config)
@@ -294,6 +330,10 @@ def build_evidence(
             if declaration is not None:
                 evidence["enforcement_sensitive"] = declaration
             if declaration is True or classification["enforcement_sensitive"]:
+                if fastlane_self_review:
+                    raise EvidenceError(
+                        "fastlane_policy cannot cover enforcement-sensitive changes"
+                    )
                 if not isinstance(repository, str) or not repository.strip():
                     raise EvidenceError(
                         "enforcement-sensitive PR requires repository identity"
@@ -377,6 +417,13 @@ def build_evidence(
         evidence["review_execution"] = derived_execution
         evidence["review_evidence"] = review_evidence
         evidence["review_completed_at"] = review_evidence.get("review_completed_at")
+        if derived_source == "independent_lane":
+            try:
+                apply_independent_lane_tier(
+                    evidence, review_evidence, pr_snapshot, head_sha
+                )
+            except TierEvidenceError as exc:
+                raise EvidenceError(str(exc)) from exc
     if content_binding is not None:
         evidence["reused_components"] = collect_reuse_audits(
             evidence["checks"], review_evidence, content_binding, head_sha
@@ -446,19 +493,24 @@ def collect_evidence(
         if reusable_ci_evidence.get("head_sha") == head_sha_before:
             raise EvidenceError("reused PR evidence must come from a previous head")
     file_snapshot_before = None
-    if binding_enabled or (
+    fastlane_self_review = (
+        isinstance(self_review_authorization, dict)
+        and self_review_authorization.get("basis") == FASTLANE_SELF_REVIEW_BASIS
+    )
+    if binding_enabled or fastlane_self_review or (
         repo is not None and config is not None
         and (enforcement_declaration(pr_payload_before.get("body")) is not None
              or any(sensitive_registry(config).values()))
-    ):
+    ) or manifest_may_carry_tier_attestation(repo, review_manifest):
         file_snapshot_before = collect_pr_file_snapshot(
             owner, name, pr_number, run_gh_json, run_gh_json)
         if file_snapshot_before["head_sha"] != head_sha_before:
             raise EvidenceError("PR view and file snapshot head SHA disagree")
-        if file_snapshot_before["base_sha"] != _require_string(
-            pr_payload_before, "baseRefOid"
+        if (file_snapshot_before["base_ref"], file_snapshot_before["base_sha"]) != (
+            _require_string(pr_payload_before, "baseRefName"),
+            _require_string(pr_payload_before, "baseRefOid"),
         ):
-            raise EvidenceError("PR view and file snapshot base SHA disagree")
+            raise EvidenceError("PR view and file snapshot base identity disagree")
     threads_payload = collect_review_threads(owner, name, pr_number)
 
     issue_payload = None
@@ -539,10 +591,13 @@ def collect_evidence(
         raise EvidenceError(
             "PR issue relation changed while collecting gate evidence; rerun PR evidence collection"
         )
-    if file_snapshot_after is not None and file_snapshot_after["base_sha"] != _require_string(
-        pr_payload_after, "baseRefOid"
+    if file_snapshot_after is not None and (
+        file_snapshot_after["base_ref"], file_snapshot_after["base_sha"]
+    ) != (
+        _require_string(pr_payload_after, "baseRefName"),
+        _require_string(pr_payload_after, "baseRefOid"),
     ):
-        raise EvidenceError("PR view and file snapshot base SHA disagree")
+        raise EvidenceError("PR view and file snapshot base identity disagree")
 
     if partial_issue_relation_before is not None:
         assert expected_issue is not None
@@ -673,6 +728,15 @@ def main() -> int:
     parser.add_argument("--self-review-authorization-source", help="Where self-review authorization was recorded")
     parser.add_argument("--self-review-authorization-scope", help="Scope of self-review authorization")
     parser.add_argument("--self-review-authorization-summary", help="Short self-review authorization summary")
+    parser.add_argument(
+        "--self-review-authorization-basis",
+        choices=[FASTLANE_SELF_REVIEW_BASIS],
+        help="Policy basis for lane-failure-free fastlane self-review",
+    )
+    parser.add_argument(
+        "--self-review-authorization-conversation-marker",
+        help="Current-conversation marker required by fastlane_policy",
+    )
     parser.add_argument("--merge-dispatched-at", help="Optional merge dispatch timestamp for audit records")
     parser.add_argument("--merge-head-sha", help="Optional merge target head SHA for audit records")
     parser.add_argument("--json", action="store_true", help="Print JSON output")
@@ -689,6 +753,8 @@ def main() -> int:
             args.self_review_authorization_source,
             args.self_review_authorization_scope,
             args.self_review_authorization_summary,
+            args.self_review_authorization_basis,
+            args.self_review_authorization_conversation_marker,
         )
         lane_failures = load_lane_failures(args.lane_failures_json)
         resolver_roles = load_resolver_role_map(args.resolver_role_map)

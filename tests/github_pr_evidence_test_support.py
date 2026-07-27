@@ -16,6 +16,7 @@ def pr_payload() -> dict[str, object]:
         "state": "OPEN",
         "isDraft": False,
         "headRefOid": "e36d97517d8d0b27faca1abe5e5c63f9f88684d9",
+        "baseRefName": "main",
         "baseRefOid": base_sha(),
         "mergeStateStatus": "CLEAN",
         "body": "Closes #9",
@@ -126,7 +127,15 @@ def base_sha() -> str:
     return "b" * 40
 
 
-def file_snapshot(paths: list[str], *, head_sha: str | None = None) -> dict[str, object]:
+def file_snapshot(
+    paths: list[str],
+    *,
+    head_sha: str | None = None,
+    file_count: int | None = None,
+) -> dict[str, object]:
+    """`file_count` defaults to the path count; pass it explicitly to model a
+    rename, where GitHub reports one changed file but two paths."""
+
     normalized = sorted(paths)
     return {
         "head_sha": head_sha or str(pr_payload()["headRefOid"]),
@@ -134,6 +143,8 @@ def file_snapshot(paths: list[str], *, head_sha: str | None = None) -> dict[str,
         "base_sha": base_sha(),
         "default_base_ref": "main",
         "default_base_sha": base_sha(),
+        "file_count": len(normalized) if file_count is None else file_count,
+        "changed_lines_countable": True,
         "path_count": len(normalized),
         "paths": normalized,
         "paths_sha256": __import__("hashlib").sha256(
@@ -194,3 +205,46 @@ def snapshot_page(
             }
         }
     }
+
+
+def files_payload(paths: list[str] | None = None) -> dict[str, object]:
+    """GraphQL response for PR_FILES_QUERY, matching pr_payload() identity."""
+
+    names = sorted(paths or ["docs/notes.md"])
+    return {
+        "data": {
+            "repository": {
+                "defaultBranchRef": {
+                    "name": "main",
+                    "target": {"oid": base_sha()},
+                },
+                "pullRequest": {
+                    "headRefOid": str(pr_payload()["headRefOid"]),
+                    "baseRefName": "main",
+                    "baseRefOid": base_sha(),
+                    "changedFiles": len(names),
+                    "files": {
+                        "totalCount": len(names),
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "nodes": [{"path": name} for name in names],
+                    },
+                },
+            }
+        }
+    }
+
+
+def rest_files_payload(paths: list[str] | None = None) -> list[dict[str, object]]:
+    """REST /pulls/{n}/files response with a countable textual diff."""
+
+    return [
+        {
+            "filename": name,
+            "status": "modified",
+            "additions": 6,
+            "deletions": 6,
+            "changes": 12,
+            "patch": "@@ -1,1 +1,1 @@\n-old\n+new",
+        }
+        for name in sorted(paths or ["docs/notes.md"])
+    ]

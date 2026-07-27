@@ -27,6 +27,17 @@
       "type": "object",
       "required": ["actor", "source", "scope"],
       "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {"required": ["basis"]},
+          "then": {
+            "required": ["conversation_marker"],
+            "properties": {
+              "basis": {"const": "fastlane_policy"}
+            }
+          }
+        }
+      ],
       "properties": {
         "actor": {
           "type": "string",
@@ -42,6 +53,13 @@
         },
         "summary": {
           "type": "string"
+        },
+        "basis": {
+          "const": "fastlane_policy"
+        },
+        "conversation_marker": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

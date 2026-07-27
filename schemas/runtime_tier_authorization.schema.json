@@ -6,14 +6,35 @@
   "additionalProperties": false,
   "properties": {
     "pr_tier": {
-      "enum": ["fastlane", "standard", "heavy"]
+      "enum": [
+        "fastlane",
+        "standard",
+        "heavy"
+      ]
     },
     "pr_tier_evidence": {
       "type": "object",
-      "required": ["changed_lines", "touched_paths"],
+      "required": [
+        "changed_lines",
+        "changed_lines_countable",
+        "changed_files",
+        "touched_paths",
+        "source",
+        "head_sha",
+        "base_ref",
+        "base_sha",
+        "paths_sha256"
+      ],
       "additionalProperties": false,
       "properties": {
         "changed_lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_lines_countable": {
+          "type": "boolean"
+        },
+        "changed_files": {
           "type": "integer",
           "minimum": 0
         },
@@ -24,15 +45,39 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "source": {
+          "const": "github_changed_files"
+        },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"
+        },
+        "base_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"
+        },
+        "paths_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     },
     "authorization_tier": {
-      "enum": ["standard_auto", "heavy_manual"]
+      "enum": [
+        "standard_auto",
+        "heavy_manual"
+      ]
     },
     "ci_tier_check": {
       "type": "object",
-      "required": ["evidence"],
+      "required": [
+        "evidence"
+      ],
       "additionalProperties": false,
       "properties": {
         "evidence": {
@@ -45,7 +90,12 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["finding_ref", "severity", "mechanical", "disposition"],
+        "required": [
+          "finding_ref",
+          "severity",
+          "mechanical",
+          "disposition"
+        ],
         "additionalProperties": false,
         "properties": {
           "finding_ref": {
@@ -53,20 +103,31 @@
             "minLength": 1
           },
           "severity": {
-            "enum": ["critical", "important", "minor", "nit"]
+            "enum": [
+              "critical",
+              "important",
+              "minor",
+              "nit"
+            ]
           },
           "mechanical": {
             "type": "boolean"
           },
           "disposition": {
-            "enum": ["fixed_re_reviewed", "paused_re_authorized"]
+            "enum": [
+              "fixed_re_reviewed",
+              "paused_re_authorized"
+            ]
           }
         }
       }
     },
     "re_authorization": {
       "type": "object",
-      "required": ["actor", "source"],
+      "required": [
+        "actor",
+        "source"
+      ],
       "additionalProperties": true,
       "properties": {
         "actor": {

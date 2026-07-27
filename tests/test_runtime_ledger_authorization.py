@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 from runtime_ledger_test_support import ROOT, clean_checkpoint  # noqa: E402
-from runtime_ledger_gate import evaluate_checkpoint  # noqa: E402
+from runtime_ledger_gate import evaluate_checkpoint
+from specrail_lib import load_pack  # noqa: E402
 
 
 # --- GH-143: tiered merge authorization ---
@@ -50,11 +51,22 @@ def _standard_auto_checkpoint(
     checkpoint["auth_mode"] = "review"
     item = checkpoint["items"][0]  # type: ignore[index]
     assert isinstance(item, dict)
+    touched_paths = ["checks/example.py", "tests/test_example.py"]
     item["pr_tier"] = "standard"
     item["pr_tier_evidence"] = {
         "changed_lines": 42,
-        "touched_paths": ["checks/example.py", "tests/test_example.py"],
+        "changed_lines_countable": True,
+        "changed_files": 2,
+        "touched_paths": touched_paths,
+        "source": "github_changed_files",
+        "head_sha": item["head_sha"],
+        "base_ref": "main",
+        "base_sha": "b" * 40,
+        "paths_sha256": __import__("hashlib").sha256(
+            json.dumps(touched_paths, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
     }
+    item["enforcement_sensitive"] = False
     item["authorization_tier"] = "standard_auto"
     item["merge_authorization"] = {
         "actor": "specrail-tier-policy",
@@ -69,13 +81,31 @@ def _standard_auto_checkpoint(
     review = item["review"]
     assert isinstance(review, dict)
     review["evidence"] = str(artifact_path)
+    # Raw current-head evidence, not a recorded decision: specs/GH202 B-009
+    # requires a tier-authorized item's gate result to be re-derived from the
+    # classification inputs so sensitive-registry drift invalidates it.
+    gate_evidence = json.loads(
+        (ROOT / "examples" / "fixtures" / "pr-clean-authorized.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert gate_evidence["pr"] == item["pr"]
+    assert gate_evidence["head_sha"] == item["head_sha"]
+    gate_evidence["pr_tier"] = item["pr_tier"]
+    gate_evidence["pr_tier_evidence"] = item["pr_tier_evidence"]
+    gate_evidence["base_ref"] = item["pr_tier_evidence"]["base_ref"]
+    gate_evidence["base_sha"] = item["pr_tier_evidence"]["base_sha"]
+    gate_evidence["enforcement_sensitive"] = False
+    gate_path = tmp_path / "pr-gate-standard.json"
+    gate_path.write_text(json.dumps(gate_evidence), encoding="utf-8")
+    item["pr_gate"]["evidence"] = str(gate_path)
     return checkpoint
 
 
 def test_standard_auto_merge_ready_allowed(tmp_path: Path) -> None:
     checkpoint = _standard_auto_checkpoint(tmp_path)
 
-    result = evaluate_checkpoint(checkpoint)
+    result = evaluate_checkpoint(checkpoint, repo=ROOT, config=load_pack(ROOT))
 
     assert result["decision"] == "allowed"
     assert result["errors"] == []
@@ -95,7 +125,7 @@ def test_standard_auto_allowed_via_ci_tier_check_artifact(tmp_path: Path) -> Non
     )
     item["ci_tier_check"] = {"evidence": str(ci_path)}
 
-    result = evaluate_checkpoint(checkpoint)
+    result = evaluate_checkpoint(checkpoint, repo=ROOT, config=load_pack(ROOT))
 
     assert result["decision"] == "allowed"
     assert result["errors"] == []

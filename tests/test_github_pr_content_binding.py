@@ -520,6 +520,12 @@ def test_versioned_pr_evidence_loader_requires_repo_local_schema_backed_input(
         ),
         encoding="utf-8",
     )
+    (tmp_path / "schemas/runtime_tier_authorization.schema.json").write_text(
+        (ROOT / "schemas/runtime_tier_authorization.schema.json").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
     evidence = json.loads(
         (ROOT / "examples/fixtures/pr-clean-authorized.json").read_text(
             encoding="utf-8"
