@@ -132,7 +132,7 @@ def test_rejection_items_enumerate_all_failures() -> None:
     for item in items:
         assert_item_shape(item)
     item_ids = {item["item_id"] for item in items}
-    for field in ["verdict", "body", "comments"]:
+    for field in ["verdict", "body", "findings"]:
         assert f"missing_evidence_field:{field}" in item_ids
     # every independently reported defect has a structured item
     assert len(items) >= len(result["missing"]) + len(result["reasons"])
@@ -175,7 +175,7 @@ def test_bad_prior_rejection_file_becomes_config_error_item(tmp_path: Path) -> N
     # CLI: an unusable prior payload blocks even an otherwise passing review.
     result = run_review_gate_cli(
         "--review",
-        "examples/fixtures/review-valid.json",
+        "examples/fixtures/review-v3-valid.json",
         "--diff",
         "examples/fixtures/pr-diff.patch",
         "--prior-rejection",
@@ -196,7 +196,7 @@ def test_bad_prior_rejection_file_becomes_config_error_item(tmp_path: Path) -> N
 def test_allowed_result_has_empty_rejection_items() -> None:
     result = run_review_gate_cli(
         "--review",
-        "examples/fixtures/review-valid.json",
+        "examples/fixtures/review-v3-valid.json",
         "--diff",
         "examples/fixtures/pr-diff.patch",
     )
@@ -299,10 +299,10 @@ def test_rerun_after_interrupt_matches_full_run() -> None:
 
 
 def test_two_round_full_list_single_fix_then_pass(tmp_path: Path) -> None:
-    review = load_fixture("review-valid.json")
+    review = load_fixture("review-v3-valid.json")
     broken = dict(review)
     del broken["body"]
-    del broken["comments"]
+    del broken["findings"]
     review_path = tmp_path / "review.json"
     review_path.write_text(json.dumps(broken), encoding="utf-8")
 
@@ -313,7 +313,7 @@ def test_two_round_full_list_single_fix_then_pass(tmp_path: Path) -> None:
     first_payload = json.loads(first.stdout)
     item_ids = {item["item_id"] for item in first_payload["rejection_items"]}
     assert "missing_evidence_field:body" in item_ids
-    assert "missing_evidence_field:comments" in item_ids
+    assert "missing_evidence_field:findings" in item_ids
 
     rejection_path = tmp_path / "rejection.json"
     rejection_path.write_text(first.stdout, encoding="utf-8")
@@ -378,7 +378,7 @@ def test_prior_rejection_non_object_entry_fails_closed(tmp_path: Path) -> None:
     # CLI: the corrupted prior blocks an otherwise passing review.
     result = run_review_gate_cli(
         "--review",
-        "examples/fixtures/review-valid.json",
+        "examples/fixtures/review-v3-valid.json",
         "--diff",
         "examples/fixtures/pr-diff.patch",
         "--prior-rejection",
@@ -441,7 +441,7 @@ def test_unusable_prior_blocks_declared_actions(tmp_path: Path) -> None:
 
 
 def test_repeat_rejection_cli_flags_identical_second_round(tmp_path: Path) -> None:
-    review = load_fixture("review-valid.json")
+    review = load_fixture("review-v3-valid.json")
     broken = dict(review)
     del broken["body"]
     review_path = tmp_path / "review.json"

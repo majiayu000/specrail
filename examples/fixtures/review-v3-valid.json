@@ -1,0 +1,14 @@
+{
+  "artifact_id": "fixture-review-v3-valid",
+  "contract_version": 3,
+  "repository": "specrail/specrail",
+  "pr": 489,
+  "profile": "standard",
+  "head_sha": "aaaa000000000000000000000000000000000001",
+  "review_source": "independent_lane",
+  "round": 1,
+  "mode": "full",
+  "verdict": "clean",
+  "body": "## Summary\nReviewed the complete current-head diff.\n\n## Verdict\nNo current P0/P1 findings.",
+  "findings": []
+}

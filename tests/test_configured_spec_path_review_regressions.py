@@ -177,6 +177,8 @@ def test_route_gate_without_issue_reports_missing_evidence() -> None:
         ROOT,
         "--route",
         "implement",
+        "--profile",
+        "heavy",
         "--state",
         "ready_to_implement",
     )
@@ -326,6 +328,8 @@ def test_route_gate_rejects_provided_spec_outside_configured_path(
         repo,
         "--route",
         "implement",
+        "--profile",
+        "heavy",
         "--issue",
         "91",
         "--state",
