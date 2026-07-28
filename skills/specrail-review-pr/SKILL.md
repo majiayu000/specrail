@@ -18,6 +18,10 @@ security findings.
 
 Use the selected profile's canonical `requires_independent_review` policy:
 fastlane uses self-review; standard and heavy use an independent reviewer lane.
+For `independent_lane`, a trusted host or coordinator injects the closed
+`review_attestation` after review, binding `lane_id`, `reviewer_actor`, current
+head, and current gate invocation. The implementation or review agent must not
+mint, edit, copy, persist, or reuse this attestation. `self_review` omits it.
 
 ## Contract
 
@@ -45,6 +49,10 @@ Artifact fields are the closed set declared by
 `schemas/review_result.schema.json`. `body` includes `## Summary` and
 `## Verdict`. Findings use stable IDs, severity, status, and summary; path/line
 must point into the supplied diff when present.
+
+An empty hosted-check rollup is not a new review round. Prefer fixing workflow
+triggers; only a trusted collector declaration for
+`hosted_ci_not_triggered_for_base` may enter the PR gate's degraded path.
 
 ## Verify
 

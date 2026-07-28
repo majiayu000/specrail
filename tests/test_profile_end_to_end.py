@@ -73,6 +73,8 @@ def test_profile_route_review_and_pr_gate_end_to_end(
     review["review_source"] = (
         "self_review" if profile == "fastlane" else "independent_lane"
     )
+    if profile == "fastlane":
+        review.pop("review_attestation")
     review_result = evaluate_review_gate(review, load_diff())
     assert review_result["decision"] == "allowed", review_result["reasons"]
 

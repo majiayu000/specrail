@@ -106,6 +106,18 @@ def evidence(
         "head_sha": head,
         "diff_sha256": hashlib.sha256(b"").hexdigest(),
         "review_source": review_source,
+        **(
+            {}
+            if profile == "fastlane"
+            else {
+                "review_attestation": {
+                    "lane_id": "review-lane-1",
+                    "reviewer_actor": "reviewer-agent-1",
+                    "head_sha": head,
+                    "invocation_id": "gate-1",
+                }
+            }
+        ),
         "round": 1,
         "mode": "full",
         "verdict": "clean",
@@ -161,6 +173,82 @@ def test_fastlane_self_review_is_allowed() -> None:
     result = evaluate_pr_gate(payload, ROOT, pack)
 
     assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_nonsensitive_gate_blocks_stale_local_checkout(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "tracked.txt").write_text("local\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=SpecRail Test",
+            "-c",
+            "user.email=specrail@example.invalid",
+            "commit",
+            "-qm",
+            "local",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    payload, _pack = evidence()
+    pack = config(repo)
+
+    result = evaluate_pr_gate(payload, repo, pack)
+
+    assert result["decision"] == "blocked"
+    assert "PR gate requires an exact current-head checkout" in result["reasons"]
+
+
+def checks_unavailable() -> dict[str, object]:
+    return {
+        "reason": "hosted_ci_not_triggered_for_base",
+        "base_ref": "feature-base",
+        "default_base_ref": "main",
+        "workflow_trigger_evidence": "pull_request.branches only contains main",
+        "local_verification": ["python3 -m pytest -q"],
+        "verified": True,
+    }
+
+
+def test_empty_checks_accepts_closed_trusted_unavailable_declaration() -> None:
+    payload, pack = evidence()
+    payload["checks"] = []
+    payload["base_ref"] = "feature-base"
+    payload["default_base_ref"] = "main"
+    payload["checks_unavailable"] = checks_unavailable()
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "allowed", result["reasons"]
+    assert any(item.startswith("degraded:") for item in result["satisfied"])
+
+
+def test_empty_checks_without_declaration_remains_missing() -> None:
+    payload, pack = evidence()
+    payload["checks"] = []
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert "checks" in result["missing"]
+
+
+def test_available_checks_conflict_with_unavailable_declaration() -> None:
+    payload, pack = evidence()
+    payload["checks_unavailable"] = checks_unavailable()
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert (
+        "checks_unavailable must not be present when checks are available"
+        in result["reasons"]
+    )
 
 
 def test_round_one_uses_pr_merge_base_diff_when_base_has_diverged(

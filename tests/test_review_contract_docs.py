@@ -189,6 +189,33 @@ def test_pr_gate_skill_preserves_ephemeral_host_authorization_contract() -> None
         assert token in text
 
 
+def test_review_and_ci_degradation_inputs_are_trusted_host_bound() -> None:
+    review = " ".join(
+        (REPO / "skills/specrail-review-pr/SKILL.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    gate = " ".join(
+        (REPO / "skills/specrail-pr-gate/SKILL.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+
+    for token in (
+        "trusted host or coordinator",
+        "review_attestation",
+        "lane_id",
+        "reviewer_actor",
+        "current gate invocation",
+        "must not mint, edit, copy, persist, or reuse",
+    ):
+        assert token in review
+        assert token in gate
+    assert "hosted_ci_not_triggered_for_base" in gate
+    assert "--checks-unavailable" in gate
+    assert "Every profile requires an exact current-head checkout" in gate
+
+
 def test_active_review_guidance_uses_canonical_independence_policy() -> None:
     for relative_path in (
         "README.md",

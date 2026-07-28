@@ -142,12 +142,16 @@ python3 checks/github_pr_evidence.py \
   --profile <profile> \
   --gate-invocation-id <id> \
   --review <review.json> \
+  --review-attestation <host-attestation.json> \
   --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 ```
 
 The review JSON uses compact contract v3. Its `review_source` follows the
 canonical profile policy: fastlane self-review; standard/heavy independent.
+For standard/heavy, the trusted host/coordinator supplies the separate
+head-and-invocation-bound `--review-attestation`; agents must not mint or edit
+it. Fastlane self-review omits the flag.
 Round 1 is
 full and binds the exact PR base-to-head diff with `base_head_sha` and
 `diff_sha256`; round 2 is diff-only after P0/P1 fixes. P2/P3 are
@@ -167,6 +171,7 @@ python3 checks/github_pr_evidence.py \
   --profile <profile> \
   --gate-invocation-id <id> \
   --review <review.json> \
+  --review-attestation <host-attestation.json> \
   --json > pr-evidence.json
 ```
 

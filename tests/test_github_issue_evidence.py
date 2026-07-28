@@ -264,6 +264,37 @@ def test_issue_done_when_checklist_becomes_bound_testable_plan() -> None:
 
 
 @pytest.mark.parametrize(
+    "hidden",
+    [
+        "<!--\n## Done when\n- [ ] hidden comment item\n-->",
+        "```\n## Done when\n- [ ] hidden fenced item\n```",
+        "~~~markdown\n## Done when\n- [ ] hidden tilde item\n~~~",
+        "<!--\n## Done when\n- [ ] hidden unclosed comment",
+        "```\n## Done when\n- [ ] hidden unclosed fence",
+    ],
+)
+def test_hidden_or_example_checklists_do_not_create_testable_plan(
+    hidden: str,
+) -> None:
+    assert extract_testable_plan_from_body(hidden) is None
+    assert "testable_plan" not in build_issue_evidence(issue_payload(body=hidden))
+
+
+def test_visible_checklist_is_extracted_around_hidden_examples() -> None:
+    body = (
+        "<!-- ## Done when\n- [ ] hidden comment item -->\n"
+        "```markdown\n<!-- unclosed inside code\n"
+        "## Done when\n- [ ] hidden fenced item\n```\n"
+        "## Done when\n- [ ] visible result\n"
+    )
+
+    plan = extract_testable_plan_from_body(body)
+
+    assert plan is not None
+    assert plan["items"] == ["visible result"]
+
+
+@pytest.mark.parametrize(
     "item",
     [
         "TBD",
@@ -489,15 +520,22 @@ def test_build_evidence_uses_none_source_without_state_evidence() -> None:
     assert evidence["state_trusted"] is False
 
 
-def test_outcome_label_is_separate_from_lifecycle_state() -> None:
-    evidence = build_issue_evidence(
-        issue_payload(labels=[{"name": "ready_to_spec"}, {"name": "security_private"}])
-    )
-
-    assert evidence["state"] == "ready_to_spec"
-    assert evidence["state_source"] == "label"
-    assert evidence["state_trusted"] is True
-    assert evidence["outcomes"] == ["security_private"]
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ["ready_to_spec", "security_private"],
+        ["ready_to_implement", "parked"],
+        ["review", "done"],
+        ["review", "duplicate"],
+    ],
+)
+def test_terminal_and_readiness_labels_are_mutually_exclusive(
+    labels: list[str],
+) -> None:
+    with pytest.raises(EvidenceError, match="conflicting"):
+        build_issue_evidence(
+            issue_payload(labels=[{"name": label} for label in labels])
+        )
 
 
 def test_outcomes_do_not_replace_lifecycle_state() -> None:

@@ -41,6 +41,12 @@ def valid_review() -> dict[str, object]:
         "head_sha": "a" * 40,
         "diff_sha256": hashlib.sha256(diff).hexdigest(),
         "review_source": "independent_lane",
+        "review_attestation": {
+            "lane_id": "review-lane-1",
+            "reviewer_actor": "reviewer-agent-1",
+            "head_sha": "a" * 40,
+            "invocation_id": "gate-1",
+        },
         "round": 1,
         "mode": "full",
         "verdict": "clean",
@@ -106,7 +112,7 @@ def test_review_gate_reports_legacy_and_unknown_fields_together() -> None:
 
 
 def test_review_gate_top_level_contract_is_compact() -> None:
-    assert len(REVIEW_TOP_LEVEL_KEYS) == 15
+    assert len(REVIEW_TOP_LEVEL_KEYS) == 16
     assert not (LEGACY_REVIEW_FIELDS & REVIEW_TOP_LEVEL_KEYS)
 
 
@@ -295,6 +301,7 @@ def test_round_two_digest_can_be_checked_without_git_repo() -> None:
     prior_review = copy.deepcopy(review)
     prior_review["base_head_sha"] = "c" * 40
     prior_review["head_sha"] = "b" * 40
+    prior_review["review_attestation"]["head_sha"] = "b" * 40
     prior_review["diff_sha256"] = hashlib.sha256(diff.encode()).hexdigest()
     prior_review["verdict"] = "blocking"
     prior_review["findings"] = [
@@ -324,7 +331,6 @@ def test_round_two_digest_can_be_checked_without_git_repo() -> None:
             ],
         }
     )
-
     result = evaluate_review_gate(review, diff)
 
     assert result["decision"] == "allowed", result["reasons"]
@@ -354,6 +360,7 @@ def test_round_two_rejects_paths_outside_prior_blocker_fix_scope() -> None:
             ],
         }
     )
+    prior["review_attestation"]["head_sha"] = "b" * 40
     review.update(
         {
             "round": 2,
@@ -370,7 +377,6 @@ def test_round_two_rejects_paths_outside_prior_blocker_fix_scope() -> None:
             ],
         }
     )
-
     result = evaluate_review_gate(review, diff)
 
     assert result["decision"] == "blocked"
@@ -385,6 +391,7 @@ def test_round_two_rejects_clean_prior_review() -> None:
     prior_review = copy.deepcopy(review)
     prior_review["base_head_sha"] = "c" * 40
     prior_review["head_sha"] = "b" * 40
+    prior_review["review_attestation"]["head_sha"] = "b" * 40
     review.update(
         {
             "round": 2,
@@ -485,6 +492,7 @@ def test_review_gate_cli_json_contract(tmp_path: Path) -> None:
             "diff_sha256": hashlib.sha256(diff).hexdigest(),
         }
     )
+    review["review_attestation"]["head_sha"] = head
     review_path = repo / "review.json"
     diff_path = repo / "review.patch"
     review_path.write_text(json.dumps(review), encoding="utf-8")
