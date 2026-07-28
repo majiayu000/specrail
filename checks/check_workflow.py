@@ -86,14 +86,15 @@ REQUIRED_FILE_GLOBS = [
     "examples/fixtures/*",
     "schemas/*.schema.json",
 ]
-ADOPTION_SENTINEL_PATHS = (
-    "checks/pr_gate.py",
-    "checks/route_gate.py",
-    "labels.yaml",
-    "schemas/issue_evidence.schema.json",
-    "skills-lock.json",
-    "states.yaml",
+ADOPTION_FILE_MARKERS = {
+    "checks/check_workflow.py": "Validate a SpecRail workflow pack",
+    "checks/route_gate.py": "Evaluate whether a SpecRail action may proceed",
+    "schemas/issue_evidence.schema.json": "https://specrail.local/",
+}
+AGENTS_ADOPTION_MARKER = (
+    "Treat SpecRail as an agent-facing workflow contract"
 )
+ADOPTION_MANIFEST_PATHS = ("states.yaml", "labels.yaml", "skills-lock.json")
 
 PLANNED_CHANGES_REQUIRED_MARKER = "specrail-requires-planned-changes-v1"
 
@@ -652,14 +653,14 @@ def validate_task_plan(
 
 def adoption_sentinels(repo: Path) -> list[str]:
     """Return unambiguous evidence that a repository adopted SpecRail."""
-    found = [
-        relative
-        for relative in ADOPTION_SENTINEL_PATHS
-        if (repo / relative).exists()
-    ]
+    found: list[str] = []
+    for relative, marker in ADOPTION_FILE_MARKERS.items():
+        path = repo / relative
+        if path.is_file() and marker in read_text(path):
+            found.append(f"{relative}:{marker}")
     agents = repo / "AGENTS.md"
-    if agents.is_file() and "specrail" in read_text(agents).casefold():
-        found.append("AGENTS.md:SpecRail")
+    if agents.is_file() and AGENTS_ADOPTION_MARKER in read_text(agents):
+        found.append(f"AGENTS.md:{AGENTS_ADOPTION_MARKER}")
     skills = repo / "skills"
     if skills.is_dir():
         found.extend(
@@ -669,6 +670,25 @@ def adoption_sentinels(repo: Path) -> list[str]:
         )
         if (skills / "implx" / "SKILL.md").is_file():
             found.append("skills/implx/SKILL.md")
+    if all((repo / relative).is_file() for relative in ADOPTION_MANIFEST_PATHS):
+        try:
+            manifest = json.loads(read_text(repo / "skills-lock.json"))
+        except json.JSONDecodeError:
+            manifest = {}
+        declared_skills = (
+            manifest.get("skills", []) if isinstance(manifest, dict) else []
+        )
+        if isinstance(declared_skills, list) and any(
+            isinstance(item, dict)
+            and (
+                str(item.get("name", "")).startswith("specrail-")
+                or str(item.get("path", "")).startswith("skills/specrail-")
+                or item.get("name") == "implx"
+                or item.get("path") == "skills/implx/SKILL.md"
+            )
+            for item in declared_skills
+        ):
+            found.append("+".join(ADOPTION_MANIFEST_PATHS))
     return sorted(set(found))
 
 

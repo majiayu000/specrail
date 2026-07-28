@@ -9,7 +9,11 @@ Use this skill for the technical half of the `write_spec` route.
 
 ## Steps
 
-1. Read the linked issue and `specs/GH<issue-number>/product.md`.
+1. Read `workflow.yaml` and resolve the issue's product, tech, and packet paths
+   from its `artifacts.*` templates; call them
+   `<configured-product-spec-path>`, `<configured-tech-spec-path>`, and
+   `<configured-spec-packet-dir>`, and never assume a `specs/` root. Read the
+   linked issue and the resolved `artifacts.product_spec` path.
 2. Read the relevant tech spec template from
    `templates/<locale>/tech_spec.md` or `templates/tech_spec.md`.
 3. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
@@ -26,7 +30,8 @@ Continue only when the route decision is `allowed`; stop and report every
 other decision and its missing evidence. Do not substitute `--state` or
 `--label` for current collector evidence.
 
-4. Explore the codebase first, then write `specs/GH<issue-number>/tech.md`.
+4. Explore the codebase first, then write the resolved `artifacts.tech_spec`
+   path.
    Replace the template's `specrail-planned-changes` placeholder with exactly
    one valid JSON manifest bound to the real issue: set `issue` to the linked
    issue number, set `complete=true`, and exhaustively list the planned

@@ -10,9 +10,11 @@ Use this skill for the product half of the `write_spec` route.
 ## Steps
 
 1. Confirm the linked issue number. Search first if no issue is provided.
-2. Read `workflow.yaml`, `states.yaml`, `labels.yaml`, and the relevant product
-   spec template from `templates/<locale>/product_spec.md` or
-   `templates/product_spec.md`.
+2. Read `workflow.yaml`, `states.yaml`, and `labels.yaml`. Resolve the issue's
+   product and packet paths from `workflow.yaml` `artifacts.*` templates; call
+   them `<configured-product-spec-path>` and `<configured-spec-packet-dir>`,
+   and never assume a `specs/` root. Read the relevant product spec template
+   from `templates/<locale>/product_spec.md` or `templates/product_spec.md`.
 3. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
    checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
@@ -27,8 +29,8 @@ Continue only when the route decision is `allowed`; stop and report every
 other decision and its missing evidence. Do not substitute `--state` or
 `--label` for current collector evidence.
 
-4. Pick the depth tier from the length heuristic below, then write
-   `specs/GH<issue-number>/product.md`.
+4. Pick the depth tier from the length heuristic below, then write the resolved
+   `artifacts.product_spec` path.
 5. Keep product content about observable behavior: goals, non-goals, behavior
    invariants, acceptance criteria, edge cases, and open questions.
 6. Write behavior as numbered, testable invariants without implementation

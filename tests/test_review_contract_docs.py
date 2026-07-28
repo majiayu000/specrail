@@ -137,6 +137,58 @@ def test_plan_tasks_validates_tasks_before_implementation_preflight() -> None:
     assert write_index < validate_index < implement_index
 
 
+def test_spec_writing_skills_resolve_configured_artifact_paths() -> None:
+    expectations = {
+        "skills/specrail-write-product-spec/SKILL.md": (
+            "artifacts.product_spec",
+            "<configured-product-spec-path>",
+        ),
+        "skills/specrail-write-tech-spec/SKILL.md": (
+            "artifacts.product_spec",
+            "artifacts.tech_spec",
+            "<configured-product-spec-path>",
+            "<configured-tech-spec-path>",
+        ),
+        "skills/specrail-workflow/SKILL.md": (
+            "artifacts.product_spec",
+            "artifacts.tech_spec",
+            "artifacts.task_plan",
+        ),
+    }
+
+    for relative_path, expected_tokens in expectations.items():
+        text = (REPO / relative_path).read_text(encoding="utf-8")
+        assert "specs/GH<issue-number>" not in text
+        assert "`artifacts.*` templates" in text
+        for token in expected_tokens:
+            assert token in text, f"{relative_path}: missing {token}"
+
+    workflow_text = (
+        REPO / "skills/specrail-workflow/SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "default-pack file paths such as `specs/GH1/product.md`" in workflow_text
+
+
+def test_pr_gate_skill_preserves_ephemeral_host_authorization_contract() -> None:
+    text = " ".join(
+        (REPO / "skills/specrail-pr-gate/SKILL.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+
+    for token in (
+        "trusted host or coordinator",
+        "current real-human conversation",
+        "must never mint, edit, copy, persist, or reuse",
+        "ephemeral",
+        "current head",
+        "same invocation ID",
+        "`advisory_only`",
+        "merge executor must independently obey",
+    ):
+        assert token in text
+
+
 def test_active_review_guidance_uses_canonical_independence_policy() -> None:
     for relative_path in (
         "README.md",
