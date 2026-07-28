@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -167,6 +168,18 @@ def _clean_diff_path(raw_path: str) -> str | None:
     return path or None
 
 
+def _decode_git_quoted_path(token: str) -> str:
+    try:
+        return ast.literal_eval(token).encode("latin1").decode("utf-8", errors="surrogateescape")
+    except (SyntaxError, ValueError, UnicodeError) as exc:
+        raise ValueError("invalid Git C-style quoted path") from exc
+
+
+def _metadata_path(raw_path: str) -> str | None:
+    path = raw_path.strip()
+    return _decode_git_quoted_path(path) if path.startswith('"') else path or None
+
+
 def _add_line(lines: dict[str, set[int]], path: str | None, line: int) -> None:
     if path is not None and line > 0:
         lines.setdefault(path, set()).add(line)
@@ -174,28 +187,27 @@ def _add_line(lines: dict[str, set[int]], path: str | None, line: int) -> None:
 
 def _diff_header_paths(raw_line: str) -> tuple[str | None, str | None]:
     payload = raw_line.removeprefix("diff --git ")
-    separators = [
-        index
-        for index in range(len(payload))
-        if payload.startswith(" b/", index)
-    ]
+    quoted = re.fullmatch(
+        r'(?P<old>"(?:\\.|[^"\\])*") (?P<new>"(?:\\.|[^"\\])*")', payload
+    )
+    if quoted:
+        return tuple(
+            _clean_diff_path(_decode_git_quoted_path(quoted.group(name)))
+            for name in ("old", "new")
+        )
     candidates = [
         (
             _clean_diff_path(payload[:index]),
             _clean_diff_path(payload[index + 1 :]),
         )
-        for index in separators
+        for index in range(len(payload))
+        if payload.startswith(" b/", index)
         if payload.startswith("a/")
     ]
     if not candidates:
         raise ValueError("invalid diff --git file header")
-    for old_path, new_path in candidates:
-        if old_path == new_path:
-            return old_path, new_path
-    if len(candidates) == 1:
-        return candidates[0]
-    # Rename/copy records carry unambiguous paths on following metadata lines.
-    return None, None
+    equal = next((pair for pair in candidates if pair[0] == pair[1]), None)
+    return equal or (candidates[0] if len(candidates) == 1 else (None, None))
 
 
 def parse_unified_diff(diff_text: str) -> DiffIndex:
@@ -219,12 +231,12 @@ def parse_unified_diff(diff_text: str) -> DiffIndex:
             in_hunk = False
             continue
         if not in_hunk and raw_line.startswith(("rename from ", "copy from ")):
-            old_path = _clean_diff_path(raw_line.split(" ", 2)[2])
+            old_path = _metadata_path(raw_line.split(" ", 2)[2])
             if old_path is not None:
                 paths.add(old_path)
             continue
         if not in_hunk and raw_line.startswith(("rename to ", "copy to ")):
-            new_path = _clean_diff_path(raw_line.split(" ", 2)[2])
+            new_path = _metadata_path(raw_line.split(" ", 2)[2])
             if new_path is not None:
                 paths.add(new_path)
             continue
