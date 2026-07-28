@@ -96,13 +96,19 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
     （`review_json_gate.py`）声明非 null `base_head_sha` 或 `diff_sha256` THEN
     必须在产出时即 block，防止继续铸造需要迁移的 legacy 形态；该规则不追溯
     已持久化的存量文件。
-11. B-011 迁移 CLI 默认 dry-run，只输出完整候选计划与 source/derived/policy digests；
+11. B-011 迁移 CLI 默认 dry-run，只输出完整候选计划、source/policy/request digests
+    与确定性目标路径；
     WHEN 未收到显式 `--apply` THEN 不得写任何文件。apply 必须消费一次性 closed
-    `migration_authorization`：授权由受保护 provider 取得并精确绑定 repo immutable ID、
-    PR、fresh base/head、source path + pre-migration commit/blob/digest、derived path/digest、
-    唯一 record path/digest、target policy digest、
-    `decision: migrate_legacy_round1_once`、actor/source/time。record 的 `migrated_at`
-    必须等于 `authorized_at`，canonical record bytes/digest 不得由 apply 时另选。
+    `migration_authorization`：dry-run 先产生只含发布前稳定输入的 closed
+    `authorization_request`，人工发布后受保护 provider 再产生绑定 comment
+    identity/body、actor/permission/time 的 closed `provider_attestation`；两者摘要共同
+    确定 `authorization_id`。request 精确绑定 repo immutable ID、PR、fresh base/head、
+    source path + pre-migration commit/blob/digest、确定性 derived/record path、target
+    policy 与 normalization plan，但不得包含 comment 元数据、authorization ID、
+    `derived_sha256` 或 `record_sha256`。apply 后的 record 是 receipt，才绑定最终
+    derived digest；record digest 由 verifier 对最终 record bytes 外部重算，不得被
+    request、attestation 或 record 自身预签。record 的 `migrated_at` 必须等于
+    `authorized_at`，canonical derived/record bytes 不得由 apply 时另选。
     CLI 字符串、本地 JSON/role map、自报角色、auto/merge/cap 授权均不能替代或代填。
 12. B-012 WHEN 回滚 THEN 删除派生 artifact、迁移记录与 manifest `migrations[]`
     条目即可回到迁移前的 fail-closed 状态；原始 artifact 不受影响，重复执行
@@ -111,13 +117,16 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
     exact reapply 可复用，跨 PR/base/head/artifact/source/derived scope 或不同 bytes
     复用必须 block。
 13. B-013 WHEN 验证 `migration_authorization` THEN actor 身份、maintainer 权限、
-    授权事件及其 payload 必须由 fresh GitHub provider 查询并在查询前后保持一致；
+    授权事件及其 request payload 必须由 fresh GitHub provider 查询并在查询前后保持
+    一致；provider 必须在事件发布后独立形成 `provider_attestation`，不得要求事件
+    payload 预先包含自身 node/URL/time、attestation digest 或任一下游产物 digest；
     调用方提供的 authorization JSON、role map、actor/source 字符串或其任意自洽组合
     不得单独建立授权，provider 缺失、不可用、权限不足、事件被编辑/删除或双读漂移
     必须 fail closed。
 14. B-014 WHEN CLI 执行 dry-run THEN repo immutable ID、PR base/head 与 migration
     base 必须由受保护 provider/registry 取得并绑定到输出的
-    `authorization_request`；dry-run 不得把缺少远端授权事件的 request 宣称为完整
+    `authorization_request`；request digest 与目标路径只能由这些稳定输入确定。
+    dry-run 不得把缺少远端授权事件及 `provider_attestation` 的 request 宣称为完整
     authorization。provider 不可用或 identity 不完整时不得输出可用于 apply 的候选。
 15. B-015 `migration_base_sha` 必须进入 migration record 与 authorization 的闭集
     shape，并与 trusted registry cutoff、provider snapshot、cross-binding 和 replay
@@ -132,10 +141,12 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 18. B-018 WHEN 源 artifact 缺失 `base_head_sha` 或其值已为 null THEN 派生 artifact
     必须保持同一形态且不得声明 `set_null`；仅源字段存在且 non-null 时才允许
     `base_head_sha/set_null`。`diff_sha256/delete` 同理只适用于存在且 non-null 的源字段。
-19. B-019 `authorization_id` 必须由 trusted authorization event identity 与完整
-    canonical authorized scope/bytes 确定性派生并由 verifier 重算；不得由调用方任意
-    选择。rollback 删除 derived/record 后，同一 ID 仍只能重建同一 exact scope；
-    不同 scope/bytes 必须产生不同 ID，强行复用必须 block。
+19. B-019 `authorization_id` 必须由 canonical `authorization_request` digest 与
+    发布后 trusted `provider_attestation` digest 确定性派生并由 verifier 重算，不得由
+    调用方任意选择；request、attestation、authorization ID、derived bytes、record
+    receipt 的依赖必须严格单向，任一对象的 canonical digest 都不得包含自身 digest，
+    上游也不得包含下游 digest。rollback 删除 derived/record 后，同一 ID 仍只能重建
+    同一 exact scope/bytes；不同 scope/bytes 必须产生不同 ID，强行复用必须 block。
 20. B-020 WHEN loader 遇到 registry 命中的 legacy artifact THEN 必须在通用
     round-1 origin 规则之前完成 trusted legacy classification：未迁移时只产生稳定
     `legacy_round1_migration_required` rejection；creation-mode 的新 artifact 仍由
@@ -159,10 +170,12 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
   coverage scope 均 fail closed（B-006/B-009）。
 - [ ] round >= 2 或字段已合规的 artifact 请求迁移被拒；新产出的 round-1 bounded
   artifact 带非 null base/diff 在 `review_json_gate.py` 即 block（B-001/B-010）。
-- [ ] CLI dry-run 不落盘；apply 缺 fresh provider authorization、错 actor permission、
-  错 repo/PR/head/
+- [ ] CLI dry-run 不落盘；authorization request 仅含发布前稳定 scope，GitHub comment
+  不预含自身 node/URL/time 或 derived/record digest；apply 缺 fresh provider
+  attestation、错 actor permission、错 repo/PR/head/
   commit/blob/source/derived/record path 或 digest、`migrated_at != authorized_at`、同 ID
-  不同 bytes 均拒绝；exact 授权幂等
+  不同 bytes 均拒绝；request → attestation → authorization ID → derived → record
+  receipt 可有限构造且 exact 授权幂等
   （B-011/B-012）。
 - [ ] 本地 authorization/role-map 自证、伪造 actor/source、GitHub actor 无
   maintain/admin 权限、authorization comment 编辑/删除、provider 前后快照漂移均
@@ -172,7 +185,8 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
   与 fresh PR head 使用两个独立字段；source commit 只对 trusted current PR head
   做 ancestry 校验（B-015/B-016/B-017）。
 - [ ] #186 形态保持缺失/null `base_head_sha`，不新增字段或虚构 normalization；
-  authorization ID 对完整 trusted scope 确定性派生，rollback 后跨 scope/bytes 复用仍拒绝
+  authorization ID 从 request/attestation 两个 canonical digest 确定性派生，任何对象
+  均不自哈希或反向绑定下游 digest，rollback 后跨 scope/bytes 复用仍拒绝
   （B-018/B-019）。
 - [ ] registry 命中的未迁移 legacy artifact 在通用 origin gate 前分类，仅产生稳定
   `legacy_round1_migration_required`；creation-mode 新 artifact 仍被源头 gate 拒绝
@@ -189,11 +203,11 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 | 错误与失败路径 | covered: B-004 B-005 B-008 B-018 B-020（重放不一致、声明不符、未迁移均给出定位错误） |
 | 授权/权限 | covered: B-011 B-013 B-014 B-019（fresh provider exact authorization；本地 JSON/role map 不自证） |
 | 并发/竞态 | covered: B-002 B-004（验证按只读摘要比对，检查中源文件变化即失配 block） |
-| 重试/幂等 | covered: B-012 B-019（重复迁移逐字节确定；ID 从完整 scope 派生） |
+| 重试/幂等 | covered: B-012 B-019（重复迁移逐字节确定；ID 从 request + attestation 派生） |
 | 非法状态转换 | covered: B-001 B-010 B-020（creation 与 legacy migration 路由不可混用） |
 | 兼容/迁移 | covered: B-006 B-009 B-012 B-016 B-018 B-020（多轮 head 分离、缺失字段形态与迁移路由保持） |
 | 降级/回退 | covered: B-008 B-012 B-013（无迁移或 provider 证据时保持 fail-closed） |
-| 证据与审计完整性 | covered: B-002 B-003 B-004 B-007 B-015 B-016 B-017 B-019（完整 identity/ancestry/scope 绑定） |
+| 证据与审计完整性 | covered: B-002 B-003 B-004 B-007 B-015 B-016 B-017 B-019（完整 identity/ancestry/scope 绑定且无循环摘要） |
 | 取消/中断 | covered: B-011 B-012 B-013（dry-run 无副作用；provider 双读与 apply 重试可判定） |
 
 ## 发布说明
