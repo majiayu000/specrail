@@ -18,6 +18,7 @@ from github_pr_evidence import (
     combine_review_findings,
 )
 from review_json_gate import evaluate_review_gate
+from rejection_items import canonical_review_sha256
 from specrail_lib import PackConfig
 
 
@@ -72,6 +73,7 @@ def review_attestation(
         "artifact_id": str(current["artifact_id"]),
         "lane_id": "review-lane-1",
         "reviewer_actor": "reviewer-agent-1",
+        "review_sha256": canonical_review_sha256(current),
         "head_sha": head,
         "invocation_id": invocation_id,
     }
@@ -235,7 +237,9 @@ def test_sensitive_paths_automatically_select_heavy(tmp_path: Path) -> None:
         profile="fastlane",
         gate_invocation_id="gate-1",
         review=review(profile="heavy"),
-        review_attestation=review_attestation(),
+        review_attestation=review_attestation(
+            review_payload=review(profile="heavy")
+        ),
         expected_issue=208,
         repo=tmp_path,
         config=config(tmp_path, ["src/**"]),
@@ -829,7 +833,9 @@ def test_spec_registry_uses_linked_issue_artifact_references(tmp_path: Path) -> 
         profile="standard",
         gate_invocation_id="gate-1",
         review=review(profile="heavy"),
-        review_attestation=review_attestation(),
+        review_attestation=review_attestation(
+            review_payload=review(profile="heavy")
+        ),
         expected_issue=208,
         repo=tmp_path,
         config=pack,
@@ -849,6 +855,14 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
 ) -> None:
     snapshot = pr_payload()
     hosted_calls: list[str] = []
+    hosted_finding = {
+        "id": "hosted:security",
+        "severity": "P2",
+        "status": "unresolved",
+        "summary": "Sensitive follow-up.",
+        "origin": "hosted",
+        "outdated": False,
+    }
     monkeypatch.setattr(
         "github_pr_evidence.collect_pr_view",
         lambda _repo, _pr: snapshot,
@@ -856,26 +870,23 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
 
     def hosted(_repo: str, _pr: int, _head: str) -> list[dict[str, object]]:
         hosted_calls.append(_head)
-        return [
-            {
-                "id": "hosted:security",
-                "severity": "P2",
-                "status": "unresolved",
-                "summary": "Sensitive follow-up.",
-                "origin": "hosted",
-                "outdated": False,
-            }
-        ]
+        return [dict(hosted_finding)]
 
     monkeypatch.setattr("github_pr_evidence.collect_hosted_findings", hosted)
+    current_review = review(profile="heavy")
+    collected_review = combine_review_findings(
+        current_review, [dict(hosted_finding)]
+    )
 
     result = collect_evidence(
         "acme/widgets",
         42,
         profile="fastlane",
         gate_invocation_id="gate-1",
-        review=review(profile="heavy"),
-        review_attestation=review_attestation(),
+        review=current_review,
+        review_attestation=review_attestation(
+            review_payload=collected_review
+        ),
         repo=tmp_path,
         config=config(tmp_path, ["src/**"]),
     )
@@ -1017,7 +1028,7 @@ def test_collect_evidence_uses_fork_head_repository_for_boundary(
         profile="standard",
         gate_invocation_id="gate-1",
         review=current_review,
-        review_attestation=review_attestation(),
+        review_attestation=review_attestation(review_payload=current_review),
     )
 
     assert boundary_repositories == ["forker/widgets-fork", "forker/widgets-fork"]

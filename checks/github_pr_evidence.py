@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from _lib.review_attestation import validate_review_attestation
 from github_evidence_common import (
     EvidenceError,
     collect_head_push_boundary as _collect_head_push_boundary,
@@ -22,6 +21,7 @@ from github_evidence_common import (
     normalize_checks,
 )
 from github_issue_reference import normalize_issue_reference, relation_snapshot
+from rejection_items import validate_review_attestation
 from sensitive_enforcement import classify_sensitive_changes, sensitive_registry
 from specrail_lib import (
     PackConfig,

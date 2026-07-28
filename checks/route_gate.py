@@ -10,7 +10,6 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from _lib.issue_labels import validate_issue_labels
 from github_evidence_common import (
     blocked_route_result as blocked_result,
     issue_route_evidence_errors,
@@ -46,6 +45,7 @@ from rejection_items import (
     item_from_missing,
     item_from_reason,
     make_item,
+    validate_issue_labels,
 )
 from sensitive_enforcement import (
     classification_from_tech_spec,

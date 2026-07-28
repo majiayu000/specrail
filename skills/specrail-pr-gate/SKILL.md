@@ -24,6 +24,8 @@ mint, edit, copy, persist, or reuse it. The resulting `review_attestation`
 is top-level PR evidence outside raw current and prior review artifacts. It
 binds `lane_id`, `reviewer_actor`, current artifact ID, current head, and current
 gate invocation; round 2 also binds the prior artifact ID and prior head.
+`review_sha256` is the SHA-256 of the complete canonical raw review JSON, so
+finding, verdict, and embedded-prior changes invalidate the attestation.
 Fastlane `self_review` omits this input.
 
 For heavy work, a trusted host or coordinator may inject

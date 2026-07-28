@@ -12,6 +12,7 @@ CHECKS = ROOT / "checks"
 FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
+from rejection_items import canonical_review_sha256  # noqa: E402
 from review_json_gate import evaluate_review_gate as _evaluate_review_gate  # noqa: E402
 
 
@@ -26,6 +27,7 @@ def review_attestation_for(review: dict[str, object]) -> dict[str, str] | None:
         "artifact_id": str(review["artifact_id"]),
         "lane_id": "review-lane-1",
         "reviewer_actor": "reviewer-agent-1",
+        "review_sha256": canonical_review_sha256(review),
         "head_sha": str(review["head_sha"]),
         "invocation_id": "gate-1",
     }
@@ -180,6 +182,55 @@ def test_independent_review_attestation_binds_artifact_and_current_invocation() 
     assert result["decision"] == "blocked"
     assert "gate_invocation_id" in result["missing"]
     assert "review_attestation.artifact_id must match review" in result["reasons"]
+
+
+def test_review_digest_blocks_deleted_finding() -> None:
+    review = review_with(
+        verdict="non_blocking",
+        findings=[{
+            "id": "P2-follow-up",
+            "severity": "P2",
+            "status": "unresolved",
+            "summary": "Keep this follow-up.",
+        }],
+    )
+    attestation = review_attestation_for(review)
+    review["findings"] = []
+
+    result = evaluate_review_gate(
+        review, load_diff(), attestation=attestation
+    )
+
+    assert result["decision"] == "blocked"
+    assert any("review_sha256" in reason for reason in result["reasons"])
+
+
+def test_review_digest_blocks_changed_verdict() -> None:
+    review = review_with()
+    attestation = review_attestation_for(review)
+    review["verdict"] = "non_blocking"
+
+    result = evaluate_review_gate(
+        review, load_diff(), attestation=attestation
+    )
+
+    assert result["decision"] == "blocked"
+    assert any("review_sha256" in reason for reason in result["reasons"])
+
+
+def test_review_digest_covers_embedded_prior_scope() -> None:
+    review = review_with(review_round=2, mode="diff_only")
+    attestation = review_attestation_for(review)
+    prior = review["prior_review"]
+    assert isinstance(prior, dict)
+    prior["findings"][0]["fix_paths"] = ["src/forged.py"]
+
+    result = evaluate_review_gate(
+        review, load_diff(), attestation=attestation
+    )
+
+    assert result["decision"] == "blocked"
+    assert any("review_sha256" in reason for reason in result["reasons"])
 
 
 def test_fastlane_allows_self_review() -> None:

@@ -195,7 +195,7 @@ def _validate_checks(
         return satisfied, ["checks"], reasons
     if not checks:
         return evaluate_checks_unavailable(evidence)
-    if evidence.get("checks_unavailable") is not None:
+    if "checks_unavailable" in evidence:
         reasons.append(
             "checks_unavailable must not be present when checks are available"
         )
@@ -215,6 +215,8 @@ def _validate_checks(
             reasons.append(f"duplicate CI check name: {name}")
         else:
             names.add(str(name))
+        if "url" in check and not _non_empty_string(check.get("url")):
+            reasons.append(f"{prefix} url must be a non-empty string")
         if check.get("head_sha") != evidence.get("head_sha"):
             reasons.append(f"{prefix} head_sha must match the gated head")
         if check.get("status") != "COMPLETED":
@@ -557,6 +559,8 @@ def evaluate_pr_gate(
     profile = evidence.get("profile")
     if profile not in PROFILES:
         reasons.append("profile must be fastlane, standard, or heavy")
+    if profile == "fastlane" and "review_attestation" in evidence:
+        reasons.append("fastlane must not include review_attestation")
     if sensitive and profile != "heavy":
         reasons.append("sensitive changes must use the heavy profile")
     profile_policy, profile_policy_reasons = _profile_policy(config, profile)

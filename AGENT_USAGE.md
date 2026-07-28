@@ -153,7 +153,8 @@ For standard/heavy, the trusted host/coordinator supplies the separate
 head-and-invocation-bound `--review-attestation`; agents must not mint or edit
 it. The raw current and embedded prior review JSON never contains the
 attestation; round 2's single current attestation also binds the prior artifact
-ID and head. Fastlane self-review omits the flag.
+ID and head. Its `review_sha256` binds the complete canonical raw review JSON,
+including the embedded prior review. Fastlane self-review omits the flag.
 Round 1 is
 full and binds the exact PR base-to-head diff with `base_head_sha` and
 `diff_sha256`; round 2 is diff-only after P0/P1 fixes. P2/P3 are

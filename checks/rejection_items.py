@@ -1,19 +1,30 @@
 #!/usr/bin/env python3
-"""Shared structured rejection-item helpers for SpecRail gates (GH-141).
+"""Shared compact-contract helpers for SpecRail gates.
 
 Every rejecting gate emits a machine-readable ``rejection_items`` array so a
 caller can fix all defects in one round. Items are deterministic, deduplicated,
-and comparable across rounds via ``--prior-rejection`` payloads.
+and comparable across rounds via ``--prior-rejection`` payloads. This module
+also owns the shared review-attestation and issue-label validators so the
+18-file checker budget does not hide helper files below the top level.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
+
+from specrail_lib import (
+    ISSUE_STATES,
+    PackConfig,
+    SpecRailError,
+    label_groups,
+    state_map,
+)
 
 
 CATEGORIES = frozenset(
@@ -48,6 +59,151 @@ _ITEM_ID_SUFFIX_RE = re.compile(r"#\d+$")
 
 class RejectionItemError(ValueError):
     """Raised when a gate tries to build an invalid rejection item."""
+
+
+ATTESTATION_COMMON_FIELDS = {
+    "artifact_id",
+    "head_sha",
+    "invocation_id",
+    "lane_id",
+    "reviewer_actor",
+    "review_sha256",
+}
+ATTESTATION_PRIOR_FIELDS = {"prior_artifact_id", "prior_head_sha"}
+DEFAULT_OUTCOME_LABELS = {"duplicate", "abandoned", "security_private"}
+
+
+def _non_empty(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def canonical_review_sha256(review: dict[str, Any]) -> str:
+    """Hash the complete raw review using the canonical JSON representation."""
+
+    payload = json.dumps(
+        review,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def validate_review_attestation(
+    review: dict[str, Any],
+    attestation: dict[str, Any] | None,
+    *,
+    gate_invocation_id: str | None,
+    required: bool,
+) -> tuple[list[str], list[str]]:
+    """Return (missing, reasons) for one current host-injected attestation."""
+
+    missing: list[str] = []
+    reasons: list[str] = []
+    if not required:
+        if attestation is not None:
+            reasons.append("self_review must not include review_attestation")
+        return missing, reasons
+    if not isinstance(attestation, dict):
+        return ["review_attestation"], reasons
+    if not _non_empty(gate_invocation_id):
+        missing.append("gate_invocation_id")
+
+    allowed = ATTESTATION_COMMON_FIELDS | ATTESTATION_PRIOR_FIELDS
+    unknown = sorted(set(attestation) - allowed)
+    absent = sorted(ATTESTATION_COMMON_FIELDS - set(attestation))
+    if unknown:
+        reasons.append(
+            "review_attestation contains unsupported fields: "
+            + ", ".join(unknown)
+        )
+    missing.extend(f"review_attestation.{field}" for field in absent)
+    for field in (
+        "artifact_id",
+        "invocation_id",
+        "lane_id",
+        "reviewer_actor",
+        "review_sha256",
+    ):
+        if field in attestation and not _non_empty(attestation.get(field)):
+            reasons.append(f"review_attestation.{field} must be non-empty")
+    if attestation.get("head_sha") != review.get("head_sha"):
+        reasons.append("review_attestation.head_sha must match review head_sha")
+    if attestation.get("artifact_id") != review.get("artifact_id"):
+        reasons.append("review_attestation.artifact_id must match review")
+    if _non_empty(gate_invocation_id) and (
+        attestation.get("invocation_id") != gate_invocation_id
+    ):
+        reasons.append(
+            "review_attestation.invocation_id must match gate invocation"
+        )
+    try:
+        expected_digest = canonical_review_sha256(review)
+    except (TypeError, ValueError):
+        reasons.append("review artifact must be JSON-serializable")
+    else:
+        if attestation.get("review_sha256") != expected_digest:
+            reasons.append(
+                "review_attestation.review_sha256 must match canonical review"
+            )
+
+    prior = review.get("prior_review")
+    if review.get("round") == 2 and isinstance(prior, dict):
+        expected = {
+            "prior_artifact_id": prior.get("artifact_id"),
+            "prior_head_sha": prior.get("head_sha"),
+        }
+        for field, value in expected.items():
+            if attestation.get(field) != value:
+                reasons.append(
+                    f"review_attestation.{field} must match prior review"
+                )
+    elif set(attestation) & ATTESTATION_PRIOR_FIELDS:
+        reasons.append("round 1 review_attestation must not bind prior review")
+    return missing, reasons
+
+
+def validate_issue_labels(
+    config: PackConfig | None,
+    labels: list[str],
+) -> tuple[str | None, list[str]]:
+    """Return the single workflow state and outcomes, rejecting conflicts."""
+
+    if config is None:
+        state_labels = set(ISSUE_STATES)
+        outcome_labels = DEFAULT_OUTCOME_LABELS
+    else:
+        groups = label_groups(config)
+        states = state_map(config)
+        terminal = {
+            name
+            for name, body in states.items()
+            if isinstance(body, dict) and body.get("terminal") is True
+        }
+        state_labels = (
+            set(groups.get("readiness", []))
+            | set(groups.get("lifecycle", []))
+            | terminal
+            | ({"parked"} if "parked" in states else set())
+        )
+        outcome_labels = set(groups.get("outcome", []))
+
+    state_matches = sorted(set(labels) & state_labels)
+    outcome_matches = sorted(set(labels) & outcome_labels)
+    if len(state_matches) > 1:
+        raise SpecRailError(
+            f"conflicting state labels: {', '.join(state_matches)}"
+        )
+    if len(outcome_matches) > 1:
+        raise SpecRailError(
+            f"conflicting outcome labels: {', '.join(outcome_matches)}"
+        )
+    if state_matches and outcome_matches:
+        combined = sorted(set(state_matches) | set(outcome_matches))
+        raise SpecRailError(
+            f"conflicting terminal/readiness labels: {', '.join(combined)}"
+        )
+    return (state_matches[0] if state_matches else None), outcome_matches
 
 
 def _compact_text(value: str) -> str:

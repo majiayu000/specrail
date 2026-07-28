@@ -233,7 +233,7 @@ def test_required_file_cap_ignores_consumer_owned_schema(tmp_path: Path) -> None
     )
 
 
-def test_required_file_cap_ignores_consumer_owned_checker(tmp_path: Path) -> None:
+def test_checker_count_rejects_extra_top_level_python_file(tmp_path: Path) -> None:
     shutil.copytree(ROOT, tmp_path / "repo", ignore=shutil.ignore_patterns(".git"))
     repo = tmp_path / "repo"
     (repo / "checks" / "consumer_checker.py").write_text(
@@ -241,23 +241,21 @@ def test_required_file_cap_ignores_consumer_owned_checker(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    assert not any(
-        "checks:" in error and "hard limit" in error
-        for error in validate_required_files(repo)
+    assert "checks: expected exactly 18 Python files; found 19" in (
+        validate_required_files(repo)
     )
 
 
-def test_required_file_cap_counts_only_declared_pack_checkers(
+def test_checker_count_is_recursive(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     shutil.copytree(ROOT, tmp_path / "repo", ignore=shutil.ignore_patterns(".git"))
     repo = tmp_path / "repo"
-    extra = "checks/pack_owned_nineteenth.py"
-    (repo / extra).write_text("# pack-owned\n", encoding="utf-8")
-    monkeypatch.setattr(check_workflow, "REQUIRED_FILES", [*REQUIRED_FILES, extra])
+    nested = repo / "checks" / "_lib" / "nested_checker.py"
+    nested.parent.mkdir(exist_ok=True)
+    nested.write_text("# nested\n", encoding="utf-8")
 
-    assert "checks: 19 Python files exceeds 18-file hard limit" in (
+    assert "checks: expected exactly 18 Python files; found 19" in (
         validate_required_files(repo)
     )
 
