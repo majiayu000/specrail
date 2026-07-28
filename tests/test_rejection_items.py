@@ -142,7 +142,21 @@ def test_placeholder_expected_found_rejected() -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ['"TBD"', "'TODO'", "“TBD”", "‘TODO’", '`"TBD"`', "“`TODO`”"],
+    [
+        '"TBD"',
+        "'TODO'",
+        "“TBD”",
+        "‘TODO’",
+        '`"TBD"`',
+        "“`TODO`”",
+        "「TBD」",
+        "«TBD»",
+        "„TBD“",
+        '“TBD"',
+        "TBD/TODO",
+        "ＴＢＤ",
+        "**「`TBD/TODO`」**",
+    ],
 )
 def test_substantive_text_rejects_quoted_placeholder(value: str) -> None:
     assert is_substantive_text(value) is False
@@ -154,6 +168,8 @@ def test_substantive_text_rejects_quoted_placeholder(value: str) -> None:
         '"Reject TBD tokens in the parser"',
         "‘Implement the TODO parser’",
         '`“Run pytest -k placeholder”`',
+        "TODO fix parser",
+        "中文动作：处理 TBD",
     ],
 )
 def test_substantive_text_accepts_quoted_sentence(value: str) -> None:
