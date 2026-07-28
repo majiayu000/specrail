@@ -44,8 +44,6 @@ REQUIRED_FILES = [
     "states.yaml",
     "labels.yaml",
     "examples/adoptions/matrix.json",
-    "checks/_lib/issue_labels.py",
-    "checks/_lib/review_attestation.py",
     "checks/duplicate_work_gate.py",
     "checks/github_evidence_common.py",
     "checks/github_duplicate_evidence.py",
@@ -181,16 +179,9 @@ def validate_required_files(repo: Path) -> list[str]:
         path = repo / rel
         if not path.is_file():
             errors.append(f"missing required file: {rel}")
-    checker_count = len(
-        {
-            rel
-            for rel in REQUIRED_FILES
-            if PurePosixPath(rel).parent == PurePosixPath("checks")
-            and rel.endswith(".py")
-        }
-    )
-    if checker_count > 18:
-        errors.append(f"checks: {checker_count} Python files exceeds 18-file hard limit")
+    checker_count = len(list((repo / "checks").rglob("*.py")))
+    if checker_count != 18:
+        errors.append(f"checks: expected exactly 18 Python files; found {checker_count}")
     asset_module, _load_error = _load_trusted_pack_asset_validation()
     if asset_module is not None:
         owned_schemas = getattr(asset_module, "SPEC_SCHEMA_FILES", None)

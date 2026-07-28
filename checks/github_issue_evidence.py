@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from _lib.issue_labels import validate_issue_labels
 from github_evidence_common import EvidenceError, json_object
 from github_pr_evidence import (
     _require_positive_int,
@@ -19,7 +18,7 @@ from github_pr_evidence import (
     parse_github_repo,
     run_gh_json,
 )
-from rejection_items import is_substantive_text
+from rejection_items import is_substantive_text, validate_issue_labels
 from sensitive_enforcement import (
     classification_from_tech_spec,
     sensitive_registry,

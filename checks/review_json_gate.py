@@ -13,13 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from _lib.review_attestation import validate_review_attestation
 from rejection_items import (
     add_prior_rejection_argument,
     apply_prior_rejection,
     finalize_items,
     item_from_reason,
     items_from_legacy,
+    validate_review_attestation,
 )
 
 
@@ -614,6 +614,8 @@ def evaluate_review_gate(
             reasons.append(f"{prefix} summary must be a non-empty string")
         if "fix_paths" in finding and not _finding_fix_paths(finding):
             reasons.append(f"{prefix} fix_paths must contain safe repo-relative paths")
+        if "path" in finding and not _valid_review_path(finding.get("path")):
+            reasons.append(f"{prefix} path must be a safe non-empty repo-relative path")
 
         severity = finding.get("severity")
         status = finding.get("status")

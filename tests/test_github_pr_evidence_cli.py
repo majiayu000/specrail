@@ -68,8 +68,10 @@ def test_main_prints_compact_collector_result(
     authorization_path.write_text(json.dumps(authorization), encoding="utf-8")
     attestation_path = tmp_path / "review-attestation.json"
     attestation = {
+        "artifact_id": "review-1",
         "lane_id": "review-lane-1",
         "reviewer_actor": "reviewer-agent-1",
+        "review_sha256": "c" * 64,
         "head_sha": "a" * 40,
         "invocation_id": "gate-1",
     }

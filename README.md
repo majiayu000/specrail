@@ -154,7 +154,10 @@ python3 checks/review_json_gate.py --repo . \
 Review artifacts are advisory evidence only. They do not grant final approval
 or merge authority. Raw current and prior review JSON never embeds
 `review_attestation`; standard/heavy validation receives a separate current
-host attestation. Round 1 is full and binds the exact PR base-to-head diff.
+host attestation. Its `review_sha256` is SHA-256 over UTF-8 canonical JSON
+(`sort_keys=True`, compact separators, `ensure_ascii=False`) for the complete
+raw review, including embedded prior content. Round 1 is full and binds the
+exact PR base-to-head diff.
 Round 2 exists only after an unresolved round-1 P0/P1, is diff-only, and embeds
 the bound round-1
 artifact as `prior_review`, and carries every prior unresolved P0/P1 finding

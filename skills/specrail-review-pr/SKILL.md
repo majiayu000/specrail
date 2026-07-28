@@ -22,6 +22,9 @@ For `independent_lane`, a trusted host or coordinator injects the closed
 `review_attestation` after review, binding `lane_id`, `reviewer_actor`, current
 artifact ID, current head, and current gate invocation. For round 2 that same
 current attestation also binds the embedded prior artifact ID and prior head.
+Its `review_sha256` binds the complete raw review, including embedded prior
+content, using UTF-8 SHA-256 over
+`json.dumps(review, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`.
 Raw current and embedded prior review artifacts never contain an attestation.
 The implementation or review agent must not mint, edit, copy, persist, or reuse
 it. `self_review` omits it.

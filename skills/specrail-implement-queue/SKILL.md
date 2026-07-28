@@ -115,6 +115,8 @@ Use `checks/review_json_gate.py` for the artifact. The skill is advisory and
 cannot approve or merge. Raw current and embedded prior review artifacts never
 contain `review_attestation`; the trusted host supplies one separate current
 attestation, which also binds prior artifact ID and head for round 2.
+Its `review_sha256` binds the complete canonical raw review JSON, including the
+embedded prior artifact.
 
 ## PR Gate
 

@@ -19,6 +19,7 @@ sys.path.insert(0, str(CHECKS))
 from rejection_items import (  # noqa: E402
     RejectionItemError,
     apply_prior_rejection,
+    canonical_review_sha256,
     finalize_items,
     item_from_reason,
     is_substantive_text,
@@ -88,6 +89,7 @@ def run_review_gate_cli(*args: str) -> subprocess.CompletedProcess[str]:
             "artifact_id": review["artifact_id"],
             "lane_id": "fixture-review-lane",
             "reviewer_actor": "fixture-reviewer",
+            "review_sha256": canonical_review_sha256(review),
             "head_sha": head,
             "invocation_id": "fixture-gate-1",
         }

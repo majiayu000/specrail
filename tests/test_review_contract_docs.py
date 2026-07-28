@@ -206,6 +206,7 @@ def test_review_and_ci_degradation_inputs_are_trusted_host_bound() -> None:
         "review_attestation",
         "lane_id",
         "reviewer_actor",
+        "review_sha256",
         "current gate invocation",
         "must not mint, edit, copy, persist, or reuse",
     ):

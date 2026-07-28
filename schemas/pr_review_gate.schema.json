@@ -42,7 +42,7 @@
     "gate_query_head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
     "changed_files": {
       "type": "array",
-      "items": {"type": "string", "minLength": 1}
+      "items": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"}
     },
     "changed_files_count": {"type": "integer", "minimum": 0},
     "changed_files_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
@@ -53,11 +53,11 @@
         "additionalProperties": false,
         "required": ["name", "status", "conclusion", "head_sha"],
         "properties": {
-          "name": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
           "status": {"const": "COMPLETED"},
           "conclusion": {"enum": ["SUCCESS", "NEUTRAL", "SKIPPED"]},
           "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
-          "url": {"type": "string", "minLength": 1}
+          "url": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"}
         }
       }
     },
@@ -104,10 +104,22 @@
       ],
       "properties": {
         "source": {"enum": ["github_changed_files", "tech_spec"]},
-        "changed_paths": {"type": "array", "items": {"type": "string"}},
-        "spec_refs": {"type": "array", "items": {"type": "string"}},
-        "matched_paths": {"type": "array", "items": {"type": "string"}},
-        "matched_specs": {"type": "array", "items": {"type": "string"}},
+        "changed_paths": {
+          "type": "array",
+          "items": {"type": "string", "pattern": ".*\\S.*"}
+        },
+        "spec_refs": {
+          "type": "array",
+          "items": {"type": "string", "pattern": ".*\\S.*"}
+        },
+        "matched_paths": {
+          "type": "array",
+          "items": {"type": "string", "pattern": ".*\\S.*"}
+        },
+        "matched_specs": {
+          "type": "array",
+          "items": {"type": "string", "pattern": ".*\\S.*"}
+        },
         "registry_configured": {"type": "boolean"},
         "enforcement_sensitive": {"type": "boolean"}
       }
@@ -117,7 +129,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "artifact_id", "head_sha", "invocation_id", "lane_id", "reviewer_actor"
+        "artifact_id", "head_sha", "invocation_id", "lane_id", "reviewer_actor",
+        "review_sha256"
       ],
       "properties": {
         "artifact_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
@@ -125,6 +138,9 @@
         "invocation_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
         "lane_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
         "reviewer_actor": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+        "review_sha256": {
+          "type": "string", "pattern": "^[0-9a-fA-F]{64}$"
+        },
         "prior_artifact_id": {
           "type": "string", "minLength": 1, "pattern": ".*\\S.*"
         },
@@ -133,16 +149,22 @@
         }
       }
     },
-    "gate_invocation_id": {"type": "string", "minLength": 1},
+    "gate_invocation_id": {
+      "type": "string", "minLength": 1, "pattern": ".*\\S.*"
+    },
     "human_merge_authorization": {
       "type": "object",
       "additionalProperties": false,
       "required": ["actor", "authorized_at", "head_sha", "invocation_id"],
       "properties": {
-        "actor": {"type": "string", "minLength": 1},
-        "authorized_at": {"type": "string", "minLength": 1},
+        "actor": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
+        "authorized_at": {
+          "type": "string", "minLength": 1, "pattern": ".*\\S.*"
+        },
         "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
-        "invocation_id": {"type": "string", "minLength": 1}
+        "invocation_id": {
+          "type": "string", "minLength": 1, "pattern": ".*\\S.*"
+        }
       }
     }
   },

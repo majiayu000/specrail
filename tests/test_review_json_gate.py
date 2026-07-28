@@ -23,6 +23,7 @@ from review_json_gate import (  # noqa: E402
     parse_unified_diff,
     validate_exact_git_diff,
 )
+from rejection_items import canonical_review_sha256  # noqa: E402
 
 
 def load_diff() -> str:
@@ -40,6 +41,7 @@ def review_attestation_for(review: dict[str, object]) -> dict[str, str] | None:
         "artifact_id": str(review["artifact_id"]),
         "lane_id": "review-lane-1",
         "reviewer_actor": "reviewer-agent-1",
+        "review_sha256": canonical_review_sha256(review),
         "head_sha": str(review["head_sha"]),
         "invocation_id": "gate-1",
     }

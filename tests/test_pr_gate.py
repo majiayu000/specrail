@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "checks"))
 
 from pr_gate import LEGACY_EVIDENCE_FIELDS, evaluate_pr_gate
+from rejection_items import canonical_review_sha256
 from sensitive_enforcement import classify_sensitive_changes
 from specrail_lib import PackConfig, spec_packet_artifact_paths
 
@@ -147,6 +148,7 @@ def evidence(
             "artifact_id": review["artifact_id"],
             "lane_id": "review-lane-1",
             "reviewer_actor": "reviewer-agent-1",
+            "review_sha256": canonical_review_sha256(review),
             "head_sha": head,
             "invocation_id": "gate-1",
         }
@@ -169,6 +171,16 @@ def test_fastlane_self_review_is_allowed() -> None:
     result = evaluate_pr_gate(payload, ROOT, pack)
 
     assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_fastlane_rejects_explicit_null_attestation() -> None:
+    payload, pack = evidence(profile="fastlane")
+    payload["review_attestation"] = None
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert "fastlane must not include review_attestation" in result["reasons"]
 
 
 def test_nonsensitive_gate_blocks_stale_local_checkout(tmp_path: Path) -> None:
@@ -273,6 +285,19 @@ def test_available_checks_conflict_with_unavailable_declaration() -> None:
     )
 
 
+def test_available_checks_reject_explicit_null_unavailable_declaration() -> None:
+    payload, pack = evidence()
+    payload["checks_unavailable"] = None
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert (
+        "checks_unavailable must not be present when checks are available"
+        in result["reasons"]
+    )
+
+
 def test_round_one_uses_pr_merge_base_diff_when_base_has_diverged(
     tmp_path: Path,
 ) -> None:
@@ -350,6 +375,9 @@ def test_round_one_uses_pr_merge_base_diff_when_base_has_diverged(
     ).stdout
     assert exact_pr_diff != two_dot_diff
     payload["review"]["diff_sha256"] = hashlib.sha256(exact_pr_diff).hexdigest()
+    payload["review_attestation"]["review_sha256"] = canonical_review_sha256(
+        payload["review"]
+    )
 
     result = evaluate_pr_gate(payload, repo, pack)
 
