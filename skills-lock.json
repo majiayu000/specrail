@@ -15,7 +15,7 @@
     {
       "name": "specrail-diagnose-ci",
       "path": "skills/specrail-diagnose-ci/SKILL.md",
-      "computedHash": "sha256:5f17bb96687216deae4cd71790236154408538ae7cd155c1d47bd27df343e699"
+      "computedHash": "sha256:6b1304bbaf31b56e67bf0f82d2c2840bd35b1e58affa6e7cbbf8c7ee664f49a1"
     },
     {
       "name": "specrail-implement-queue",
@@ -25,7 +25,7 @@
     {
       "name": "specrail-implement",
       "path": "skills/specrail-implement/SKILL.md",
-      "computedHash": "sha256:bdce4d981433a56dbf07a44330969a776c2197d41ead3d5de15ef6ee4e660f30"
+      "computedHash": "sha256:9b14f30850019660fb1a2614e3fe8f33c0141bded78077b4d39318034515a4e3"
     },
     {
       "name": "specrail-install",
@@ -35,7 +35,7 @@
     {
       "name": "specrail-plan-tasks",
       "path": "skills/specrail-plan-tasks/SKILL.md",
-      "computedHash": "sha256:a9527d67a96c838778fe59c8e4b572251ff55172c0efa041444ec22f0276f0d2"
+      "computedHash": "sha256:53bb76255454b6bd026d6e783ea783c92309b6c6c856aa008d1f29b5b4a37b8e"
     },
     {
       "name": "specrail-pr-gate",
@@ -45,7 +45,7 @@
     {
       "name": "specrail-release-note",
       "path": "skills/specrail-release-note/SKILL.md",
-      "computedHash": "sha256:a4167fec8d384751bf39287fdd7fe43fd9649f41c401a9b70a60b942b87a1fa1"
+      "computedHash": "sha256:1abe021db241d38da33f297c51b92b20b9cbfb6c047bbec065f98ed026715d9c"
     },
     {
       "name": "specrail-review-pr",
@@ -55,22 +55,22 @@
     {
       "name": "specrail-triage-issue",
       "path": "skills/specrail-triage-issue/SKILL.md",
-      "computedHash": "sha256:1356310fce5b4988d64bf392e1bc8588886c4606ef8576f418b2e7d113714e43"
+      "computedHash": "sha256:fea3ef3671023c61b91d3f2f51885665878804b7bdc77bf4f0b1141e63725c31"
     },
     {
       "name": "specrail-workflow",
       "path": "skills/specrail-workflow/SKILL.md",
-      "computedHash": "sha256:828669866bde35d1445b4353a118a6c10394303a5ebd7b6eddf4593c04fc5634"
+      "computedHash": "sha256:07700d11a0c16d85c2897a72de6783a7586e953a00bc9c89bcbcaf85d6c3a310"
     },
     {
       "name": "specrail-write-product-spec",
       "path": "skills/specrail-write-product-spec/SKILL.md",
-      "computedHash": "sha256:37c82811f0f28c88318775e70b90770bb4684a38884f465d86e89ac199d54273"
+      "computedHash": "sha256:f4bbbddc74a94613f2f88005c297cb3ff8e1b199f3c85f4ead31da55265b60c4"
     },
     {
       "name": "specrail-write-tech-spec",
       "path": "skills/specrail-write-tech-spec/SKILL.md",
-      "computedHash": "sha256:03765fa62ae98b835463b211f131afe716342a6d31cbd683a479ab3599587ffe"
+      "computedHash": "sha256:1f4ddc8cb5fb26c28375e04ada82e6d1becdfc0f6f51f2b3a2290153539e3e96"
     }
   ]
 }

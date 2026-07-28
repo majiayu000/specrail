@@ -15,7 +15,8 @@ Use this skill for the `triage_issue` route.
    recommending new workflow artifacts.
 3. Identify the current state: `new_issue`, `needs_info`, `triaged`,
    `duplicate`, `security_private`, or another configured state.
-4. Run the local gate when available:
+4. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
+   checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
 python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issue-number> --json > issue-evidence.json

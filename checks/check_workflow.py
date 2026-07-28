@@ -490,14 +490,17 @@ def main() -> int:
     errors: list[str] = []
     try:
         repo = resolve_path(Path(args.repo), label="repository")
+        if not (repo / "workflow.yaml").is_file():
+            print("SpecRail check skipped: repository is not adopted")
+            return 0
+        errors.extend(validate_required_files(repo))
+        errors.extend(validate_required_file_globs(repo))
         config = load_pack(repo)
         configured_spec_paths = spec_packet_artifact_paths(config, 1)
         configured_spec_root = PurePosixPath(
             configured_spec_paths["spec_packet"]
         ).parent
         resolve_spec_packet_root(repo, configured_spec_root)
-        errors.extend(validate_required_files(repo))
-        errors.extend(validate_required_file_globs(repo))
         errors.extend(validate_tokens(repo))
         errors.extend(validate_pack_assets(repo))
         errors.extend(validate_state_graph(config))

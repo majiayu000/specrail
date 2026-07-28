@@ -11,7 +11,8 @@ Use this skill for the `draft_release_note` route.
 
 1. Confirm the PR is merged and identify the linked issue, commits, specs, and
    verification evidence.
-2. Run the release-note route gate when available:
+2. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
+   checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
 python3 checks/route_gate.py --repo . --route draft_release_note --issue <issue-number> --pr <pr-number> --state merged --json

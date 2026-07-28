@@ -13,7 +13,8 @@ Use this skill for the product half of the `write_spec` route.
 2. Read `workflow.yaml`, `states.yaml`, `labels.yaml`, and the relevant product
    spec template from `templates/<locale>/product_spec.md` or
    `templates/product_spec.md`.
-3. Run the local gate when available:
+3. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
+   checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json

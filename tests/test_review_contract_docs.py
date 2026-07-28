@@ -92,5 +92,9 @@ def test_active_contracts_do_not_reintroduce_removed_runtime_artifacts() -> None
 
     for path in paths:
         text = path.read_text(encoding="utf-8").lower()
+        if path.parent.name == "skills":
+            assert "when available" not in text, (
+                f"{path.relative_to(REPO)}: ambiguous gate availability"
+            )
         for token in FORBIDDEN_RUNTIME_TOKENS:
             assert token not in text, f"{path.relative_to(REPO)}: {token}"

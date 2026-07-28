@@ -12,7 +12,10 @@ focused SpecRail skill after the route is known.
 
 1. Search before creating a new issue, spec, template, policy, schema, or workflow.
 2. Read applicable `AGENTS.md`, then `AGENT_USAGE.md` and `PLAN.md` when present.
-3. Read `workflow.yaml`, `states.yaml`, `labels.yaml`, and relevant templates.
+3. Check adoption first. If `workflow.yaml` is absent, report `not_adopted` and
+   use repository-native policy without claiming a SpecRail gate result. If it
+   exists, the repository is adopted: required SpecRail assets are mandatory
+   and missing assets block.
 4. Identify the route:
    - `triage_issue`
    - `write_spec`
@@ -20,9 +23,10 @@ focused SpecRail skill after the route is known.
    - `review_pr`
    - `fix_ci`
    - `draft_release_note`
-5. Run `checks/route_gate.py` for the selected route when the repository includes
-   it. Treat `allowed` as permission to proceed, `warn` as proceed-with-caution,
-   `needs_human` as a maintainer gate, and `blocked` as a stop condition.
+5. In an adopted repository, run `checks/route_gate.py`; a missing checker
+   blocks. Treat `allowed` as permission to proceed, `warn` as
+   proceed-with-caution, `needs_human` as a maintainer gate, and `blocked` as a
+   stop condition.
 6. When GitHub issue evidence is needed and the repository includes the adapter,
    collect it read-only:
 
@@ -47,7 +51,7 @@ python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issu
   but the user named neither, work issue by issue through
   `skills/specrail-implement/SKILL.md` (or mention that implx is available
   for coordinated queue drains); do not enter queue orchestration or its
-  auth_mode state machine uninvited.
+  authorization mode uninvited.
 - Use `skills/implx/SKILL.md` when the user explicitly asks for `implx`,
   `use implx`, or `用 implx` as the shortcut for SpecRail implementation queue
   work with optional threads orchestration and merge gates.
