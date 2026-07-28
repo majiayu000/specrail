@@ -301,6 +301,37 @@ def test_round_two_cannot_downgrade_prior_blocking_finding() -> None:
     assert "round 2 finding P1-prior must preserve prior severity" in result["reasons"]
 
 
+def test_round_two_local_finding_cannot_become_outdated_hosted() -> None:
+    prior_finding = {
+        "id": "P1-prior-local",
+        "severity": "P1",
+        "status": "unresolved",
+        "summary": "Prior local blocking defect.",
+    }
+    review = review_with(
+        review_round=2,
+        mode="diff_only",
+        findings=[
+            {
+                **prior_finding,
+                "origin": "hosted",
+                "outdated": True,
+                "introduced_by_diff": False,
+            }
+        ],
+    )
+    review["prior_review"]["verdict"] = "blocking"
+    review["prior_review"]["findings"] = [prior_finding]
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert (
+        "round 2 finding P1-prior-local must preserve prior origin"
+        in result["reasons"]
+    )
+
+
 def test_verdict_must_match_current_findings() -> None:
     finding = {
         "id": "P2-hidden",
