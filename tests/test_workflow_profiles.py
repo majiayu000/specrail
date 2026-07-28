@@ -125,7 +125,14 @@ def test_standard_implement_requires_testable_plan(tmp_path: Path) -> None:
     assert "testable_plan" in payload["missing"]
 
 
-def test_standard_implement_rejects_placeholder_issue_plan(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "item",
+    ['"TBD"', "'TODO'", "“TBD”", "‘TODO’", '`"TBD"`'],
+)
+def test_standard_implement_rejects_placeholder_issue_plan(
+    tmp_path: Path,
+    item: str,
+) -> None:
     result, payload = run_route_gate(
         "--route",
         "implement",
@@ -138,7 +145,7 @@ def test_standard_implement_rejects_placeholder_issue_plan(tmp_path: Path) -> No
             tmp_path,
             testable_plan={
                 "source": "issue_body_checklist",
-                "items": ["TBD"],
+                "items": [item],
             },
         )),
         "--profile",

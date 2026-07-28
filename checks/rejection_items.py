@@ -42,6 +42,7 @@ _NON_SUBSTANTIVE_VALUES = _PLACEHOLDER_VALUES | frozenset(
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _TEXT_WRAPPERS = "`*_~[](){}<> \t\r\n.,;:!?。；：！？…-–—"
+_QUOTE_PAIRS = (('"', '"'), ("'", "'"), ("“", "”"), ("‘", "’"))
 _SUBSTANTIVE_CHARACTER_RE = re.compile(r"[^\W_]", re.UNICODE)
 
 _ITEM_ID_SUFFIX_RE = re.compile(r"#\d+$")
@@ -55,7 +56,16 @@ def is_substantive_text(value: Any) -> bool:
     """Reject only closed placeholder values and punctuation-only text."""
     if not isinstance(value, str):
         return False
-    normalized = value.strip().strip(_TEXT_WRAPPERS).strip().casefold()
+    normalized = value.strip()
+    previous = None
+    while normalized != previous:
+        previous = normalized
+        normalized = normalized.strip(_TEXT_WRAPPERS).strip()
+        for opening, closing in _QUOTE_PAIRS:
+            if normalized.startswith(opening) and normalized.endswith(closing):
+                normalized = normalized[len(opening):-len(closing)].strip()
+                break
+    normalized = normalized.casefold()
     return (
         bool(_SUBSTANTIVE_CHARACTER_RE.search(normalized))
         and normalized not in _NON_SUBSTANTIVE_VALUES
