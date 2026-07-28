@@ -1,237 +1,71 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://specrail.local/schemas/pr_review_gate.schema.json",
-  "title": "Pull Request Gate Evidence",
+  "title": "SpecRail compact PR gate evidence v3",
   "type": "object",
+  "additionalProperties": false,
   "required": [
+    "contract_version",
+    "repository",
     "pr",
+    "linked_issue",
     "state",
     "is_draft",
+    "base_sha",
     "head_sha",
-    "review_completed_at",
-    "gate_started_at",
-    "gate_query_completed_at",
     "gate_query_head_sha",
-    "linked_issue",
-    "merge_state",
+    "changed_files",
+    "changed_files_count",
+    "changed_files_sha256",
     "checks",
-    "reviews",
-    "review_threads",
-    "review_source",
-    "review_execution",
-    "review_evidence",
-    "lane_failures"
-  ],
-  "additionalProperties": false,
-  "allOf": [
-    {
-      "if": {"required": ["content_binding_version"]},
-      "then": {
-        "required": ["snapshot", "content_hashes", "reused_components"]
-      },
-      "else": {
-        "properties": {
-          "snapshot": {"const": null},
-          "content_hashes": {"const": null},
-          "reused_components": {"const": null},
-          "checks": {
-            "items": {
-              "properties": {
-                "content_binding_version": {"const": null},
-                "covered_categories": {"const": null},
-                "content_bindings": {"const": null}
-              }
-            }
-          },
-          "review_evidence": {
-            "properties": {
-              "artifacts": {
-                "items": {
-                  "properties": {
-                    "content_binding_version": {"const": null},
-                    "covered_categories": {"const": null},
-                    "content_bindings": {"const": null}
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "anyOf": [
-          {
-            "properties": {"enforcement_sensitive": {"const": true}},
-            "required": ["enforcement_sensitive"]
-          },
-          {
-            "properties": {
-              "sensitive_classification": {
-                "properties": {"enforcement_sensitive": {"const": true}},
-                "required": ["enforcement_sensitive"]
-              }
-            },
-            "required": ["sensitive_classification"]
-          },
-          {"required": ["approved_spec"]},
-          {"required": ["spec_approval"]}
-        ]
-      },
-      "then": {
-        "required": ["sensitive_route"],
-        "anyOf": [
-          {
-            "properties": {
-              "sensitive_route": {"const": "approved_spec"},
-              "spec_approval": {"const": null}
-            },
-            "required": ["approved_spec"]
-          },
-          {
-            "properties": {
-              "sensitive_route": {"const": "spec_revision"},
-              "approved_spec": {"const": null}
-            },
-            "required": ["spec_approval"]
-          }
-        ]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "review_source": {"const": "self_review"},
-          "self_review_authorization": {"properties": {"basis": {"const": "fastlane_policy"}}, "required": ["basis"]}
-        },
-        "required": ["review_source", "self_review_authorization"]
-      },
-      "then": {
-        "required": ["enforcement_sensitive", "pr_tier", "pr_tier_evidence"],
-        "properties": {"enforcement_sensitive": {"const": false}, "pr_tier": {"const": "fastlane"}}
-      }
-    },
-    {"if": {"required": ["pr_tier_evidence"]},
-     "then": {"required": ["base_ref", "base_sha"]}}
+    "merge_state",
+    "profile",
+    "enforcement_sensitive",
+    "sensitive_classification",
+    "review",
+    "gate_invocation_id"
   ],
   "properties": {
-    "content_binding_version": {"const": 1},
-    "snapshot": {
-      "type": "object",
-      "required": ["head_sha", "base_tree_oid", "algorithm", "normalization", "collector"],
-      "additionalProperties": false,
-      "properties": {
-        "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
-        "base_tree_oid": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
-        "algorithm": {"const": "sha256"},
-        "normalization": {"const": "specrail-v1"},
-        "collector": {"const": "github_pr_evidence"}
-      }
+    "contract_version": {"const": 3},
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
     },
-    "content_hashes": {
-      "type": "object",
-      "required": ["code_inputs", "spec_files", "pr_metadata"],
-      "additionalProperties": false,
-      "properties": {
-        "code_inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "spec_files": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "pr_metadata": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-      }
-    },
-    "reused_components": {
+    "pr": {"type": "integer", "minimum": 1},
+    "linked_issue": {"type": "integer", "minimum": 1},
+    "state": {"const": "OPEN"},
+    "is_draft": {"const": false},
+    "base_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+    "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+    "gate_query_head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+    "changed_files": {
       "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "changed_files_count": {"type": "integer", "minimum": 0},
+    "changed_files_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "checks": {
+      "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["artifact_id", "original_head_sha", "covered_categories", "original_content_bindings", "current_content_bindings", "collector_provenance", "reason"],
         "additionalProperties": false,
+        "required": ["name", "status", "conclusion", "head_sha"],
         "properties": {
-          "artifact_id": {"type": "string", "minLength": 1},
-          "original_head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
-          "covered_categories": {
-            "type": "array",
-            "minItems": 1,
-            "items": {"enum": ["code_inputs", "spec_files", "pr_metadata"]}
-          },
-          "original_content_bindings": {
-            "type": "object",
-            "minProperties": 1,
-            "additionalProperties": false,
-            "properties": {
-              "code_inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-              "spec_files": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-              "pr_metadata": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-            }
-          },
-          "current_content_bindings": {
-            "type": "object",
-            "minProperties": 1,
-            "additionalProperties": false,
-            "properties": {
-              "code_inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-              "spec_files": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-              "pr_metadata": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-            }
-          },
-          "collector_provenance": {
-            "type": "object",
-            "required": ["head_sha", "base_tree_oid", "algorithm", "normalization", "collector"],
-            "additionalProperties": false,
-            "properties": {
-              "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
-              "base_tree_oid": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
-              "algorithm": {"const": "sha256"},
-              "normalization": {"const": "specrail-v1"},
-              "collector": {"const": "github_pr_evidence"}
-            }
-          },
-          "reason": {"type": "string", "minLength": 1}
+          "name": {"type": "string", "minLength": 1},
+          "status": {"const": "COMPLETED"},
+          "conclusion": {"enum": ["SUCCESS", "NEUTRAL", "SKIPPED"]},
+          "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+          "url": {"type": "string", "minLength": 1}
         }
       }
     },
-    "pr": {
-      "type": "integer",
-      "minimum": 1
-    },
-    "state": {
-      "type": "string",
-      "minLength": 1
-    },
-    "is_draft": {
-      "type": "boolean"
-    },
-    "linked_issue": {
-      "type": ["integer", "null"],
-      "minimum": 1
-    },
-    "repository": {"type": "string", "minLength": 1},
-    "base_sha": {
-      "type": "string",
-      "minLength": 40
-    },
-    "base_ref": {
-      "type": "string",
-      "minLength": 1
-    },
-    "default_base_sha": {
-      "type": "string",
-      "pattern": "^[0-9a-fA-F]{40}$"
-    },
-    "default_base_ref": {
-      "type": "string",
-      "minLength": 1
-    },
-    "changed_files_count": {"type": "integer", "minimum": 0},
-    "changed_files_sha256": {"type": "string", "minLength": 64},
-    "pr_tier": {"$ref": "runtime_tier_authorization.schema.json#/properties/pr_tier"},
-    "pr_tier_evidence": {"$ref": "runtime_tier_authorization.schema.json#/properties/pr_tier_evidence"},
-    "authorization_tier": {"$ref": "runtime_tier_authorization.schema.json#/properties/authorization_tier"},
-    "ci_tier_check": {"$ref": "runtime_tier_authorization.schema.json#/properties/ci_tier_check"},
-    "tier_attestation_ref": {"type": "string", "minLength": 1},
+    "merge_state": {"const": "CLEAN"},
+    "profile": {"enum": ["fastlane", "standard", "heavy"]},
     "enforcement_sensitive": {"type": "boolean"},
-    "sensitive_route": {"enum": ["approved_spec", "spec_revision"]},
     "sensitive_classification": {
       "type": "object",
+      "additionalProperties": false,
       "required": [
         "source",
         "changed_paths",
@@ -241,560 +75,28 @@
         "registry_configured",
         "enforcement_sensitive"
       ],
-      "additionalProperties": false,
       "properties": {
-        "source": {
-          "enum": ["github_changed_files", "tech_spec"]
-        },
-        "changed_paths": {
-          "type": "array",
-          "items": {"type": "string", "minLength": 1}
-        },
-        "spec_refs": {
-          "type": "array",
-          "items": {"type": "string", "minLength": 1}
-        },
-        "matched_paths": {
-          "type": "array",
-          "items": {"type": "string", "minLength": 1}
-        },
-        "matched_specs": {
-          "type": "array",
-          "items": {"type": "string", "minLength": 1}
-        },
+        "source": {"enum": ["github_changed_files", "tech_spec"]},
+        "changed_paths": {"type": "array", "items": {"type": "string"}},
+        "spec_refs": {"type": "array", "items": {"type": "string"}},
+        "matched_paths": {"type": "array", "items": {"type": "string"}},
+        "matched_specs": {"type": "array", "items": {"type": "string"}},
         "registry_configured": {"type": "boolean"},
         "enforcement_sensitive": {"type": "boolean"}
       }
     },
-    "approved_spec": {
+    "review": {"$ref": "review_result.schema.json"},
+    "gate_invocation_id": {"type": "string", "minLength": 1},
+    "human_merge_authorization": {
       "type": "object",
-      "required": [
-        "repository",
-        "issue",
-        "spec_paths",
-        "content_hashes",
-        "spec_revisions",
-        "approved_at",
-        "maintainer_actor",
-        "state_source",
-        "state_trusted",
-        "default_base_ref",
-        "default_base_sha"
-      ],
       "additionalProperties": false,
+      "required": ["actor", "authorized_at", "head_sha", "invocation_id"],
       "properties": {
-        "repository": {"type": "string", "minLength": 1},
-        "issue": {"type": "integer", "minimum": 1},
-        "spec_paths": {
-          "type": "array",
-          "minItems": 2,
-          "items": {"type": "string", "minLength": 1}
-        },
-        "content_hashes": {"type": "object"},
-        "spec_revisions": {
-          "type": "object",
-          "minProperties": 2,
-          "additionalProperties": {
-            "type": "object",
-            "required": [
-              "source_commit_sha",
-              "pr_number",
-              "merged_at",
-              "merge_commit_sha"
-            ],
-            "additionalProperties": false,
-            "properties": {
-              "source_commit_sha": {
-                "type": "string",
-                "pattern": "^[0-9a-fA-F]{40}$"
-              },
-              "pr_number": {"type": "integer", "minimum": 1},
-              "merged_at": {"type": "string", "minLength": 1},
-              "merge_commit_sha": {
-                "type": "string",
-                "pattern": "^[0-9a-fA-F]{40}$"
-              }
-            }
-          }
-        },
-        "approved_at": {"type": "string", "minLength": 1},
-        "maintainer_actor": {"type": "string", "minLength": 1},
-        "state_source": {"const": "label"},
-        "state_trusted": {"const": true},
-        "default_base_ref": {"type": "string", "minLength": 1},
-        "default_base_sha": {
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{40}$"
-        }
-      }
-    },
-    "spec_approval": {
-      "type": "object",
-      "required": [
-        "lifecycle_state",
-        "state_source",
-        "state_trusted",
-        "maintainer_actor",
-        "approved_at",
-        "approval_source",
-        "approval_url",
-        "commit_oid",
-        "artifact_paths",
-        "spec_artifacts_sha256"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "lifecycle_state": {"const": "spec_approved"},
-        "state_source": {"const": "label"},
-        "state_trusted": {"const": true},
-        "maintainer_actor": {"type": "string", "minLength": 1},
-        "approved_at": {"type": "string", "minLength": 1},
-        "approval_source": {"const": "github_pr_review"},
-        "approval_url": {"type": "string", "minLength": 1},
-        "commit_oid": {
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{40}$"
-        },
-        "artifact_paths": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"type": "string", "minLength": 1}
-        },
-        "spec_artifacts_sha256": {
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{64}$"
-        }
-      }
-    },
-    "issue_reference": {
-      "type": "object",
-      "required": [
-        "number",
-        "kind",
-        "source",
-        "verified",
-        "closing_issue_numbers"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "number": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "kind": {
-          "enum": ["closing", "partial"]
-        },
-        "source": {
-          "enum": ["closingIssuesReferences", "pr_body"]
-        },
-        "verified": {
-          "type": "boolean"
-        },
-        "state": {
-          "type": "string",
-          "minLength": 1
-        },
-        "url": {
-          "type": "string",
-          "minLength": 1
-        },
-        "closing_issue_numbers": {
-          "type": "array",
-          "items": {
-            "type": "integer",
-            "minimum": 1
-          }
-        }
-      }
-    },
-    "head_sha": {
-      "type": "string",
-      "minLength": 7
-    },
-    "gate_query_completed_at": {
-      "type": "string",
-      "minLength": 1
-    },
-    "gate_started_at": {
-      "type": "string",
-      "minLength": 1
-    },
-    "review_completed_at": {
-      "type": "string",
-      "minLength": 1
-    },
-    "gate_query_head_sha": {
-      "type": "string",
-      "minLength": 7
-    },
-    "merge_dispatched_at": {
-      "type": "string",
-      "minLength": 1
-    },
-    "merge_head_sha": {
-      "type": "string",
-      "minLength": 7
-    },
-    "merge_state": {
-      "type": "string",
-      "minLength": 1
-    },
-    "lane_failures": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["lane_id", "failure_kind", "observed_marker"],
-        "additionalProperties": true,
-        "properties": {
-          "lane_id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "failure_kind": {
-            "enum": ["usage_limit", "crash", "zero_output", "closed", "other"]
-          },
-          "observed_marker": {
-            "type": "string",
-            "minLength": 1
-          },
-          "pr": {"type": "integer", "minimum": 1},
-          "head_sha": {"type": "string", "minLength": 7},
-          "detail": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "checks": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["name", "status", "conclusion"],
-        "additionalProperties": false,
-        "allOf": [
-          {
-            "if": {"required": ["content_binding_version"]},
-            "then": {"required": ["artifact_id", "head_sha", "covered_categories", "content_bindings"]},
-            "else": {
-              "properties": {
-                "covered_categories": {"const": null},
-                "content_bindings": {"const": null}
-              }
-            }
-          }
-        ],
-        "properties": {
-          "artifact_id": {"type": "string", "minLength": 1},
-          "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$"},
-          "content_binding_version": {"const": 1},
-          "covered_categories": {
-            "type": "array",
-            "minItems": 1,
-            "items": {"enum": ["code_inputs", "spec_files", "pr_metadata"]}
-          },
-          "content_bindings": {
-            "type": "object",
-            "minProperties": 1,
-            "additionalProperties": false,
-            "properties": {
-              "code_inputs": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-              "spec_files": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-              "pr_metadata": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-            }
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "status": {
-            "type": "string",
-            "minLength": 1
-          },
-          "conclusion": {
-            "type": "string"
-          },
-          "url": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "checks_unavailable": {
-      "type": "object",
-      "required": ["reason", "base_ref", "default_base_ref", "workflow_trigger_evidence", "local_verification", "verified"],
-      "additionalProperties": false,
-      "properties": {
-        "reason": {"enum": ["hosted_ci_not_triggered_for_base"]},
-        "base_ref": {"type": "string", "minLength": 1},
-        "default_base_ref": {"type": "string", "minLength": 1},
-        "workflow_trigger_evidence": {"type": "string", "minLength": 1},
-        "local_verification": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-        "verified": {"const": true}
-      }
-    },
-    "reviews": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["author", "state"],
-        "additionalProperties": false,
-        "properties": {
-          "author": {
-            "type": "string",
-            "minLength": 1
-          },
-          "state": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      }
-    },
-    "review_threads": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["is_resolved", "is_outdated", "resolved_by", "resolver_role", "original_author", "original_comment_id"],
-        "additionalProperties": true,
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "url": {
-            "type": "string"
-          },
-          "is_resolved": {
-            "type": "boolean"
-          },
-          "is_outdated": {
-            "type": "boolean"
-          },
-          "actionable": {
-            "type": "boolean"
-          },
-          "resolved_by": {
-            "type": "string",
-            "minLength": 1
-          },
-          "original_author": {
-            "type": "string",
-            "minLength": 1
-          },
-          "original_comment_id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "resolver_role": {
-            "enum": ["reviewer_lane", "human", "implementer", "orchestrator", "coordinator", "unknown"]
-          },
-          "resolver_role_source": {
-            "enum": ["explicit_map", "github_payload"]
-          },
-          "lane_id": {"type": "string", "minLength": 1},
-          "successor_of": {"type": "string", "minLength": 1},
-          "external_root": {
-            "type": "object",
-            "required": ["author", "review_execution"],
-            "additionalProperties": false,
-            "properties": {
-              "author": {"type": "string", "minLength": 1},
-              "review_execution": {"const": "hosted"}
-            }
-          },
-          "re_review_artifact_id": {"type": "string", "minLength": 1},
-          "authorized_human_maintainer": {"type": "boolean"}
-        }
-      }
-    },
-    "review_evidence": {
-      "type": "object",
-      "required": [
-        "manifest_path",
-        "manifest_sha256",
-        "pr",
-        "head_sha",
-        "review_source",
-        "review_execution",
-        "review_completed_at",
-        "human_final_review_required",
-        "lane_roster",
-        "artifacts",
-        "current_artifact_ids",
-        "errors",
-        "blocking_reasons"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "manifest_path": {"type": "string", "minLength": 1},
-        "manifest_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
-        "pr": {"type": "integer", "minimum": 1},
+        "actor": {"type": "string", "minLength": 1},
+        "authorized_at": {"type": "string", "minLength": 1},
         "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
-        "review_source": {"enum": ["independent_lane", "self_review"]},
-        "review_execution": {"enum": ["local", "hosted"]},
-        "review_completed_at": {"type": "string", "minLength": 1},
-        "human_final_review_required": {"type": "boolean"},
-        "lane_roster": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "required": ["lane_id", "producer_identity"],
-            "additionalProperties": false,
-            "properties": {
-              "lane_id": {"type": "string", "minLength": 1},
-              "producer_identity": {"type": "string", "minLength": 1},
-              "successor_of": {"type": "string", "minLength": 1}
-            }
-          }
-        },
-        "artifacts": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"type": "object", "minProperties": 1}
-        },
-        "current_artifact_ids": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"type": "string", "minLength": 1}
-        },
-        "round_audit": {
-          "type": "object",
-          "required": ["policy", "cap", "total_rounds", "rounds"],
-          "additionalProperties": false,
-          "properties": {
-            "policy": {"const": "bounded_diff_v1"},
-            "cap": {"const": 3},
-            "total_rounds": {"type": "integer", "minimum": 1},
-            "rounds": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "required": [
-                  "artifact_id",
-                  "review_round",
-                  "review_mode",
-                  "base_head_sha",
-                  "head_sha",
-                  "diff_sha256",
-                  "escalation_authorization_id"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "artifact_id": {"type": "string", "minLength": 1},
-                  "review_round": {"type": "integer", "minimum": 1},
-                  "review_mode": {"enum": ["full", "resumed", "diff_only"]},
-                  "base_head_sha": {
-                    "anyOf": [
-                      {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
-                      {"type": "null"}
-                    ]
-                  },
-                  "head_sha": {
-                    "type": "string",
-                    "pattern": "^[0-9a-fA-F]{40}$"
-                  },
-                  "diff_sha256": {
-                    "anyOf": [
-                      {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
-                      {"type": "null"}
-                    ]
-                  },
-                  "escalation_authorization_id": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-                      },
-                      {"type": "null"}
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        },
-        "errors": {"type": "array", "items": {"type": "string"}},
-        "blocking_reasons": {"type": "array", "items": {"type": "string"}}
+        "invocation_id": {"type": "string", "minLength": 1}
       }
-    },
-    "round_cap_authorizations": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": [
-          "authorization_id",
-          "pr",
-          "prior_head_sha",
-          "target_head_sha",
-          "review_round",
-          "decision",
-          "actor",
-          "source",
-          "authorized_at",
-          "authorized_human_maintainer"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "authorization_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-          },
-          "pr": {"type": "integer", "minimum": 1},
-          "prior_head_sha": {
-            "type": "string",
-            "pattern": "^[0-9a-fA-F]{40}$"
-          },
-          "target_head_sha": {
-            "type": "string",
-            "pattern": "^[0-9a-fA-F]{40}$"
-          },
-          "review_round": {"type": "integer", "minimum": 4},
-          "decision": {"const": "continue_once"},
-          "actor": {"type": "string", "minLength": 1},
-          "source": {"type": "string", "minLength": 1},
-          "authorized_at": {"type": "string", "minLength": 1},
-          "authorized_human_maintainer": {"const": true}
-        }
-      }
-    },
-    "merge_record": {
-      "type": ["object", "null"],
-      "required": ["remote_confirmed"],
-      "additionalProperties": true,
-      "properties": {
-        "merge_path": {
-          "enum": ["gh_pr_merge", "api_fallback", "merged_by_other"],
-          "description": "How the merge landed: gh pr merge from a neutral cwd, the gh api PUT fallback for locally checked-out branches, or merged by someone else."
-        },
-        "remote_confirmed": {
-          "type": "boolean",
-          "description": "True only after a remote query (gh pr view --json merged,mergeCommit) confirmed the outcome."
-        },
-        "merge_commit_sha": {
-          "type": ["string", "null"]
-        },
-        "branch_deletion_outcome": {
-          "type": ["string", "null"]
-        }
-      }
-    },
-    "review_source": {
-      "enum": ["independent_lane", "self_review"],
-      "description": "Source of the merge review. Only independent_lane satisfies the independent-review requirement."
-    },
-    "review_execution": {
-      "enum": ["local", "hosted"],
-      "description": "Execution provenance derived from the trusted review manifest. hosted is supplemental only."
-    },
-    "human_authorization": {
-      "$ref": "pr_review_authorizations.schema.json#/properties/human_authorization"
-    },
-    "self_review_authorization": {
-      "$ref": "pr_review_authorizations.schema.json#/properties/self_review_authorization"
     }
   }
 }

@@ -780,13 +780,12 @@ def test_sensitive_issue_adapter_serializes_allowed_implement_route(
     result, payload = run_implement_route(repo, evidence, tmp_path)
 
     assert evidence["repository"] == "example/consumer"
-    assert evidence["base_ref"] == "main"
-    assert evidence["default_base_sha"] == head
     assert evidence["enforcement_sensitive"] is True
-    assert evidence["approved_spec"]["maintainer_actor"] == "maintainer"
+    assert "approved_spec" not in evidence
+    assert "default_base_sha" not in evidence
     assert result.returncode == 0, result.stderr
     assert payload["decision"] == "allowed"
-    assert "approved spec evidence revalidated" in payload["satisfied"]
+    assert "sensitive classification derived from current tech spec" in payload["satisfied"]
 
 
 @pytest.mark.parametrize(
@@ -816,7 +815,7 @@ def test_sensitive_issue_adapter_does_not_upgrade_untrusted_or_missing_label(
     assert expected_missing in payload["missing"]
 
 
-def test_sensitive_issue_adapter_evidence_blocks_default_base_drift(
+def test_sensitive_issue_adapter_does_not_copy_default_base_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -830,12 +829,13 @@ def test_sensitive_issue_adapter_evidence_blocks_default_base_drift(
 
     result, payload = run_implement_route(repo, evidence, tmp_path)
 
-    assert result.returncode == 1
-    assert payload["decision"] == "blocked"
-    assert any("default base SHA" in reason for reason in payload["reasons"])
+    assert "base_sha" not in evidence
+    assert "default_base_sha" not in evidence
+    assert result.returncode == 0
+    assert payload["decision"] == "allowed"
 
 
-def test_sensitive_issue_adapter_evidence_blocks_spec_drift(
+def test_sensitive_issue_adapter_uses_current_spec_without_approval_ledger(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -846,13 +846,10 @@ def test_sensitive_issue_adapter_evidence_blocks_spec_drift(
     product = repo / "specs" / "GH16" / "product.md"
     product.write_text(product.read_text(encoding="utf-8") + "\ndrift\n", encoding="utf-8")
     commit_all(repo, "change approved spec")
-    current_head = update_origin_main(repo)
-    evidence["base_sha"] = current_head
-    evidence["default_base_sha"] = current_head
-    evidence["approved_spec"]["default_base_sha"] = current_head
+    update_origin_main(repo)
 
     result, payload = run_implement_route(repo, evidence, tmp_path)
 
-    assert result.returncode == 1
-    assert payload["decision"] == "blocked"
-    assert any("content changed" in reason for reason in payload["reasons"])
+    assert "approved_spec" not in evidence
+    assert result.returncode == 0
+    assert payload["decision"] == "allowed"

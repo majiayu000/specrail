@@ -1,57 +1,84 @@
 #!/usr/bin/env python3
-"""Evaluate deterministic PR merge-readiness evidence.
-
-The gate is intentionally offline. GitHub or threads adapters may collect the
-evidence JSON, but this script only evaluates it and never writes remote state.
-"""
+"""Evaluate compact, current-head PR merge-readiness evidence."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from evidence_content_binding import (
-    content_bindings_match,
-    validate_component_binding,
-    validate_content_binding,
-)
-from github_evidence_common import EvidenceError, trusted_ci_coverage
-from pr_review_contract import evaluate_review_contract_with_items
-from review_result_semantics import evaluate_review_evidence
 from rejection_items import (
     add_prior_rejection_argument,
     apply_prior_rejection,
     finalize_items,
-    item_from_missing,
     item_from_reason,
     items_from_legacy,
 )
-from runtime_tier_authorization import (
-    AUTHORIZATION_TIERS,
-    STANDARD_AUTO_TIERS,
-    _valid_pr_tier_evidence,
-    pr_tier_evidence_identity_errors,
-)
-from sensitive_enforcement import (
-    evaluate_sensitive_evidence_with_items,
-    sensitive_registry,
-)
-from spec_revision_evidence import (
-    spec_revision_route_eligible,
-    validate_spec_revision_evidence,
-)
-from pr_evidence_items import (
-    _check_items,
-    _issue_reference_items,
-    _merge_record_items,
-)
+from review_json_gate import evaluate_review_gate
+from sensitive_enforcement import classify_sensitive_changes
 from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
+CONTRACT_VERSION = 3
+PROFILES = {"fastlane", "standard", "heavy"}
 CLEAN_MERGE_STATES = {"CLEAN"}
+SUCCESS_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+EVIDENCE_KEYS = {
+    "base_sha",
+    "changed_files",
+    "changed_files_count",
+    "changed_files_sha256",
+    "checks",
+    "contract_version",
+    "enforcement_sensitive",
+    "gate_invocation_id",
+    "gate_query_head_sha",
+    "head_sha",
+    "human_merge_authorization",
+    "is_draft",
+    "linked_issue",
+    "merge_state",
+    "pr",
+    "profile",
+    "repository",
+    "review",
+    "sensitive_classification",
+    "state",
+}
+LEGACY_EVIDENCE_FIELDS = {
+    "approved_spec",
+    "content_binding_version",
+    "content_hashes",
+    "gate_started_at",
+    "human_authorization",
+    "issue_reference",
+    "lane_failures",
+    "merge_dispatched_at",
+    "merge_head_sha",
+    "pr_tier",
+    "pr_tier_evidence",
+    "reused_components",
+    "review_completed_at",
+    "review_evidence",
+    "review_execution",
+    "review_source",
+    "review_threads",
+    "reviews",
+    "round_cap_authorizations",
+    "runtime_checkpoint",
+    "self_review_authorization",
+    "sensitive_route",
+    "snapshot",
+    "spec_approval",
+    "tier_attestation",
+    "tier_dispute",
+}
+SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 def _non_empty_string(value: Any) -> bool:
@@ -64,355 +91,149 @@ def _positive_int(value: Any) -> bool:
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise ValueError(f"cannot read evidence file {path}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid evidence JSON {path}: {exc.msg}") from exc
-    if not isinstance(data, dict):
+    if not isinstance(value, dict):
         raise ValueError("evidence JSON must be an object")
-    return data
+    return value
 
 
-def _binding_payload(evidence: dict[str, Any]) -> dict[str, Any] | None:
-    keys = ["content_binding_version", "snapshot", "content_hashes"]
-    if not any(key in evidence for key in keys):
-        return None
-    return {key: evidence.get(key) for key in keys}
-
-
-def _reusable_components(evidence: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    components: list[tuple[str, dict[str, Any]]] = []
-    checks = evidence.get("checks")
-    if isinstance(checks, list):
-        components.extend(
-            ("CI check", item) for item in checks if isinstance(item, dict)
-        )
-    review = evidence.get("review_evidence")
-    artifacts = review.get("artifacts") if isinstance(review, dict) else None
-    current_ids = review.get("current_artifact_ids") if isinstance(review, dict) else None
-    if isinstance(artifacts, list):
-        components.extend(
-            ("review artifact", item)
-            for item in artifacts
-            if isinstance(item, dict)
-            and isinstance(current_ids, list)
-            and item.get("artifact_id") in current_ids
-        )
-    return components
-
-
-def _configured_ci_coverage(
-    config: PackConfig | None, check_name: Any,
-) -> tuple[str, ...]:
-    if config is None:
-        raise EvidenceError("repo-owned CI coverage configuration is unavailable")
-    if not _non_empty_string(check_name):
-        raise EvidenceError("check name must be a non-empty string")
-    coverage = trusted_ci_coverage(config, check_name)
-    if coverage is None:
-        raise EvidenceError(
-            f"check {check_name.strip()!r} has no valid trusted CI coverage mapping"
-        )
-    return coverage
-
-
-def _content_binding_items(
-    evidence: dict[str, Any],
-    config: PackConfig | None = None,
-) -> tuple[list[str], list[str], list[str]]:
-    """Validate v1 components and their complete previous-head reuse audit."""
-
-    payload = _binding_payload(evidence)
-    audits = evidence.get("reused_components")
-    components = _reusable_components(evidence)
-    versioned_components = [
-        (kind, item)
-        for kind, item in components
-        if any(
-            key in item
-            for key in [
-                "content_binding_version",
-                "covered_categories",
-                "content_bindings",
-            ]
-        )
-    ]
-    if payload is None and not versioned_components and audits is None:
-        return ["legacy component evidence uses current exact-head wrapper"], [], []
-    if payload is None:
-        return [], ["content_binding"], ["v1 component reuse requires current content binding"]
-    try:
-        current = validate_content_binding(payload)
-    except EvidenceError as exc:
-        return [], [], [f"current content binding is invalid: {exc}"]
-    reasons: list[str] = []
-    satisfied: list[str] = []
-    if current["snapshot"]["head_sha"] != evidence.get("head_sha"):
-        reasons.append("current content binding snapshot.head_sha must match head_sha")
-    if not isinstance(audits, list):
-        return satisfied, ["reused_components"], [
-            *reasons,
-            "v1 current wrapper requires reused_components audit list",
-        ]
-
-    audit_by_id: dict[str, dict[str, Any]] = {}
-    for index, audit in enumerate(audits):
-        if not isinstance(audit, dict):
-            reasons.append(f"reused_components[{index}] must be an object")
-            continue
-        artifact_id = audit.get("artifact_id")
-        if not _non_empty_string(artifact_id):
-            reasons.append(f"reused_components[{index}].artifact_id must be non-empty")
-        elif artifact_id in audit_by_id:
-            reasons.append(f"duplicate reused component audit: {artifact_id}")
-        else:
-            audit_by_id[str(artifact_id)] = audit
-
-    expected_reused: set[str] = set()
-    for kind, component in components:
-        component_id = component.get("artifact_id")
-        component_head = component.get("head_sha")
-        versioned = any(
-            key in component
-            for key in [
-                "content_binding_version",
-                "covered_categories",
-                "content_bindings",
-            ]
-        )
-        if not versioned:
-            if _non_empty_string(component_head) and component_head != evidence.get("head_sha"):
-                reasons.append(f"legacy {kind} head_sha must match current head")
-            continue
-        try:
-            covered, original = validate_component_binding(component)
-            matches = content_bindings_match(component, current["content_hashes"])
-        except EvidenceError as exc:
-            reasons.append(f"{kind} content binding is invalid: {exc}")
-            continue
-        if kind == "CI check":
-            try:
-                trusted_coverage = _configured_ci_coverage(
-                    config, component.get("name")
-                )
-            except EvidenceError as exc:
-                reasons.append(f"v1 CI check trusted coverage is invalid: {exc}")
-                continue
-            check_name = str(component.get("name") or "")
-            if covered != trusted_coverage:
-                reasons.append(
-                    f"v1 CI check {check_name!r} trusted CI coverage must equal "
-                    f"{list(trusted_coverage)}"
-                )
-                continue
-        if not matches:
-            reasons.append(f"{kind} covered content bindings do not match current snapshot")
-            continue
-        if not _non_empty_string(component_head):
-            reasons.append(f"v1 {kind} head_sha must be non-empty")
-            continue
-        if component_head == evidence.get("head_sha"):
-            satisfied.append(f"current-head {kind} content bindings validated")
-            continue
-        if not _non_empty_string(component_id):
-            reasons.append(f"reused {kind} artifact_id must be non-empty")
-            continue
-        expected_reused.add(str(component_id))
-        audit = audit_by_id.get(str(component_id))
-        if audit is None:
-            reasons.append(f"reused {kind} lacks audit: {component_id}")
-            continue
-        expected_current = {
-            category: current["content_hashes"][category] for category in covered
-        }
-        expected = {
-            "original_head_sha": component_head,
-            "covered_categories": list(covered),
-            "original_content_bindings": original,
-            "current_content_bindings": expected_current,
-            "collector_provenance": current["snapshot"],
-        }
-        for key, value in expected.items():
-            if audit.get(key) != value:
-                reasons.append(f"reused component audit {component_id}.{key} is invalid")
-        if not _non_empty_string(audit.get("reason")):
-            reasons.append(f"reused component audit {component_id}.reason must be non-empty")
-        satisfied.append(f"reused {kind} coverage matched: {component_id}")
-    extra = sorted(set(audit_by_id) - expected_reused)
-    if extra:
-        reasons.append("reused_components contains non-reused or unknown artifacts: " + ", ".join(extra))
-    return satisfied, [], reasons
-
-
-def _validated_sensitive_route_audit(
-    config: PackConfig,
-    repo: Path,
-    evidence: dict[str, Any],
-    classification: dict[str, Any],
-) -> dict[str, Any]:
-    """Derive route-specific audit output only from revalidated evidence."""
-
-    issue = evidence.get("linked_issue")
-    repository = evidence.get("repository")
-    if not _positive_int(issue) or not _non_empty_string(repository):
-        raise SpecRailError(
-            "linked issue and repository are required for sensitive route audit"
-        )
-
-    eligibility = spec_revision_route_eligible(config, issue, classification)
-    if eligibility.eligible:
-        approval = validate_spec_revision_evidence(
-            config,
-            repo,
-            evidence,
-            repository=repository.strip(),
-            issue=issue,
-            gated_head_sha=evidence.get("head_sha"),
-            classification=classification,
-        )
-        return {
-            "sensitive_route": "spec_revision",
-            "linked_issue": issue,
-            "artifact_paths": list(approval["artifact_paths"]),
-            "maintainer_actor": approval["maintainer_actor"],
-            "approved_at": approval["approved_at"],
-            "approval_source": approval["approval_source"],
-            "approval_url": approval["approval_url"],
-            "commit_oid": approval["commit_oid"],
-            "spec_artifacts_sha256": approval["spec_artifacts_sha256"],
-        }
-
-    if evidence.get("sensitive_route") != "approved_spec":
-        raise SpecRailError(
-            "non-spec-revision sensitive evidence requires "
-            "sensitive_route=approved_spec"
-        )
-    approved = evidence.get("approved_spec")
-    if not isinstance(approved, dict):
-        raise SpecRailError("approved_spec audit requires validated approved_spec evidence")
-    return {
-        "sensitive_route": "approved_spec",
-        "linked_issue": issue,
-        "artifact_paths": list(approved["spec_paths"]),
-        "maintainer_actor": approved["maintainer_actor"],
-        "approved_at": approved["approved_at"],
-        "state_source": approved["state_source"],
-        "default_base_ref": approved["default_base_ref"],
-        "default_base_sha": approved["default_base_sha"],
-        "content_hashes": dict(approved["content_hashes"]),
-    }
-
-
-def _tier_substantiation_reference(evidence: dict[str, Any]) -> str | None:
-    """GH-143 defense in depth: standard_auto needs an independent reference.
-
-    Self-reported pr_tier_evidence alone never satisfies the authorization
-    item; the evidence must also reference independent substantiation —
-    either a ci_tier_check artifact reference or a tier_attestation_ref
-    pointing at review evidence whose review_source is independent_lane.
-    """
-    ci_tier_check = evidence.get("ci_tier_check")
-    if isinstance(ci_tier_check, dict) and _non_empty_string(
-        ci_tier_check.get("evidence")
-    ):
-        return "ci_tier_check artifact reference"
-    if _non_empty_string(evidence.get("tier_attestation_ref")):
-        review_evidence = evidence.get("review_evidence")
-        review_source = (
-            review_evidence.get("review_source")
-            if isinstance(review_evidence, dict)
-            else None
-        )
-        if review_source == "independent_lane":
-            return "tier_attestation_ref backed by independent_lane review evidence"
-    return None
-
-
-def _authorization_item(
-    evidence: dict[str, Any],
-    *,
-    enforcement_sensitive: bool = False,
-) -> tuple[list[str], list[str], list[str]]:
-    """GH-143 B-007: tier-scoped authorization or per-PR human authorization.
-
-    standard_auto on a non-sensitive fastlane/standard PR with tier evidence
-    plus an independent substantiation reference satisfies the authorization
-    item. Every other case (heavy, sensitive, missing tier evidence or
-    substantiation, out-of-set authorization_tier) keeps the existing
-    human_authorization requirement.
-    """
-    reasons: list[str] = []
-    tier = evidence.get("authorization_tier")
-    if tier is not None and tier not in AUTHORIZATION_TIERS:
-        allowed = ", ".join(sorted(AUTHORIZATION_TIERS))
-        reasons.append(f"authorization_tier must be one of: {allowed}")
-        tier = None
-    if tier == "standard_auto":
-        pr_tier = evidence.get("pr_tier")
-        substantiation = _tier_substantiation_reference(evidence)
-        tier_value = evidence.get("pr_tier_evidence")
-        tier_errors = (
-            pr_tier_evidence_identity_errors(
-                tier_value,
-                expected_head_sha=evidence.get("head_sha"),
-                expected_base_ref=evidence.get("base_ref"),
-                expected_base_sha=evidence.get("base_sha"),
-            )
-            if tier_value is not None
-            else []
-        )
-        reasons.extend(tier_errors)
-        if (
-            pr_tier in STANDARD_AUTO_TIERS
-            and _valid_pr_tier_evidence(evidence.get("pr_tier_evidence"))
-            and not tier_errors
-            and not enforcement_sensitive
-            and substantiation is not None
-        ):
-            return (
-                [
-                    f"tier authorization: standard_auto (pr_tier={pr_tier}), "
-                    f"substantiated by {substantiation}"
-                ],
-                [],
-                reasons,
-            )
-    authorization = evidence.get("human_authorization")
-    if not isinstance(authorization, dict):
-        return [], ["human_authorization"], reasons
-    missing = []
-    for key in ["actor", "source"]:
-        if not _non_empty_string(authorization.get(key)):
-            missing.append(f"human_authorization.{key}")
-    if missing:
-        return [], missing, reasons
-    return (
-        [f"human authorization from {authorization['actor']} via {authorization['source']}"],
-        [],
-        reasons,
+def _current_checkout_head(repo: Path) -> str | None:
+    completed = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip()
 
 
-def _tier_base_identity_items(
-    evidence: dict[str, Any],
-) -> tuple[list[str], list[str], list[str]]:
-    """Bind trusted tier evidence to the current PR base snapshot."""
+def _changed_files_digest(paths: list[str]) -> str:
+    return hashlib.sha256(
+        json.dumps(paths, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
-    tier_evidence = evidence.get("pr_tier_evidence")
-    if not isinstance(tier_evidence, dict):
-        return [], [], []
+
+def _validate_checks(checks: Any, head_sha: Any) -> tuple[list[str], list[str], list[str]]:
+    satisfied: list[str] = []
     missing: list[str] = []
     reasons: list[str] = []
-    for field in ["base_ref", "base_sha"]:
-        current = evidence.get(field)
-        if not _non_empty_string(current):
-            missing.append(field)
-        elif current != tier_evidence.get(field):
-            reasons.append(f"{field} must match pr_tier_evidence.{field}")
-    if missing or reasons:
-        return [], missing, reasons
-    return ["trusted tier evidence matches current PR base identity"], [], []
+    if not isinstance(checks, list) or not checks:
+        return satisfied, ["checks"], reasons
+    names: set[str] = set()
+    for index, check in enumerate(checks, start=1):
+        prefix = f"check #{index}"
+        if not isinstance(check, dict):
+            reasons.append(f"{prefix} must be an object")
+            continue
+        unknown = sorted(set(check) - {"name", "status", "conclusion", "head_sha", "url"})
+        if unknown:
+            reasons.append(f"{prefix} contains unsupported fields: {', '.join(unknown)}")
+        name = check.get("name")
+        if not _non_empty_string(name):
+            reasons.append(f"{prefix} name must be a non-empty string")
+        elif str(name) in names:
+            reasons.append(f"duplicate CI check name: {name}")
+        else:
+            names.add(str(name))
+        if check.get("head_sha") != head_sha:
+            reasons.append(f"{prefix} head_sha must match the gated head")
+        if check.get("status") != "COMPLETED":
+            reasons.append(f"{prefix} status must be COMPLETED")
+        if check.get("conclusion") not in SUCCESS_CONCLUSIONS:
+            reasons.append(f"{prefix} conclusion is not successful")
+    if not reasons:
+        satisfied.append(f"{len(checks)} current-head CI checks passed")
+    return satisfied, missing, reasons
+
+
+def _validate_sensitive(
+    evidence: dict[str, Any],
+    *,
+    repo: Path | None,
+    config: PackConfig | None,
+) -> tuple[bool, dict[str, Any] | None, list[str], list[str]]:
+    satisfied: list[str] = []
+    reasons: list[str] = []
+    reported = evidence.get("sensitive_classification")
+    if repo is None or config is None:
+        if evidence.get("enforcement_sensitive") is True:
+            reasons.append("heavy evidence requires repository-owned sensitive classification")
+        return bool(evidence.get("enforcement_sensitive")), None, satisfied, reasons
+    paths = evidence.get("changed_files")
+    if not isinstance(paths, list):
+        reasons.append("changed_files must be an array")
+        return False, None, satisfied, reasons
+    try:
+        classification = classify_sensitive_changes(
+            config,
+            repo,
+            paths,
+            paths,
+            source="github_changed_files",
+        )
+    except SpecRailError as exc:
+        reasons.append(str(exc))
+        return False, None, satisfied, reasons
+    computed = bool(classification["enforcement_sensitive"])
+    if reported != classification:
+        reasons.append(
+            "sensitive_classification conflicts with repository registry calculation"
+        )
+    if evidence.get("enforcement_sensitive") is not computed:
+        reasons.append("enforcement_sensitive conflicts with repository sensitive registry")
+    if computed:
+        satisfied.append("sensitive paths classified as heavy")
+        checkout_head = _current_checkout_head(repo)
+        if checkout_head != evidence.get("head_sha"):
+            reasons.append("sensitive PR gate requires an exact current-head checkout")
+    else:
+        satisfied.append("changed files do not match the sensitive registry")
+    return computed, classification, satisfied, reasons
+
+
+def _validate_authorization(
+    evidence: dict[str, Any],
+    *,
+    required: bool,
+) -> tuple[list[str], list[str], list[str]]:
+    satisfied: list[str] = []
+    missing: list[str] = []
+    reasons: list[str] = []
+    authorization = evidence.get("human_merge_authorization")
+    if authorization is None:
+        if required:
+            missing.append("human_merge_authorization")
+        return satisfied, missing, reasons
+    if not isinstance(authorization, dict):
+        return satisfied, missing, ["human_merge_authorization must be an object"]
+    required_fields = {"actor", "authorized_at", "head_sha", "invocation_id"}
+    unknown = sorted(set(authorization) - required_fields)
+    absent = sorted(required_fields - set(authorization))
+    if unknown:
+        reasons.append(
+            "human_merge_authorization contains unsupported fields: "
+            + ", ".join(unknown)
+        )
+    missing.extend(f"human_merge_authorization.{field}" for field in absent)
+    for field in ("actor", "authorized_at", "invocation_id"):
+        if field in authorization and not _non_empty_string(authorization.get(field)):
+            reasons.append(f"human_merge_authorization.{field} must be non-empty")
+    if authorization.get("head_sha") != evidence.get("head_sha"):
+        reasons.append("human_merge_authorization.head_sha must match the gated head")
+    if authorization.get("invocation_id") != evidence.get("gate_invocation_id"):
+        reasons.append(
+            "human_merge_authorization.invocation_id must match the current gate invocation"
+        )
+    if not reasons and not missing:
+        satisfied.append("current-invocation human merge authorization validated")
+    return satisfied, missing, reasons
 
 
 def evaluate_pr_gate(
@@ -420,269 +241,190 @@ def evaluate_pr_gate(
     repo: Path | None = None,
     config: PackConfig | None = None,
 ) -> dict[str, Any]:
-    """Evaluate merge-readiness evidence and return a stable decision object."""
+    """Evaluate all compact PR evidence without granting merge authority."""
 
     reasons: list[str] = []
-    satisfied: list[str] = []
     missing: list[str] = []
-    items: list[dict[str, str]] = []
-    sensitive_classification: dict[str, Any] | None = None
-    sensitive_route_audit: dict[str, Any] | None = None
-    sensitive_reasons: list[str] = []
-
-    if _positive_int(evidence.get("pr")):
-        satisfied.append(f"pr: {evidence['pr']}")
-    else:
-        missing.append("pr")
-        items.append(item_from_missing("pr"))
-
-    state = str(evidence.get("state") or "").upper()
-    if state == "OPEN":
-        satisfied.append("PR state is OPEN")
-    elif state:
-        reasons.append(f"PR state must be OPEN; got {state}")
-        items.append(
-            item_from_reason(
-                f"PR state must be OPEN; got {state}", "invalid_evidence_value"
-            )
-        )
-    else:
-        missing.append("state")
-        items.append(item_from_missing("state"))
-
-    if evidence.get("is_draft") is False:
-        satisfied.append("PR is not draft")
-    elif "is_draft" not in evidence:
-        missing.append("is_draft")
-        items.append(item_from_missing("is_draft"))
-    else:
-        reasons.append("draft PR cannot merge")
-        items.append(
-            item_from_reason("draft PR cannot merge", "invalid_evidence_value")
-        )
-
-    if _non_empty_string(evidence.get("head_sha")):
-        satisfied.append(f"head_sha: {evidence['head_sha']}")
-    else:
-        missing.append("head_sha")
-        items.append(item_from_missing("head_sha"))
-
-    if _positive_int(evidence.get("linked_issue")):
-        satisfied.append(f"linked_issue: {evidence['linked_issue']}")
-    else:
-        missing.append("linked_issue")
-        items.append(item_from_missing("linked_issue"))
-
-    merge_state = str(evidence.get("merge_state") or "").upper()
-    if merge_state in CLEAN_MERGE_STATES:
-        satisfied.append(f"merge_state: {merge_state}")
-    elif merge_state:
-        reasons.append(f"merge_state must be CLEAN; got {merge_state}")
-        items.append(
-            item_from_reason(
-                f"merge_state must be CLEAN; got {merge_state}",
-                "invalid_evidence_value",
-            )
-        )
-    else:
-        missing.append("merge_state")
-        items.append(item_from_missing("merge_state"))
-
-    for checker in [
-        _check_items,
-        _issue_reference_items,
-        _merge_record_items,
-    ]:
-        checker_satisfied, checker_missing, checker_reasons = checker(evidence)
-        satisfied.extend(checker_satisfied)
-        missing.extend(checker_missing)
-        reasons.extend(checker_reasons)
-        items.extend(
-            items_from_legacy(
-                checker_missing,
-                checker_reasons,
-                missing_category="missing_evidence_field",
-                reason_category="invalid_evidence_value",
-            )
-        )
-    binding_satisfied, binding_missing, binding_reasons = _content_binding_items(
-        evidence, config
-    )
-    satisfied.extend(binding_satisfied)
-    missing.extend(binding_missing)
-    reasons.extend(binding_reasons)
-    items.extend(items_from_legacy(
-        binding_missing,
-        binding_reasons,
-        missing_category="missing_evidence_field",
-        reason_category="invalid_evidence_value",
-    ))
-    tier_satisfied, tier_missing, tier_reasons = _tier_base_identity_items(evidence)
-    satisfied.extend(tier_satisfied)
-    missing.extend(tier_missing)
-    reasons.extend(tier_reasons)
-    items.extend(items_from_legacy(
-        tier_missing,
-        tier_reasons,
-        missing_category="missing_evidence_field",
-        reason_category="invalid_evidence_value",
-    ))
-
-    review_satisfied, review_missing, review_reasons, review_items = (
-        evaluate_review_contract_with_items(
-            evidence,
-            repo,
-        )
-    )
-    satisfied.extend(review_satisfied)
-    missing.extend(review_missing)
-    reasons.extend(review_reasons)
-    items.extend(review_items)
-
-    has_sensitive_evidence = evidence.get("enforcement_sensitive") is True or any(
-        key in evidence
-        for key in [
-            "sensitive_classification",
-            "approved_spec",
-            "sensitive_route",
-            "spec_approval",
-        ]
-    )
-    if config is None and repo is not None:
-        config = load_pack(resolve_path(repo, label="repository"))
-    if config is not None:
-        registry = sensitive_registry(config)
-        has_sensitive_evidence = has_sensitive_evidence or bool(
-            registry["paths"] or registry["specs"]
-        )
-    if has_sensitive_evidence:
-        if repo is None:
-            sensitive_reasons.append(
-                "repository checkout is required to revalidate enforcement-sensitive evidence"
-            )
-            items.extend(
-                item_from_reason(reason, "config_error")
-                for reason in sensitive_reasons
-            )
-        elif config is None:
-            sensitive_reasons.append(
-                "workflow configuration is required to revalidate enforcement-sensitive evidence"
-            )
-            items.extend(
-                item_from_reason(reason, "config_error")
-                for reason in sensitive_reasons
-            )
+    satisfied: list[str] = []
+    unsupported: list[str] = []
+    for key in sorted(set(evidence) - EVIDENCE_KEYS):
+        if key in LEGACY_EVIDENCE_FIELDS:
+            unsupported.append(key)
         else:
-            sensitive_classification, sensitive_satisfied, sensitive_reasons, sensitive_items = (
-                evaluate_sensitive_evidence_with_items(
-                    config,
-                    resolve_path(repo, label="repository"),
-                    evidence,
-                    expected_source="github_changed_files",
-                    issue=evidence.get("linked_issue"),
-                    expected_base_ref=evidence.get("base_ref"),
-                    expected_base_head=evidence.get("base_sha"),
-                )
-            )
-            satisfied.extend(sensitive_satisfied)
-            items.extend(sensitive_items)
-            if (
-                not sensitive_reasons
-                and sensitive_classification is not None
-                and (
-                    evidence.get("enforcement_sensitive") is True
-                    or sensitive_classification.get("enforcement_sensitive") is True
-                )
-            ):
-                try:
-                    sensitive_route_audit = _validated_sensitive_route_audit(
-                        config,
-                        resolve_path(repo, label="repository"),
-                        evidence,
-                        sensitive_classification,
-                    )
-                except SpecRailError as exc:
-                    sensitive_reasons.append(str(exc))
-                    items.append(item_from_reason(str(exc), "contract_violation"))
-        if sensitive_reasons:
-            reasons.extend(sensitive_reasons)
-            missing.append("sensitive_enforcement")
-            items.append(item_from_missing("sensitive_enforcement"))
+            reasons.append(f"unknown PR evidence field: {key}")
+    if unsupported:
+        reasons.append(
+            "unsupported legacy evidence fields: " + ", ".join(unsupported)
+        )
 
-    enforcement_sensitive_flag = bool(
-        evidence.get("enforcement_sensitive") is True
-        or (
-            sensitive_classification
-            and sensitive_classification.get("enforcement_sensitive")
+    required = {
+        "base_sha",
+        "changed_files",
+        "changed_files_count",
+        "changed_files_sha256",
+        "checks",
+        "contract_version",
+        "enforcement_sensitive",
+        "gate_invocation_id",
+        "gate_query_head_sha",
+        "head_sha",
+        "is_draft",
+        "linked_issue",
+        "merge_state",
+        "pr",
+        "profile",
+        "repository",
+        "review",
+        "sensitive_classification",
+        "state",
+    }
+    missing.extend(sorted(required - set(evidence)))
+    if evidence.get("contract_version") != CONTRACT_VERSION:
+        reasons.append(
+            f"contract_version must be {CONTRACT_VERSION}; rebuild evidence from GitHub"
         )
+    for field in ("repository", "gate_invocation_id"):
+        if field in evidence and not _non_empty_string(evidence.get(field)):
+            reasons.append(f"{field} must be a non-empty string")
+    for field in ("pr", "linked_issue"):
+        if field in evidence and not _positive_int(evidence.get(field)):
+            reasons.append(f"{field} must be a positive integer")
+    for field in ("base_sha", "head_sha", "gate_query_head_sha"):
+        if field in evidence and (
+            not isinstance(evidence.get(field), str)
+            or not SHA_RE.fullmatch(str(evidence.get(field)))
+        ):
+            reasons.append(f"{field} must be a 40-character Git SHA")
+    if (
+        "head_sha" in evidence
+        and "gate_query_head_sha" in evidence
+        and evidence.get("head_sha") != evidence.get("gate_query_head_sha")
+    ):
+        reasons.append("gate_query_head_sha must match the gated head")
+
+    if str(evidence.get("state") or "").upper() != "OPEN":
+        reasons.append(f"PR state must be OPEN; got {evidence.get('state')!r}")
+    if evidence.get("is_draft") is not False:
+        reasons.append("draft PR cannot merge")
+    if str(evidence.get("merge_state") or "").upper() not in CLEAN_MERGE_STATES:
+        reasons.append(f"merge_state must be CLEAN; got {evidence.get('merge_state')!r}")
+
+    changed_files = evidence.get("changed_files")
+    if isinstance(changed_files, list) and all(
+        _non_empty_string(path) for path in changed_files
+    ):
+        normalized = sorted(str(path) for path in changed_files)
+        if normalized != changed_files or len(set(normalized)) != len(normalized):
+            reasons.append("changed_files must be sorted and unique")
+        if evidence.get("changed_files_count") != len(normalized):
+            reasons.append("changed_files_count does not match changed_files")
+        if evidence.get("changed_files_sha256") != _changed_files_digest(normalized):
+            reasons.append("changed_files_sha256 does not match changed_files")
+    elif "changed_files" in evidence:
+        reasons.append("changed_files must contain non-empty path strings")
+
+    ci_satisfied, ci_missing, ci_reasons = _validate_checks(
+        evidence.get("checks"), evidence.get("head_sha")
     )
-    if enforcement_sensitive_flag:
-        sensitive_review = evaluate_review_evidence(
-            evidence.get("review_evidence"),
-            expected_pr=evidence.get("pr"),
-            expected_head_sha=evidence.get("head_sha"),
-            current_binding=_binding_payload(evidence),
-            enforcement_sensitive=True,
-            repo=repo,
-        )
-        satisfied.extend(sensitive_review["satisfied"])
-        review_reasons = [
-            *sensitive_review["errors"],
-            *sensitive_review["blocking_reasons"],
-        ]
-        reasons.extend(review_reasons)
-        items.extend(
-            item_from_reason(reason, "contract_violation")
-            for reason in review_reasons
-        )
-    auth_satisfied, auth_missing, auth_reasons = _authorization_item(
-        evidence, enforcement_sensitive=enforcement_sensitive_flag
+    satisfied.extend(ci_satisfied)
+    missing.extend(ci_missing)
+    reasons.extend(ci_reasons)
+
+    if config is None and repo is not None:
+        try:
+            config = load_pack(resolve_path(repo, label="repository"))
+        except SpecRailError as exc:
+            reasons.append(str(exc))
+    sensitive, classification, sensitive_satisfied, sensitive_reasons = _validate_sensitive(
+        evidence,
+        repo=repo,
+        config=config,
+    )
+    satisfied.extend(sensitive_satisfied)
+    reasons.extend(sensitive_reasons)
+
+    profile = evidence.get("profile")
+    if profile not in PROFILES:
+        reasons.append("profile must be fastlane, standard, or heavy")
+    if sensitive and profile != "heavy":
+        reasons.append("sensitive changes must use the heavy profile")
+
+    review = evidence.get("review")
+    review_result: dict[str, Any] | None = None
+    if isinstance(review, dict):
+        review_result = evaluate_review_gate(review, "", verify_diff=False)
+        if review.get("repository") != evidence.get("repository"):
+            reasons.append("review.repository must match PR evidence")
+        if review.get("pr") != evidence.get("pr"):
+            reasons.append("review.pr must match PR evidence")
+        if review.get("head_sha") != evidence.get("head_sha"):
+            reasons.append("review.head_sha must match the gated head")
+        if review.get("profile") != profile:
+            reasons.append("review.profile must match PR evidence")
+        if review_result["decision"] == "blocked":
+            reasons.extend(
+                f"review: {reason}"
+                for reason in [*review_result["missing"], *review_result["reasons"]]
+            )
+            if review_result["blocking_findings"]:
+                reasons.append(
+                    "current unresolved P0/P1 findings: "
+                    + ", ".join(review_result["blocking_findings"])
+                )
+        elif review_result["decision"] == "needs_human":
+            missing.append("human_review")
+        else:
+            satisfied.append("compact current-head review passed")
+    elif "review" in evidence:
+        reasons.append("review must be an object")
+
+    auth_satisfied, auth_missing, auth_reasons = _validate_authorization(
+        evidence,
+        required=profile == "heavy",
     )
     satisfied.extend(auth_satisfied)
     missing.extend(auth_missing)
     reasons.extend(auth_reasons)
-    items.extend(item_from_missing(entry) for entry in auth_missing)
-    items.extend(
-        item_from_reason(reason, "invalid_evidence_value") for reason in auth_reasons
-    )
 
-    deterministic_missing = [item for item in missing if not item.startswith("human_authorization")]
+    deterministic_missing = [
+        item
+        for item in missing
+        if item not in {"human_merge_authorization", "human_review"}
+    ]
     if reasons or deterministic_missing:
         decision = "blocked"
-    elif auth_missing:
+    elif missing:
         decision = "needs_human"
     else:
         decision = "allowed"
-
-    blocked_actions = []
-    if decision in {"blocked", "needs_human"}:
-        blocked_actions.append("merge")
-    if decision == "blocked":
-        blocked_actions.append("final_approval")
-
+    rejection_items = (
+        []
+        if decision == "allowed"
+        else finalize_items(
+            items_from_legacy(
+                sorted(set(missing)),
+                sorted(set(reasons)),
+                missing_category="missing_evidence_field",
+                reason_category="contract_violation",
+            )
+        )
+    )
     return {
         "decision": decision,
         "pr": evidence.get("pr"),
         "linked_issue": evidence.get("linked_issue"),
-        "issue_reference": evidence.get("issue_reference"),
         "head_sha": evidence.get("head_sha"),
-        "review_source": evidence.get("review_source"),
-        "pr_tier": evidence.get("pr_tier"),
-        "pr_tier_evidence": evidence.get("pr_tier_evidence"),
-        "gate_query_completed_at": evidence.get("gate_query_completed_at"),
-        "gate_query_head_sha": evidence.get("gate_query_head_sha"),
-        "content_binding_version": evidence.get("content_binding_version"),
-        "snapshot": evidence.get("snapshot"),
-        "content_hashes": evidence.get("content_hashes"),
-        "reused_components": evidence.get("reused_components"),
-        "enforcement_sensitive": enforcement_sensitive_flag,
-        "sensitive_classification": sensitive_classification,
-        "sensitive_route_audit": sensitive_route_audit,
+        "profile": profile,
+        "enforcement_sensitive": sensitive,
+        "sensitive_classification": classification,
+        "review_decision": review_result.get("decision") if review_result else None,
+        "unsupported_legacy_evidence": unsupported,
         "reasons": sorted(set(reasons)),
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),
-        "rejection_items": [] if decision == "allowed" else finalize_items(items),
-        "blocked_actions": blocked_actions,
+        "rejection_items": rejection_items,
+        "blocked_actions": [] if decision == "allowed" else ["merge"],
+        "advisory_only": True,
         "verification_commands": [
             "python3 checks/pr_gate.py --repo . --evidence <evidence.json>",
             "python3 checks/check_workflow.py --repo .",
@@ -692,72 +434,49 @@ def evaluate_pr_gate(
 
 def print_gate_human(result: dict[str, Any]) -> None:
     print(f"decision: {result['decision']}")
-    if result.get("pr"):
-        print(f"pr: {result['pr']}")
-    if result.get("linked_issue"):
-        print(f"linked_issue: GH-{result['linked_issue']}")
-    if result.get("head_sha"):
-        print(f"head_sha: {result['head_sha']}")
-    if result["reasons"]:
-        print("reasons:")
-        for reason in result["reasons"]:
-            print(f"- {reason}")
-    if result["missing"]:
-        print("missing:")
-        for item in result["missing"]:
-            print(f"- {item}")
+    for name in ("reasons", "missing"):
+        if result[name]:
+            print(f"{name}:")
+            for item in result[name]:
+                print(f"- {item}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Evaluate SpecRail PR merge-readiness evidence."
+        description="Evaluate compact SpecRail PR evidence without writing GitHub state."
     )
-    parser.add_argument("--repo", default=".", help="Repository root, kept for CLI symmetry")
-    parser.add_argument("--evidence", required=True, help="PR evidence JSON file")
-    parser.add_argument(
-        "--mode",
-        default="dry_run",
-        choices=["dry_run", "advisory", "required"],
-        help="Evaluation enforcement mode",
-    )
+    parser.add_argument("--repo", default=".", help="Repository checkout")
+    parser.add_argument("--evidence", required=True, help="PR evidence JSON")
     parser.add_argument("--json", action="store_true", help="Print JSON output")
     add_prior_rejection_argument(parser)
     args = parser.parse_args()
-
+    repo = Path(args.repo).resolve()
     try:
-        evidence = _load_json(Path(args.evidence))
-        repo = resolve_path(Path(args.repo), label="repository")
-        result = evaluate_pr_gate(evidence, repo=repo, config=load_pack(repo))
-    except ValueError as exc:
+        result = evaluate_pr_gate(
+            _load_json(Path(args.evidence) if Path(args.evidence).is_absolute() else repo / args.evidence),
+            repo,
+        )
+    except (ValueError, SpecRailError) as exc:
         result = {
             "decision": "blocked",
-            "pr": None,
-            "linked_issue": None,
-            "head_sha": None,
             "reasons": [str(exc)],
-            "satisfied": [],
             "missing": [],
             "rejection_items": finalize_items(
                 [item_from_reason(str(exc), "config_error")]
             ),
-            "blocked_actions": ["merge", "final_approval"],
-            "verification_commands": ["python3 checks/pr_gate.py --repo . --evidence <evidence.json>"],
+            "blocked_actions": ["merge"],
+            "advisory_only": True,
         }
-
     result = apply_prior_rejection(
-        result, args.prior_rejection, blocked_actions=["merge", "final_approval"]
+        result,
+        args.prior_rejection,
+        blocked_actions=["merge"],
     )
-
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         print_gate_human(result)
-
-    if result["decision"] == "blocked":
-        return 1
-    if result["decision"] == "needs_human" and args.mode == "required":
-        return 1
-    return 0
+    return 0 if result["decision"] == "allowed" else 1
 
 
 if __name__ == "__main__":

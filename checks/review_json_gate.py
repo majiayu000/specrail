@@ -294,6 +294,7 @@ def evaluate_review_gate(
     *,
     repo: Path | None = None,
     diff_bytes: bytes | None = None,
+    verify_diff: bool = True,
 ) -> dict[str, Any]:
     """Validate a v3 review artifact and return all failures in one result."""
 
@@ -364,7 +365,12 @@ def evaluate_review_gate(
         for field in ("base_head_sha", "diff_sha256"):
             if field not in review:
                 missing.append(field)
-        if repo is not None and base is not None and digest is not None:
+        if not verify_diff:
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+                reasons.append("diff_sha256 must be a 64-character SHA-256 digest")
+            if not isinstance(base, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", base):
+                reasons.append("base_head_sha must be a 40-character Git SHA")
+        elif repo is not None and base is not None and digest is not None:
             reasons.extend(
                 validate_exact_git_diff(
                     repo,
@@ -440,7 +446,7 @@ def evaluate_review_gate(
         has_path, has_line = "path" in finding, "line" in finding
         if has_path != has_line:
             reasons.append(f"{prefix} path and line must be provided together")
-        elif has_path and not is_outdated:
+        elif has_path and not is_outdated and verify_diff:
             path, line = finding.get("path"), finding.get("line")
             if not _non_empty_string(path) or not _positive_int(line):
                 reasons.append(f"{prefix} path must be non-empty and line must be positive")

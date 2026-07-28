@@ -1,98 +1,39 @@
 #!/usr/bin/env python3
-"""Collect read-only GitHub PR evidence for the offline SpecRail PR gate."""
+"""Collect the compact current GitHub state consumed by pr_gate.py."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from evidence_content_binding import (
-    build_content_binding_evidence,
-    checkout_is_exact_head as _checkout_is_exact_head,
-    collect_reuse_audits,
-    collect_content_binding as _collect_content_binding,
-    load_versioned_pr_evidence,
-    merge_reusable_ci_checks,
-    validate_content_binding,
-)
-from github_evidence_common import (
-    EvidenceError, json_object, normalize_checks, normalize_reviews,
-)
-from github_approved_spec_evidence import (
-    collect_approval_metadata, collect_spec_revision_approval,
-)
-from github_issue_reference import (
-    normalize_issue_reference,
-    normalize_linked_issue, references_partial_issue, relation_snapshot,
-)
-from github_pr_snapshot import (
-    assert_same_pr_file_snapshot, collect_pr_file_snapshot, derive_spec_refs,
-    enforcement_declaration,
-)
-from github_review_evidence import (
-    build_human_authorization,
-    build_self_review_authorization,
-    load_lane_failures,
-    load_maintainer_role_map,
-    load_round_cap_authorizations,
-    load_resolver_role_map,
-    normalize_review_threads,
-)
-from sensitive_enforcement import (
-    approved_spec_source_commits,
-    build_approved_spec_evidence,
-    classify_sensitive_changes,
-    sensitive_registry,
-)
-from review_result_semantics import ReviewSemanticError, load_review_manifest
-from github_tier_evidence import (
-    TierEvidenceError,
-    adapter_tier_evidence,
-    apply_independent_lane_tier,
-    manifest_may_carry_tier_attestation,
-)
-from runtime_tier_authorization import (
-    FASTLANE_SELF_REVIEW_BASIS,
-    fastlane_tier_evidence_errors,
-)
-from spec_revision_evidence import SPEC_APPROVAL_FIELDS, spec_revision_route_eligible
+from github_evidence_common import EvidenceError, json_object, normalize_checks
+from github_issue_reference import normalize_issue_reference, relation_snapshot
+from sensitive_enforcement import classify_sensitive_changes
 from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
 PR_VIEW_FIELDS = [
-    "number", "state", "isDraft", "headRefOid", "headRefName", "baseRefName", "baseRefOid",
-    "mergeStateStatus", "title", "body", "closingIssuesReferences",
-    "statusCheckRollup", "reviews",
+    "number",
+    "state",
+    "isDraft",
+    "headRefOid",
+    "baseRefOid",
+    "mergeStateStatus",
+    "body",
+    "closingIssuesReferences",
+    "statusCheckRollup",
+    "files",
 ]
-
-REVIEW_THREADS_QUERY = """
-query SpecRailReviewThreads($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 100) {
-        nodes {
-          id isResolved isOutdated
-          resolvedBy { login }
-          comments(first: 1) {
-            nodes {
-              id url author { login }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-""".strip()
-
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-REVIEW_SOURCES = {"independent_lane", "self_review"}
+PROFILES = {"fastlane", "standard", "heavy"}
+
+
 def parse_github_repo(raw: str) -> tuple[str, str]:
     value = raw.strip()
     if not REPO_PATTERN.fullmatch(value):
@@ -103,92 +44,75 @@ def parse_github_repo(raw: str) -> tuple[str, str]:
     return owner, name
 
 
-def parse_pr_number(raw: str) -> int:
+def _parse_positive(raw: str, label: str) -> int:
     try:
         value = int(raw)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("PR number must be a positive integer") from exc
+        raise argparse.ArgumentTypeError(f"{label} must be a positive integer") from exc
     if value <= 0:
-        raise argparse.ArgumentTypeError("PR number must be a positive integer")
+        raise argparse.ArgumentTypeError(f"{label} must be a positive integer")
     return value
+
+
+def parse_pr_number(raw: str) -> int:
+    return _parse_positive(raw, "PR number")
 
 
 def parse_issue_number(raw: str) -> int:
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("issue number must be a positive integer") from exc
-    if value <= 0:
-        raise argparse.ArgumentTypeError("issue number must be a positive integer")
-    return value
+    return _parse_positive(raw, "issue number")
 
 
 def run_gh_json(args: list[str]) -> Any:
-    command = ["gh", *args]
     try:
         completed = subprocess.run(
-            command,
+            ["gh", *args],
             check=False,
             capture_output=True,
             text=True,
         )
     except FileNotFoundError as exc:
         raise EvidenceError("gh executable was not found in PATH") from exc
-
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "no output"
-        raise EvidenceError(f"gh command failed: {' '.join(command[:4])}: {detail}")
-
+        raise EvidenceError(f"gh command failed: {' '.join(args[:3])}: {detail}")
     try:
-        payload = json.loads(completed.stdout)
+        return json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise EvidenceError(f"gh command returned invalid JSON: {exc.msg}") from exc
-    return payload
 
 
 def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
-    return json_object(run_gh_json(
-        [
-            "pr",
-            "view",
-            str(pr_number),
-            "--repo",
-            github_repo,
-            "--json",
-            ",".join(PR_VIEW_FIELDS),
-        ]
-    ), "gh pr view response")
+    return json_object(
+        run_gh_json(
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                github_repo,
+                "--json",
+                ",".join(PR_VIEW_FIELDS),
+            ]
+        ),
+        "gh pr view response",
+    )
 
 
 def collect_issue_view(github_repo: str, issue_number: int) -> dict[str, Any]:
-    return json_object(run_gh_json(
-        [
-            "issue",
-            "view",
-            str(issue_number),
-            "--repo",
-            github_repo,
-            "--json",
-            "number,state,url",
-        ]
-    ), "gh issue view response")
-
-
-def collect_review_threads(owner: str, name: str, pr_number: int) -> dict[str, Any]:
-    return json_object(run_gh_json(
-        [
-            "api",
-            "graphql",
-            "-F",
-            f"owner={owner}",
-            "-F",
-            f"name={name}",
-            "-F",
-            f"number={pr_number}",
-            "-f",
-            f"query={REVIEW_THREADS_QUERY}",
-        ]
-    ), "review threads GraphQL response")
+    return json_object(
+        run_gh_json(
+            [
+                "issue",
+                "view",
+                str(issue_number),
+                "--repo",
+                github_repo,
+                "--json",
+                "number,state,url",
+            ]
+        ),
+        "gh issue view response",
+    )
 
 
 def _require_positive_int(payload: dict[str, Any], field: str) -> int:
@@ -212,586 +136,220 @@ def _require_bool(payload: dict[str, Any], field: str) -> bool:
     return value
 
 
+def _changed_files(payload: dict[str, Any]) -> list[str]:
+    raw = payload.get("files")
+    if not isinstance(raw, list):
+        raise EvidenceError("PR files must be a complete array")
+    paths: list[str] = []
+    for index, item in enumerate(raw, start=1):
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            raise EvidenceError(f"PR file #{index} must contain a path")
+        path = item["path"].strip()
+        if not path:
+            raise EvidenceError(f"PR file #{index} path must be non-empty")
+        paths.append(path)
+    if len(set(paths)) != len(paths):
+        raise EvidenceError("PR file snapshot contains duplicate paths")
+    return sorted(paths)
+
+
+def _paths_digest(paths: list[str]) -> str:
+    return hashlib.sha256(
+        json.dumps(paths, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _normalized_checks(payload: dict[str, Any], head_sha: str) -> list[dict[str, Any]]:
+    checks = normalize_checks(payload.get("statusCheckRollup"))
+    for check in checks:
+        check["head_sha"] = head_sha
+    return checks
+
+
+def _linked_issue(
+    payload: dict[str, Any],
+    expected_issue: int | None,
+    issue_payload: dict[str, Any] | None,
+) -> int:
+    linked, _reference = normalize_issue_reference(
+        payload,
+        expected_issue,
+        issue_payload,
+    )
+    if linked is None:
+        raise EvidenceError("PR must link exactly one issue")
+    return linked
+
+
 def build_evidence(
     pr_payload: dict[str, Any],
-    threads_payload: dict[str, Any],
-    authorization: dict[str, str] | None = None,
-    merge_dispatched_at: str | None = None,
-    merge_head_sha: str | None = None,
-    review_source: str | None = None,
-    lane_failures: list[dict[str, Any]] | None = None,
-    self_review_authorization: dict[str, str] | None = None,
-    resolver_roles: dict[str, str] | None = None,
+    *,
+    repository: str,
+    profile: str,
+    gate_invocation_id: str,
+    review: dict[str, Any],
     expected_issue: int | None = None,
     issue_payload: dict[str, Any] | None = None,
     repo: Path | None = None,
     config: PackConfig | None = None,
-    repository: str | None = None,
-    approval_metadata: dict[str, Any] | None = None,
-    pr_snapshot: dict[str, Any] | None = None,
-    review_evidence: dict[str, Any] | None = None,
-    gate_started_at: str | None = None,
-    content_binding: dict[str, Any] | None = None,
-    reusable_ci_evidence: dict[str, Any] | None = None,
-    round_cap_authorizations: list[dict[str, Any]] | None = None,
-    spec_approval: dict[str, Any] | None = None,
+    authorization: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Normalize a single trusted PR snapshot into the compact contract."""
+
+    parse_github_repo(repository)
+    if profile not in PROFILES:
+        raise EvidenceError("profile must be fastlane, standard, or heavy")
+    if not isinstance(gate_invocation_id, str) or not gate_invocation_id.strip():
+        raise EvidenceError("gate_invocation_id must be a non-empty string")
     head_sha = _require_string(pr_payload, "headRefOid")
-    linked_issue, issue_reference = normalize_issue_reference(
-        pr_payload,
-        expected_issue,
-        issue_payload,
-    )
+    paths = _changed_files(pr_payload)
+    linked_issue = _linked_issue(pr_payload, expected_issue, issue_payload)
+    classification = None
+    enforcement_sensitive = False
+    if repo is not None and config is not None:
+        try:
+            classification = classify_sensitive_changes(
+                config,
+                repo,
+                paths,
+                paths,
+                source="github_changed_files",
+            )
+        except SpecRailError as exc:
+            raise EvidenceError(str(exc)) from exc
+        enforcement_sensitive = bool(classification["enforcement_sensitive"])
+        if enforcement_sensitive:
+            profile = "heavy"
     evidence: dict[str, Any] = {
+        "contract_version": 3,
+        "repository": repository,
         "pr": _require_positive_int(pr_payload, "number"),
+        "linked_issue": linked_issue,
         "state": _require_string(pr_payload, "state").upper(),
         "is_draft": _require_bool(pr_payload, "isDraft"),
+        "base_sha": _require_string(pr_payload, "baseRefOid"),
         "head_sha": head_sha,
-        "gate_started_at": gate_started_at
-        or datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z"),
-        "gate_query_completed_at": datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z"),
         "gate_query_head_sha": head_sha,
+        "changed_files": paths,
+        "changed_files_count": len(paths),
+        "changed_files_sha256": _paths_digest(paths),
+        "checks": _normalized_checks(pr_payload, head_sha),
         "merge_state": _require_string(pr_payload, "mergeStateStatus").upper(),
-        "linked_issue": linked_issue,
-        "checks": merge_reusable_ci_checks(
-            normalize_checks(
-                pr_payload.get("statusCheckRollup"), content_binding, head_sha, config
-            ),
-            reusable_ci_evidence,
-            content_binding,
-            config,
-        ),
-        "reviews": normalize_reviews(pr_payload.get("reviews")),
-        "review_threads": normalize_review_threads(threads_payload, resolver_roles),
-        "lane_failures": lane_failures or [],
+        "profile": profile,
+        "enforcement_sensitive": enforcement_sensitive,
+        "review": review,
+        "gate_invocation_id": gate_invocation_id.strip(),
     }
-    if issue_reference is not None:
-        evidence["issue_reference"] = issue_reference
-    if content_binding is not None:
-        evidence.update(validate_content_binding(content_binding))
-    fastlane_self_review = (
-        isinstance(self_review_authorization, dict)
-        and self_review_authorization.get("basis") == FASTLANE_SELF_REVIEW_BASIS
-    )
-    if fastlane_self_review:
-        if review_source != "self_review":
-            raise EvidenceError(
-                "fastlane_policy requires review_source self_review"
-            )
-        if not isinstance(pr_snapshot, dict) or pr_snapshot.get("head_sha") != head_sha:
-            raise EvidenceError(
-                "fastlane_policy requires a complete current-head PR file snapshot"
-            )
-        tier_evidence = adapter_tier_evidence(pr_snapshot)
-        tier_errors = fastlane_tier_evidence_errors(
-            tier_evidence, expected_head_sha=head_sha,
-            expected_base_ref=pr_snapshot.get("base_ref"),
-            expected_base_sha=pr_snapshot.get("base_sha"),
-        )
-        if tier_errors:
-            raise EvidenceError("; ".join(tier_errors))
-        evidence["pr_tier"] = "fastlane"
-        evidence["pr_tier_evidence"] = tier_evidence
-        evidence["enforcement_sensitive"] = False
-        evidence["base_ref"] = pr_snapshot.get("base_ref")
-        evidence["base_sha"] = pr_snapshot.get("base_sha")
-    if repo is not None and config is not None:
-        declaration = enforcement_declaration(pr_payload.get("body"))
-        registry = sensitive_registry(config)
-        if declaration is not None or registry["paths"] or registry["specs"]:
-            if not isinstance(pr_snapshot, dict) or pr_snapshot.get("head_sha") != head_sha:
-                raise EvidenceError(
-                    "complete PR file snapshot is required for sensitive classification"
-                )
-            try:
-                classification = classify_sensitive_changes(
-                    config,
-                    repo,
-                    pr_snapshot.get("paths"),
-                    derive_spec_refs(config, repo, linked_issue, pr_snapshot.get("paths")),
-                    source="github_changed_files",
-                )
-            except SpecRailError as exc:
-                raise EvidenceError(str(exc)) from exc
-            evidence["repository"] = repository
-            evidence["base_ref"] = pr_snapshot.get("base_ref")
-            evidence["base_sha"] = pr_snapshot.get("base_sha")
-            evidence["default_base_ref"] = pr_snapshot.get("default_base_ref")
-            evidence["default_base_sha"] = pr_snapshot.get("default_base_sha")
-            evidence["changed_files_count"] = pr_snapshot.get("path_count")
-            evidence["changed_files_sha256"] = pr_snapshot.get("paths_sha256")
-            evidence["sensitive_classification"] = classification
-            if declaration is not None:
-                evidence["enforcement_sensitive"] = declaration
-            if declaration is True or classification["enforcement_sensitive"]:
-                if fastlane_self_review:
-                    raise EvidenceError(
-                        "fastlane_policy cannot cover enforcement-sensitive changes"
-                    )
-                if not isinstance(repository, str) or not repository.strip():
-                    raise EvidenceError(
-                        "enforcement-sensitive PR requires repository identity"
-                    )
-                if linked_issue is None:
-                    raise EvidenceError(
-                        "enforcement-sensitive PR requires a linked issue"
-                    )
-                route = spec_revision_route_eligible(
-                    config, linked_issue, classification
-                )
-                if route.eligible:
-                    if not isinstance(spec_approval, dict):
-                        raise EvidenceError(
-                            "eligible spec revision requires trusted spec approval"
-                        )
-                    if set(spec_approval) != SPEC_APPROVAL_FIELDS:
-                        raise EvidenceError("spec_approval field contract is incomplete")
-                    if spec_approval.get("commit_oid") != head_sha:
-                        raise EvidenceError(
-                            "spec_approval commit must match the gated head"
-                        )
-                    if spec_approval.get("artifact_paths") != list(route.artifact_paths):
-                        raise EvidenceError(
-                            "spec_approval artifacts must match the eligible spec revision"
-                        )
-                    evidence["sensitive_route"] = "spec_revision"
-                    evidence["spec_approval"] = dict(spec_approval)
-                else:
-                    evidence["sensitive_route"] = "approved_spec"
-                    if not isinstance(approval_metadata, dict):
-                        raise EvidenceError(
-                            "enforcement-sensitive PR requires trusted approval metadata"
-                        )
-                    if (
-                        approval_metadata.get("state_source") != "label"
-                        or approval_metadata.get("state_trusted") is not True
-                    ):
-                        raise EvidenceError(
-                            "approved spec requires trusted maintainer label evidence"
-                        )
-                    approval_default = (
-                        approval_metadata.get("default_base_ref"),
-                        approval_metadata.get("default_base_sha"),
-                    )
-                    snapshot_default = (
-                        pr_snapshot.get("default_base_ref"),
-                        pr_snapshot.get("default_base_sha"),
-                    )
-                    if approval_default != snapshot_default:
-                        raise EvidenceError(
-                            "approved-spec and PR snapshots disagree on trusted default base"
-                        )
-                    try:
-                        evidence["approved_spec"] = build_approved_spec_evidence(
-                            config, repo, repository=str(repository or ""),
-                            issue=linked_issue,
-                            spec_revisions=approval_metadata.get("spec_revisions"),
-                            approved_at=str(approval_metadata.get("approved_at") or ""),
-                            maintainer_actor=str(
-                                approval_metadata.get("maintainer_actor") or ""
-                            ),
-                            gated_head_sha=head_sha,
-                            default_base_ref=snapshot_default[0],
-                            default_base_sha=snapshot_default[1],
-                        )
-                    except SpecRailError as exc:
-                        raise EvidenceError(str(exc)) from exc
-    if review_evidence is not None:
-        derived_source = review_evidence.get("review_source")
-        derived_execution = review_evidence.get("review_execution")
-        if derived_source not in REVIEW_SOURCES:
-            raise EvidenceError("review manifest must derive a supported review_source")
-        if derived_execution != "local":
-            raise EvidenceError(
-                "review manifest must derive local primary review execution; hosted review is supplemental only"
-            )
-        if review_source is not None and review_source.strip() != derived_source:
-            raise EvidenceError("--review-source conflicts with trusted review manifest")
-        evidence["review_source"] = derived_source
-        evidence["review_execution"] = derived_execution
-        evidence["review_evidence"] = review_evidence
-        evidence["review_completed_at"] = review_evidence.get("review_completed_at")
-        if derived_source == "independent_lane":
-            try:
-                apply_independent_lane_tier(
-                    evidence, review_evidence, pr_snapshot, head_sha
-                )
-            except TierEvidenceError as exc:
-                raise EvidenceError(str(exc)) from exc
-    if content_binding is not None:
-        evidence["reused_components"] = collect_reuse_audits(
-            evidence["checks"], review_evidence, content_binding, head_sha
-        )
+    if classification is not None:
+        evidence["sensitive_classification"] = classification
     if authorization is not None:
-        evidence["human_authorization"] = authorization
-    if self_review_authorization is not None:
-        evidence["self_review_authorization"] = self_review_authorization
-    if round_cap_authorizations:
-        evidence["round_cap_authorizations"] = round_cap_authorizations
-    provided_merge = [value for value in [merge_dispatched_at, merge_head_sha] if value is not None]
-    if provided_merge:
-        if not merge_dispatched_at or not merge_dispatched_at.strip() or not merge_head_sha or not merge_head_sha.strip():
-            raise EvidenceError(
-                "--merge-dispatched-at and --merge-head-sha must be provided together"
-            )
-        evidence["merge_dispatched_at"] = merge_dispatched_at.strip()
-        evidence["merge_head_sha"] = merge_head_sha.strip()
+        evidence["human_merge_authorization"] = authorization
     return evidence
+
+
+def _load_json(path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise EvidenceError(f"cannot read {label} {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise EvidenceError(f"invalid {label} JSON {path}: {exc.msg}") from exc
+    if not isinstance(value, dict):
+        raise EvidenceError(f"{label} JSON must be an object")
+    return value
 
 
 def collect_evidence(
     github_repo: str,
     pr_number: int,
-    authorization: dict[str, str] | None,
-    merge_dispatched_at: str | None = None,
-    merge_head_sha: str | None = None,
-    review_source: str | None = None,
-    lane_failures: list[dict[str, Any]] | None = None,
-    self_review_authorization: dict[str, str] | None = None,
-    resolver_roles: dict[str, str] | None = None,
+    *,
+    profile: str,
+    gate_invocation_id: str,
+    review: dict[str, Any],
+    authorization: dict[str, Any] | None = None,
     expected_issue: int | None = None,
     repo: Path | None = None,
     config: PackConfig | None = None,
-    review_manifest: str | None = None,
-    content_binding_v1: bool = False,
-    reusable_ci_evidence: dict[str, Any] | None = None,
-    round_cap_authorizations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    if expected_issue is not None and (
-        not isinstance(expected_issue, int)
-        or isinstance(expected_issue, bool)
-        or expected_issue <= 0
-    ):
-        raise EvidenceError("expected issue must be a positive integer")
-    gate_started_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
+    """Collect twice and reject a moving head, issue relation, or file set."""
+
+    parse_github_repo(github_repo)
+    before = collect_pr_view(github_repo, pr_number)
+    issue_payload = (
+        collect_issue_view(github_repo, expected_issue)
+        if expected_issue is not None
+        else None
     )
-    owner, name = parse_github_repo(github_repo)
-    pr_payload_before = collect_pr_view(github_repo, pr_number)
-    head_sha_before = _require_string(pr_payload_before, "headRefOid")
-    relation_snapshot_before = relation_snapshot(pr_payload_before)
-    binding_enabled = content_binding_v1
-    if binding_enabled and repo is None:
-        raise EvidenceError("--content-binding-v1 requires a repository checkout")
-    if binding_enabled and config is None:
+    before_head = _require_string(before, "headRefOid")
+    before_relation = relation_snapshot(before)
+    before_paths = _changed_files(before)
+
+    after = collect_pr_view(github_repo, pr_number)
+    if _require_string(after, "headRefOid") != before_head:
         raise EvidenceError(
-            "--content-binding-v1 requires repo-owned workflow configuration"
+            "PR head changed while collecting gate evidence; rerun collection"
         )
-    if binding_enabled and not _checkout_is_exact_head(repo, head_sha_before):
-        raise EvidenceError("content binding requires an exact-head repository checkout")
-    if reusable_ci_evidence is not None and not binding_enabled:
-        raise EvidenceError("reusing CI evidence requires --content-binding-v1")
-    if reusable_ci_evidence is not None:
-        if reusable_ci_evidence.get("pr") != pr_number:
-            raise EvidenceError("reused PR evidence must match the current PR number")
-        if reusable_ci_evidence.get("head_sha") == head_sha_before:
-            raise EvidenceError("reused PR evidence must come from a previous head")
-    file_snapshot_before = None
-    fastlane_self_review = (
-        isinstance(self_review_authorization, dict)
-        and self_review_authorization.get("basis") == FASTLANE_SELF_REVIEW_BASIS
-    )
-    if binding_enabled or fastlane_self_review or (
-        repo is not None and config is not None
-        and (enforcement_declaration(pr_payload_before.get("body")) is not None
-             or any(sensitive_registry(config).values()))
-    ) or manifest_may_carry_tier_attestation(repo, review_manifest):
-        file_snapshot_before = collect_pr_file_snapshot(
-            owner, name, pr_number, run_gh_json, run_gh_json)
-        if file_snapshot_before["head_sha"] != head_sha_before:
-            raise EvidenceError("PR view and file snapshot head SHA disagree")
-        if (file_snapshot_before["base_ref"], file_snapshot_before["base_sha"]) != (
-            _require_string(pr_payload_before, "baseRefName"),
-            _require_string(pr_payload_before, "baseRefOid"),
-        ):
-            raise EvidenceError("PR view and file snapshot base identity disagree")
-    threads_payload = collect_review_threads(owner, name, pr_number)
-
-    issue_payload = None
-    partial_issue_relation_before = None
-    closing_issue_numbers = list(relation_snapshot_before[1])
-    if expected_issue is not None and expected_issue not in closing_issue_numbers:
-        body = relation_snapshot_before[0]
-        if not references_partial_issue(body, expected_issue):
-            raise EvidenceError(
-                f"PR body must contain a standalone Refs #{expected_issue} directive"
-            )
-        issue_payload = collect_issue_view(github_repo, expected_issue)
-        _linked_issue, partial_issue_relation_before = normalize_issue_reference(
-            pr_payload_before, expected_issue, issue_payload
-        )
-
-    approval_metadata = None
-    spec_approval = None
-    enforcement_sensitive = False
-    if file_snapshot_before is not None and repo is not None and config is not None:
-        declaration = enforcement_declaration(pr_payload_before.get("body"))
-        registry = sensitive_registry(config)
-        if declaration is not None or registry["paths"] or registry["specs"]:
-            try:
-                linked_issue, _ = normalize_issue_reference(
-                    pr_payload_before, expected_issue, issue_payload
-                )
-                classification = classify_sensitive_changes(
-                    config,
-                    repo,
-                    file_snapshot_before.get("paths"),
-                    derive_spec_refs(
-                        config, repo, linked_issue, file_snapshot_before.get("paths")
-                    ),
-                    source="github_changed_files",
-                )
-            except SpecRailError as exc:
-                raise EvidenceError(str(exc)) from exc
-            if declaration is True or classification["enforcement_sensitive"]:
-                enforcement_sensitive = True
-                if linked_issue is None:
-                    raise EvidenceError(
-                        "enforcement-sensitive PR requires a linked issue"
-                    )
-                route = spec_revision_route_eligible(
-                    config, linked_issue, classification
-                )
-                if route.eligible:
-                    spec_approval = collect_spec_revision_approval(
-                        github_repo, linked_issue, pr_number, head_sha_before,
-                        route.artifact_paths, run_gh_json,
-                    )
-                else:
-                    approval_metadata = collect_approval_metadata(
-                        github_repo, linked_issue, run_gh_json,
-                        spec_source_commits=approved_spec_source_commits(
-                            config, repo, linked_issue,
-                            default_base_ref=file_snapshot_before.get("default_base_ref"),
-                            default_base_sha=file_snapshot_before.get("default_base_sha"),
-                        ),
-                    )
-
-    file_snapshot_after = None
-    if file_snapshot_before is not None:
-        file_snapshot_after = collect_pr_file_snapshot(
-            owner, name, pr_number, run_gh_json, run_gh_json)
-        assert file_snapshot_before is not None
-        assert_same_pr_file_snapshot(file_snapshot_before, file_snapshot_after)
-
-    pr_payload_after = collect_pr_view(github_repo, pr_number)
-    head_sha_after = _require_string(pr_payload_after, "headRefOid")
-    if head_sha_before != head_sha_after:
+    if relation_snapshot(after) != before_relation:
         raise EvidenceError(
-            "PR head changed while collecting gate evidence; rerun PR evidence collection"
+            "PR issue relation changed while collecting gate evidence; rerun collection"
         )
-    relation_snapshot_after = relation_snapshot(pr_payload_after)
-    if relation_snapshot_before != relation_snapshot_after:
+    if _changed_files(after) != before_paths:
         raise EvidenceError(
-            "PR issue relation changed while collecting gate evidence; rerun PR evidence collection"
+            "PR file set changed while collecting gate evidence; rerun collection"
         )
-    if file_snapshot_after is not None and (
-        file_snapshot_after["base_ref"], file_snapshot_after["base_sha"]
-    ) != (
-        _require_string(pr_payload_after, "baseRefName"),
-        _require_string(pr_payload_after, "baseRefOid"),
-    ):
-        raise EvidenceError("PR view and file snapshot base identity disagree")
-
-    if partial_issue_relation_before is not None:
-        assert expected_issue is not None
-        issue_payload = collect_issue_view(github_repo, expected_issue)
-        _linked_issue, partial_issue_relation_after = normalize_issue_reference(
-            pr_payload_after, expected_issue, issue_payload
-        )
-        if partial_issue_relation_before != partial_issue_relation_after:
-            raise EvidenceError(
-                "partial issue relation changed while collecting gate evidence; "
-                "rerun PR evidence collection"
-            )
-
-    _linked_issue, issue_reference = normalize_issue_reference(
-        pr_payload_after, expected_issue, issue_payload
-    )
-    content_binding = None
-    if binding_enabled:
-        if file_snapshot_after is None:
-            raise EvidenceError("content binding requires a complete PR file snapshot")
-        content_binding = _collect_content_binding(
-            repo, pr_payload_after, file_snapshot_after, issue_reference, config
-        )
-
-    review_evidence = None
-    if review_manifest is not None:
-        if repo is None:
-            raise EvidenceError("--review-manifest requires a repository checkout")
-        try:
-            review_evidence = load_review_manifest(
-                repo,
-                review_manifest,
-                expected_pr=pr_number,
-                expected_head_sha=head_sha_after,
-                current_binding=content_binding,
-                enforcement_sensitive=enforcement_sensitive,
-            )
-            if review_evidence.get("round_audit") is None:
-                review_evidence.pop("round_audit", None)
-        except ReviewSemanticError as exc:
-            raise EvidenceError(str(exc)) from exc
-    elif review_source is not None:
-        raise EvidenceError(
-            "--review-source alone cannot prove terminal review; --review-manifest is required"
-        )
-
     return build_evidence(
-        pr_payload_after,
-        threads_payload,
-        authorization,
-        merge_dispatched_at,
-        merge_head_sha,
-        review_source,
-        lane_failures,
-        self_review_authorization,
-        resolver_roles,
-        expected_issue,
-        issue_payload,
-        repo,
-        config,
-        github_repo,
-        approval_metadata,
-        file_snapshot_after,
-        review_evidence,
-        gate_started_at,
-        content_binding,
-        reusable_ci_evidence,
-        round_cap_authorizations,
-        spec_approval,
+        after,
+        repository=github_repo,
+        profile=profile,
+        gate_invocation_id=gate_invocation_id,
+        review=review,
+        expected_issue=expected_issue,
+        issue_payload=issue_payload,
+        repo=repo,
+        config=config,
+        authorization=authorization,
     )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Collect read-only GitHub PR evidence for SpecRail pr_gate.py."
+        description="Collect read-only compact GitHub PR evidence."
     )
-    parser.add_argument("--github-repo", required=True, help="GitHub repository as OWNER/REPO")
+    parser.add_argument("--github-repo", required=True, help="OWNER/REPO")
     parser.add_argument("--repo", default=".", help="Local repository checkout")
-    parser.add_argument("--pr", required=True, type=parse_pr_number, help="Pull request number")
-    parser.add_argument(
-        "--issue",
-        type=parse_issue_number,
-        help="Expected linked issue; required to verify a non-closing Refs directive",
-    )
-    parser.add_argument("--authorization-actor", help="Human authorizing merge")
-    parser.add_argument("--authorization-source", help="Where authorization was recorded")
-    parser.add_argument("--authorization-summary", help="Short authorization summary")
-    parser.add_argument(
-        "--review-source",
-        choices=sorted(REVIEW_SOURCES),
-        help="Review source for the PR gate evidence",
-    )
-    parser.add_argument(
-        "--review-manifest",
-        help="Repo-relative trusted manifest containing all reviewer lane artifacts",
-    )
-    parser.add_argument(
-        "--content-binding-v1", action="store_true",
-        help="Explicitly opt in to stable current content bindings",
-    )
-    parser.add_argument(
-        "--content-binding-only", action="store_true",
-        help="Print only a standalone schema-backed collector binding sidecar",
-    )
-    parser.add_argument(
-        "--reuse-pr-evidence",
-        help="Repo-relative prior v1 PR evidence for coverage-matched CI reuse",
-    )
-    parser.add_argument(
-        "--lane-failures-json",
-        help="JSON file containing lane_failures evidence",
-    )
-    parser.add_argument(
-        "--resolver-role-map",
-        help="JSON map or lane roster used to map resolver login to resolver_role",
-    )
-    parser.add_argument(
-        "--round-cap-authorization",
-        action="append",
-        default=[],
-        help="External exact-bound continue_once authorization JSON (repeat per round)",
-    )
-    parser.add_argument(
-        "--maintainer-role-map",
-        help="Explicit JSON role map proving round-cap authorization actors are maintainers",
-    )
-    parser.add_argument("--self-review-authorization-actor", help="Human authorizing self-review")
-    parser.add_argument("--self-review-authorization-source", help="Where self-review authorization was recorded")
-    parser.add_argument("--self-review-authorization-scope", help="Scope of self-review authorization")
-    parser.add_argument("--self-review-authorization-summary", help="Short self-review authorization summary")
-    parser.add_argument(
-        "--self-review-authorization-basis",
-        choices=[FASTLANE_SELF_REVIEW_BASIS],
-        help="Policy basis for lane-failure-free fastlane self-review",
-    )
-    parser.add_argument(
-        "--self-review-authorization-conversation-marker",
-        help="Current-conversation marker required by fastlane_policy",
-    )
-    parser.add_argument("--merge-dispatched-at", help="Optional merge dispatch timestamp for audit records")
-    parser.add_argument("--merge-head-sha", help="Optional merge target head SHA for audit records")
-    parser.add_argument("--json", action="store_true", help="Print JSON output")
+    parser.add_argument("--pr", required=True, type=parse_pr_number)
+    parser.add_argument("--issue", type=parse_issue_number)
+    parser.add_argument("--profile", choices=sorted(PROFILES), default="standard")
+    parser.add_argument("--gate-invocation-id", required=True)
+    parser.add_argument("--review", required=True, help="Compact review JSON")
+    parser.add_argument("--authorization", help="Current-invocation authorization JSON")
+    parser.add_argument("--json", action="store_true", help="Retained for CLI symmetry")
     args = parser.parse_args()
-
+    repo = resolve_path(Path(args.repo), label="repository")
     try:
-        authorization = build_human_authorization(
-            args.authorization_actor,
-            args.authorization_source,
-            args.authorization_summary,
-        )
-        self_review_authorization = build_self_review_authorization(
-            args.self_review_authorization_actor,
-            args.self_review_authorization_source,
-            args.self_review_authorization_scope,
-            args.self_review_authorization_summary,
-            args.self_review_authorization_basis,
-            args.self_review_authorization_conversation_marker,
-        )
-        lane_failures = load_lane_failures(args.lane_failures_json)
-        resolver_roles = load_resolver_role_map(args.resolver_role_map)
-        maintainer_roles = load_maintainer_role_map(args.maintainer_role_map)
-        round_cap_authorizations = load_round_cap_authorizations(
-            args.round_cap_authorization,
-            maintainer_roles,
-        )
-        repo = resolve_path(Path(args.repo), label="repository")
-        reusable_ci_evidence = (
-            load_versioned_pr_evidence(repo, args.reuse_pr_evidence)
-            if args.reuse_pr_evidence else None
-        )
+        review_path = Path(args.review)
+        if not review_path.is_absolute():
+            review_path = repo / review_path
+        authorization = None
+        if args.authorization:
+            auth_path = Path(args.authorization)
+            if not auth_path.is_absolute():
+                auth_path = repo / auth_path
+            authorization = _load_json(auth_path, "authorization")
         evidence = collect_evidence(
             args.github_repo,
             args.pr,
-            authorization,
-            args.merge_dispatched_at,
-            args.merge_head_sha,
-            args.review_source,
-            lane_failures,
-            self_review_authorization,
-            resolver_roles,
-            args.issue,
-            repo,
-            load_pack(repo),
-            args.review_manifest,
-            args.content_binding_v1 or args.content_binding_only,
-            reusable_ci_evidence,
-            round_cap_authorizations,
+            profile=args.profile,
+            gate_invocation_id=args.gate_invocation_id,
+            review=_load_json(review_path, "review"),
+            authorization=authorization,
+            expected_issue=args.issue,
+            repo=repo,
+            config=load_pack(repo),
         )
-        if args.content_binding_only:
-            evidence = build_content_binding_evidence(args.pr, evidence)
     except (EvidenceError, SpecRailError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-
     print(json.dumps(evidence, indent=2, sort_keys=True))
     return 0
 

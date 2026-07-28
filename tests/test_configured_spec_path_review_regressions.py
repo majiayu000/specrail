@@ -184,11 +184,11 @@ def test_route_gate_without_issue_reports_missing_evidence() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert payload["decision"] == "needs_human"
+    assert payload["decision"] == "warn"
     assert "linked_issue" in payload["missing"]
     assert "product_spec" in payload["missing"]
     assert "tech_spec" in payload["missing"]
-    assert "duplicate_work:duplicate_evidence" in payload["missing"]
+    assert any("positive issue number" in item for item in payload["warnings"])
     assert not any("unsupported placeholder" in reason for reason in payload["reasons"])
 
 
@@ -282,7 +282,7 @@ def test_external_repo_uses_trusted_pack_asset_validation(tmp_path: Path) -> Non
         'raise RuntimeError("target helper sentinel")\n',
         encoding="utf-8",
     )
-    (repo / "schemas" / "workflow_run.schema.json").unlink()
+    (repo / "schemas" / "task_plan.schema.json").unlink()
 
     result = subprocess.run(
         [
@@ -298,7 +298,7 @@ def test_external_repo_uses_trusted_pack_asset_validation(tmp_path: Path) -> Non
     )
 
     assert result.returncode == 1
-    assert "schemas: missing SpecRail schema workflow_run.schema.json" in result.stdout
+    assert "schemas: missing SpecRail schema task_plan.schema.json" in result.stdout
     assert "target helper sentinel" not in result.stdout + result.stderr
     assert "Traceback" not in result.stdout + result.stderr
 

@@ -13,23 +13,14 @@ from specrail_lib import SpecRailError
 MAX_SCHEMA_LINES = 800
 SPEC_SCHEMA_FILES = frozenset(
     {
-        "adoption_matrix.schema.json",
-        "closure_audit_result.schema.json",
-        "content_binding_evidence.schema.json",
         "duplicate_work_evidence.schema.json",
         "evaluation_result.schema.json",
-        "flow_manifest.schema.json",
         "issue_evidence.schema.json",
         "issue_triage.schema.json",
         "pr_review_gate.schema.json",
-        "pr_review_authorizations.schema.json",
         "review_result.schema.json",
-        "runtime_checkpoint.schema.json",
-        "runtime_tier_authorization.schema.json",
-        "runtime_thread_dispatch_gate.schema.json",
         "spec_packet.schema.json",
         "task_plan.schema.json",
-        "workflow_run.schema.json",
     }
 )
 SPEC_TEMPLATE_FILES = frozenset(
@@ -40,7 +31,6 @@ SPEC_TEMPLATE_FILES = frozenset(
         "pull_request.md",
         "tasks.md",
         "tech_spec.md",
-        "tranche_checkpoint.md",
     }
 )
 STABLE_TEMPLATE_FILES = frozenset(

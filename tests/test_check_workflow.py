@@ -52,17 +52,13 @@ def test_required_files_include_pr_issue_reference_module() -> None:
     assert "checks/github_issue_reference.py" in REQUIRED_FILES
 
 
-def test_required_files_include_content_binding_runtime_dependencies() -> None:
-    for path in [
-        "checks/evidence_content_binding.py",
-        "checks/review_content_binding.py",
-        "checks/review_round_semantics.py",
-        "checks/runtime_review_evidence.py",
-    ]:
-        assert path in REQUIRED_FILES
+def test_required_files_exclude_removed_runtime_dependencies() -> None:
+    assert not any("runtime" in path for path in REQUIRED_FILES)
+    assert "checks/review_json_gate.py" in REQUIRED_FILES
+    assert "checks/pr_gate.py" in REQUIRED_FILES
 
 
-def test_required_files_reject_missing_review_round_runtime_dependency(
+def test_required_files_reject_missing_compact_review_gate(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "target"
@@ -71,11 +67,11 @@ def test_required_files_reject_missing_review_round_runtime_dependency(
         target,
         ignore=shutil.ignore_patterns(".git", "__pycache__", ".coverage*"),
     )
-    helper = target / "checks" / "review_round_semantics.py"
+    helper = target / "checks" / "review_json_gate.py"
     helper.unlink()
 
     assert (
-        "missing required file: checks/review_round_semantics.py"
+        "missing required file: checks/review_json_gate.py"
         in validate_required_files(target)
     )
 
@@ -105,11 +101,11 @@ def test_trusted_pack_asset_validation_ignores_target_helper(tmp_path: Path) -> 
         "    return []\n",
         encoding="utf-8",
     )
-    (target / "schemas" / "workflow_run.schema.json").unlink()
+    (target / "schemas" / "task_plan.schema.json").unlink()
 
     errors = validate_pack_assets(target)
 
-    assert "schemas: missing SpecRail schema workflow_run.schema.json" in errors
+    assert "schemas: missing SpecRail schema task_plan.schema.json" in errors
     assert not target_helper.with_name("target-helper-executed").exists()
 
 

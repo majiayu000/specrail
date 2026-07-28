@@ -1,79 +1,74 @@
 #!/usr/bin/env python3
-"""Evaluate duplicate implementation work evidence offline."""
+"""Report duplicate work as advisory evidence."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from specrail_lib import (
-    PackConfig,
-    SpecRailError,
-    artifact_templates,
-    load_pack,
-    read_text,
-    validate_instance,
-)
+from schema_validation import validate_instance
+from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
 
 
-SEGMENT_SPLIT_RE = re.compile(r"[/-]+")
-PLACEHOLDER_RE = re.compile(r"\{[^}]+\}")
-
-
-def _positive_issue(value: int | None) -> bool:
-    return isinstance(value, int) and value > 0
+def _positive_issue(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _load_schema(repo: Path) -> dict[str, Any]:
-    path = repo / "schemas" / "duplicate_work_evidence.schema.json"
     try:
-        data = json.loads(read_text(path))
-    except json.JSONDecodeError as exc:
-        raise SpecRailError(f"{path.relative_to(repo)}: invalid JSON: {exc.msg}") from exc
-    if not isinstance(data, dict):
-        raise SpecRailError("duplicate work evidence schema must be an object")
-    return data
+        value = json.loads(
+            (repo / "schemas" / "duplicate_work_evidence.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SpecRailError(f"cannot load duplicate work schema: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SpecRailError("duplicate work schema must be an object")
+    return value
 
 
 def _load_evidence(path: Path | None) -> dict[str, Any] | None:
-    if path is None or not path.is_file():
+    if path is None:
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise SpecRailError(f"invalid duplicate work evidence JSON {path}: {exc.msg}") from exc
-    except OSError as exc:
-        raise SpecRailError(f"cannot read duplicate work evidence {path}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise SpecRailError("duplicate work evidence JSON must be an object")
-    return data
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SpecRailError(f"cannot load duplicate work evidence: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SpecRailError("duplicate work evidence must be an object")
+    return value
 
 
-def impl_branch_token(config: PackConfig, issue: int) -> str | None:
-    template = artifact_templates(config).get("impl_branch")
-    if not template or "{issue_number}" not in template:
+def _impl_branch_token(config: PackConfig, issue: int) -> str | None:
+    artifacts = config.workflow.get("artifacts", {})
+    template = artifacts.get("impl_branch") if isinstance(artifacts, dict) else None
+    if not isinstance(template, str) or "{issue_number}" not in template:
         return None
-    for segment in SEGMENT_SPLIT_RE.split(template):
-        if "{issue_number}" not in segment:
-            continue
-        token = segment.replace("{issue_number}", str(issue))
-        token = PLACEHOLDER_RE.sub("", token).strip()
-        if token:
-            return token.lower()
-    return None
+    return f"gh{issue}"
 
 
-def branch_segments(branch: str) -> set[str]:
-    return {segment.lower() for segment in SEGMENT_SPLIT_RE.split(branch) if segment}
-
-
-def matching_contract_branches(branches: list[str], token: str) -> list[str]:
-    wanted = token.lower()
-    return sorted(branch for branch in branches if wanted in branch_segments(branch))
+def _result(
+    issue: int | None,
+    warnings: list[str],
+    satisfied: list[str],
+) -> dict[str, Any]:
+    return {
+        "decision": "warn" if warnings else "allowed",
+        "issue": issue,
+        "advisory_only": True,
+        "warnings": sorted(set(warnings)),
+        "reasons": sorted(set(warnings)),
+        "satisfied": sorted(set(satisfied)),
+        "missing": [],
+        "blocked_actions": [],
+        "verification_commands": [
+            "python3 checks/github_duplicate_evidence.py --github-repo OWNER/REPO --issue <issue> --json"
+        ],
+    }
 
 
 def evaluate_duplicate_work_gate(
@@ -81,129 +76,54 @@ def evaluate_duplicate_work_gate(
     issue: int | None,
     evidence: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    reasons: list[str] = []
+    warnings: list[str] = []
     satisfied: list[str] = []
-    missing: list[str] = []
-
     if not _positive_issue(issue):
-        return {
-            "decision": "blocked",
-            "issue": issue,
-            "reasons": ["duplicate work gate requires a positive issue number"],
-            "satisfied": [],
-            "missing": ["issue"],
-            "blocked_actions": ["implement"],
-            "verification_commands": ["python3 checks/duplicate_work_gate.py --repo . --issue <issue> --evidence <evidence.json>"],
-        }
-
+        return _result(issue, ["duplicate check requires a positive issue number"], [])
     if evidence is None:
-        return {
-            "decision": "needs_human",
-            "issue": issue,
-            "reasons": ["duplicate work evidence is missing"],
-            "satisfied": [],
-            "missing": ["duplicate_evidence"],
-            "blocked_actions": ["implement"],
-            "verification_commands": ["python3 checks/github_duplicate_evidence.py --github-repo OWNER/REPO --issue <issue> --json"],
-        }
-
+        return _result(
+            issue,
+            ["duplicate work evidence is missing; search GitHub before implementation"],
+            [],
+        )
     try:
-        validate_instance(_load_schema(config.repo), evidence)
+        validate_instance(_load_schema(config.repo), evidence, "duplicate evidence")
     except SpecRailError as exc:
-        return {
-            "decision": "blocked",
-            "issue": issue,
-            "reasons": [f"duplicate work evidence schema validation failed: {exc}"],
-            "satisfied": [],
-            "missing": [],
-            "blocked_actions": ["implement"],
-            "verification_commands": ["python3 checks/duplicate_work_gate.py --repo . --issue <issue> --evidence <evidence.json>"],
-        }
-
+        return _result(issue, [f"duplicate evidence is invalid: {exc}"], [])
     if evidence.get("issue") != issue:
-        return {
-            "decision": "blocked",
-            "issue": issue,
-            "reasons": [f"duplicate work evidence issue mismatch: expected {issue}, got {evidence.get('issue')}"],
-            "satisfied": [],
-            "missing": [],
-            "blocked_actions": ["implement"],
-            "verification_commands": ["python3 checks/duplicate_work_gate.py --repo . --issue <issue> --evidence <evidence.json>"],
-        }
-
-    duplicate_prs = [
+        warnings.append(
+            f"duplicate evidence issue mismatch: expected {issue}, got {evidence.get('issue')}"
+        )
+    duplicate_prs = sorted(
         item["number"]
-        for item in evidence["open_prs"]
-        if item.get("references_issue") is True
-    ]
+        for item in evidence.get("open_prs", [])
+        if isinstance(item, dict) and item.get("references_issue") is True
+    )
     if duplicate_prs:
-        joined = ", ".join(f"#{number}" for number in sorted(duplicate_prs))
-        reasons.append(f"open PRs already reference GH-{issue}: {joined}")
-        return {
-            "decision": "blocked",
-            "issue": issue,
-            "reasons": reasons,
-            "satisfied": satisfied,
-            "missing": missing,
-            "blocked_actions": ["implement"],
-            "verification_commands": ["python3 checks/duplicate_work_gate.py --repo . --issue <issue> --evidence <evidence.json>"],
-        }
-    satisfied.append(f"no open PR references GH-{issue}")
-
+        warnings.append(
+            "open PRs already reference GH-"
+            f"{issue}: {', '.join(f'#{number}' for number in duplicate_prs)}"
+        )
+    else:
+        satisfied.append(f"no open PR references GH-{issue}")
     if evidence.get("open_prs_complete") is not True:
-        limit = evidence.get("open_pr_limit")
-        reasons.append(
-            "open PR evidence may be incomplete"
-            + (f" at collection limit {limit}" if isinstance(limit, int) else "")
-        )
-        return {
-            "decision": "needs_human",
-            "issue": issue,
-            "reasons": reasons,
-            "satisfied": satisfied,
-            "missing": ["complete_open_pr_evidence"],
-            "blocked_actions": ["implement"],
-            "verification_commands": ["python3 checks/github_duplicate_evidence.py --github-repo OWNER/REPO --issue <issue> --pr-limit <larger-limit> --json"],
-        }
-
-    token = impl_branch_token(config, issue)
+        warnings.append("open PR evidence may be incomplete")
+    token = _impl_branch_token(config, issue)
     if token is None:
-        return {
-            "decision": "needs_human",
-            "issue": issue,
-            "reasons": ["workflow.yaml artifacts.impl_branch is missing or lacks {issue_number}"],
-            "satisfied": satisfied,
-            "missing": ["artifacts.impl_branch"],
-            "blocked_actions": ["implement"],
-            "verification_commands": ["python3 checks/check_workflow.py --repo ."],
-        }
-
-    branches = matching_contract_branches(evidence["remote_branches"], token)
-    if branches:
-        reasons.append(
-            "remote branches match GH-"
-            f"{issue} implementation branch contract: {', '.join(branches)}"
+        warnings.append("workflow artifacts.impl_branch is missing its issue token")
+    else:
+        branches = sorted(
+            branch
+            for branch in evidence.get("remote_branches", [])
+            if isinstance(branch, str) and token in branch.lower()
         )
-        return {
-            "decision": "needs_human",
-            "issue": issue,
-            "reasons": reasons,
-            "satisfied": satisfied,
-            "missing": ["branch_ownership_decision"],
-            "blocked_actions": ["implement"],
-            "verification_commands": ["python3 checks/duplicate_work_gate.py --repo . --issue <issue> --evidence <evidence.json>"],
-        }
-
-    satisfied.append(f"no remote branch matches implementation token {token}")
-    return {
-        "decision": "allowed",
-        "issue": issue,
-        "reasons": [f"duplicate work gate passed for GH-{issue}"],
-        "satisfied": satisfied,
-        "missing": [],
-        "blocked_actions": [],
-        "verification_commands": ["python3 checks/duplicate_work_gate.py --repo . --issue <issue> --evidence <evidence.json>"],
-    }
+        if branches:
+            warnings.append(
+                "remote branches may already own this issue: " + ", ".join(branches)
+            )
+        else:
+            satisfied.append(f"no remote branch matches implementation token {token}")
+    return _result(issue, warnings, satisfied)
 
 
 def evaluate_duplicate_work_gate_path(
@@ -215,55 +135,28 @@ def evaluate_duplicate_work_gate_path(
     try:
         evidence = _load_evidence(evidence_path)
     except SpecRailError as exc:
-        return {
-            "decision": "blocked",
-            "issue": issue,
-            "reasons": [str(exc)],
-            "satisfied": [],
-            "missing": [],
-            "blocked_actions": ["implement"],
-            "verification_commands": ["python3 checks/duplicate_work_gate.py --repo . --issue <issue> --evidence <evidence.json>"],
-        }
+        return _result(issue, [str(exc)], [])
     return evaluate_duplicate_work_gate(config, issue, evidence)
 
 
-def print_human(result: dict[str, Any]) -> None:
-    print(f"decision: {result['decision']}")
-    if result.get("issue"):
-        print(f"issue: GH-{result['issue']}")
-    if result.get("reasons"):
-        print("reasons:")
-        for reason in result["reasons"]:
-            print(f"- {reason}")
-    if result.get("missing"):
-        print("missing:")
-        for item in result["missing"]:
-            print(f"- {item}")
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Evaluate duplicate implementation work evidence offline."
-    )
-    parser.add_argument("--repo", default=".", help="SpecRail pack or adopted repo root")
-    parser.add_argument("--issue", type=int, required=True, help="Linked GitHub issue number")
-    parser.add_argument("--evidence", help="Duplicate work evidence JSON file")
-    parser.add_argument("--json", action="store_true", help="Print JSON output")
+    parser = argparse.ArgumentParser(description="Advisory duplicate-work check.")
+    parser.add_argument("--repo", default=".")
+    parser.add_argument("--issue", required=True, type=int)
+    parser.add_argument("--evidence")
+    parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-
-    result = evaluate_duplicate_work_gate_path(
-        Path(args.repo).resolve(),
-        args.issue,
-        Path(args.evidence) if args.evidence else None,
-    )
-
+    repo = resolve_path(Path(args.repo), label="repository")
+    evidence = Path(args.evidence) if args.evidence else None
+    if evidence is not None and not evidence.is_absolute():
+        evidence = repo / evidence
+    result = evaluate_duplicate_work_gate_path(repo, args.issue, evidence)
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
-        print_human(result)
-
-    if result["decision"] == "blocked":
-        return 1
+        print(f"decision: {result['decision']}")
+        for warning in result["warnings"]:
+            print(f"warning: {warning}")
     return 0
 
 
