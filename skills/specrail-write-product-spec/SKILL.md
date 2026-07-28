@@ -17,8 +17,15 @@ Use this skill for the product half of the `write_spec` route.
    checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
-python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
+python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO \
+  --issue <issue-number> --json > issue-evidence.json
+python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> \
+  --github-repo OWNER/REPO --evidence issue-evidence.json --mode required --json
 ```
+
+Continue only when the route decision is `allowed`; stop and report every
+other decision and its missing evidence. Do not substitute `--state` or
+`--label` for current collector evidence.
 
 4. Pick the depth tier from the length heuristic below, then write
    `specs/GH<issue-number>/product.md`.
@@ -85,8 +92,8 @@ merge-review gate with risk-based review sources.
 > 1. B-001 每个 merge 候选项必须记录 review 来源，取值为闭集
 >    {independent_lane, self_review}；缺失、为空或越界取值时该项判为
 >    blocked。
-> 2. B-002 选中 profile 的 `requires_independent_review` 为 true 时必须使用
->    independent_lane，否则可以使用 self_review；来源不匹配时一次返回全部
+> 2. B-002 canonical profile 中 fastlane 使用 self_review，standard/heavy
+>    必须使用 independent_lane；任何覆盖 canonical 安全属性的配置一次返回全部
 >    问题。
 > 3. B-003 review 最多两轮：第一轮必须 full，第二轮只能 diff-only；第三轮
 >    返回 needs_human。

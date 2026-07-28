@@ -17,15 +17,17 @@ Compact review contract (`contract_version: 3`):
 - Round 1 uses `mode: full` and binds the exact PR base-to-head diff with
   `base_head_sha` plus `diff_sha256`. Round 2 uses `mode: diff_only`, binds
   the exact fix diff with the same fields, embeds the bound round-1 artifact
-  as `prior_review`, and carries each prior unresolved P0/P1 finding forward.
-  A round above the selected profile's configured cap returns `needs_human`.
+  as `prior_review`, and is valid only when that prior review contains an
+  unresolved P0/P1. It carries each prior unresolved P0/P1 finding forward and
+  limits the fix diff to that finding's predeclared `path` or `fix_paths`.
+  A round above the selected profile's canonical cap returns `needs_human`.
 - Current unresolved `P0`/`P1` findings block. `P2`/`P3` findings are
   non-blocking follow-ups on the current Issue/PR and never create Issues
   automatically.
 - A hosted finding with `outdated: true` does not block. A current-head
   unresolved `P0`/`P1` still blocks regardless of origin.
-- `review_source` follows the selected profile's configured
-  `requires_independent_review` policy.
+- `review_source` follows the selected profile's canonical
+  `requires_independent_review` policy; noncanonical profile overrides block.
 - The artifact is advisory and cannot grant final approval or merge authority.
 <!-- specrail-bounded-review-contract-v1:end -->"""
 FORBIDDEN_LEGACY_PHRASES = (
@@ -119,7 +121,7 @@ def test_implementation_skills_run_required_gate_and_fail_closed() -> None:
         )
 
 
-def test_active_review_guidance_uses_configured_independence_policy() -> None:
+def test_active_review_guidance_uses_canonical_independence_policy() -> None:
     for relative_path in (
         "README.md",
         "SPEC.md",
@@ -130,7 +132,7 @@ def test_active_review_guidance_uses_configured_independence_policy() -> None:
         "skills/specrail-write-product-spec/SKILL.md",
     ):
         text = (REPO / relative_path).read_text(encoding="utf-8")
-        assert "requires_independent_review" in text
+        assert "canonical" in text.lower()
         assert "Fastlane may self-review" not in text
         assert "standard/heavy require" not in text.lower()
         assert "standard 和 heavy 必须使用" not in text

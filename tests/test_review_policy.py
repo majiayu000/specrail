@@ -45,6 +45,15 @@ def review_with(
         "findings": findings or [],
     }
     if review_round == 2:
+        carried = {
+            "id": "P1-prior-fix",
+            "severity": "P1",
+            "status": "resolved",
+            "summary": "Prior blocking defect.",
+            "introduced_by_diff": False,
+            "fix_paths": ["src/app.py"],
+        }
+        review["findings"] = [*review["findings"], carried]
         review["base_head_sha"] = "b" * 40
         review["diff_sha256"] = hashlib.sha256(diff).hexdigest()
         review["prior_review"] = {
@@ -59,9 +68,15 @@ def review_with(
             "review_source": "independent_lane",
             "round": 1,
             "mode": "full",
-            "verdict": "clean",
+            "verdict": "blocking",
             "body": "## Summary\nFull review.\n\n## Verdict\nAdvisory result only.",
-            "findings": [],
+            "findings": [
+                {
+                    **carried,
+                    "status": "unresolved",
+                    "introduced_by_diff": False,
+                }
+            ],
         }
     return review
 

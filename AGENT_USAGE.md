@@ -147,12 +147,14 @@ python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 ```
 
 The review JSON uses compact contract v3. Its `review_source` follows the
-selected profile's configured `requires_independent_review` policy. Round 1 is
+canonical profile policy: fastlane self-review; standard/heavy independent.
+Round 1 is
 full and binds the exact PR base-to-head diff with `base_head_sha` and
 `diff_sha256`; round 2 is diff-only after P0/P1 fixes. P2/P3 are
 non-blocking follow-ups, and outdated hosted findings do not block current
-head. A round-2 artifact must embed the bound round-1 artifact as
-`prior_review` and carry every prior unresolved P0/P1 finding forward.
+head. A round-2 artifact is valid only after an unresolved round-1 P0/P1; it
+must embed the bound round-1 artifact as `prior_review` and carry every prior
+unresolved P0/P1 finding forward.
 
 For a partial implementation slice whose body contains a standalone
 `Refs #<issue-number>` directive, bind the intended issue explicitly:

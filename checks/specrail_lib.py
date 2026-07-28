@@ -650,12 +650,16 @@ def validate_verification_profiles(config: PackConfig) -> list[str]:
             )
     if default != "standard":
         errors.append("workflow.yaml: default verification profile must be standard")
-    if profiles.get("heavy", {}).get("requires_spec_packet") is not True:
-        errors.append("workflow.yaml: heavy profile must require a spec packet")
-    if profiles.get("heavy", {}).get("merge_authorization") != "explicit_human":
-        errors.append(
-            "workflow.yaml: heavy profile must require explicit_human merge authorization"
-        )
+    canonical = {
+        "fastlane": (False, False, 1, "invocation"),
+        "standard": (False, True, 2, "invocation"),
+        "heavy": (True, True, 2, "explicit_human"),
+    }
+    for name, expected_policy in canonical.items():
+        body = profiles.get(name, {})
+        actual_policy = tuple(body.get(field) for field in ("requires_spec_packet", "requires_independent_review", "max_review_rounds", "merge_authorization"))
+        if actual_policy != expected_policy:
+            errors.append(f"workflow.yaml: {name} profile must match canonical safety policy")
     return errors
 
 

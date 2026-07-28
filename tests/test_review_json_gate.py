@@ -165,6 +165,17 @@ def test_parse_unified_diff_indexes_both_sides() -> None:
     assert {1, 2, 3, 11, 12, 13, 14} <= index.right["src/app.py"]
 
 
+def test_parse_unified_diff_tracks_binary_paths_without_hunks() -> None:
+    index = parse_unified_diff(
+        "diff --git a/assets/old.bin b/assets/new.bin\n"
+        "similarity index 100%\n"
+        "rename from assets/old.bin\n"
+        "rename to assets/new.bin\n"
+    )
+
+    assert index.paths == {"assets/old.bin", "assets/new.bin"}
+
+
 def test_validate_exact_git_diff_rejects_option_like_revisions(tmp_path: Path) -> None:
     reasons = validate_exact_git_diff(
         tmp_path,
@@ -183,6 +194,16 @@ def test_round_two_digest_can_be_checked_without_git_repo() -> None:
     prior_review["base_head_sha"] = "c" * 40
     prior_review["head_sha"] = "b" * 40
     prior_review["diff_sha256"] = hashlib.sha256(diff.encode()).hexdigest()
+    prior_review["verdict"] = "blocking"
+    prior_review["findings"] = [
+        {
+            "id": "P1-prior-fix",
+            "severity": "P1",
+            "status": "unresolved",
+            "summary": "Prior blocking defect.",
+            "fix_paths": ["src/app.py"],
+        }
+    ]
     review.update(
         {
             "round": 2,
@@ -190,12 +211,94 @@ def test_round_two_digest_can_be_checked_without_git_repo() -> None:
             "base_head_sha": "b" * 40,
             "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
             "prior_review": prior_review,
+            "findings": [
+                {
+                    "id": "P1-prior-fix",
+                    "severity": "P1",
+                    "status": "resolved",
+                    "summary": "Prior blocking defect.",
+                    "introduced_by_diff": False,
+                }
+            ],
         }
     )
 
     result = evaluate_review_gate(review, diff)
 
     assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_round_two_rejects_paths_outside_prior_blocker_fix_scope() -> None:
+    diff = load_diff() + (
+        "diff --git a/docs/extra.md b/docs/extra.md\n"
+        "new file mode 100644\n--- /dev/null\n+++ b/docs/extra.md\n"
+        "@@ -0,0 +1 @@\n+unrelated scope\n"
+    )
+    review = valid_review()
+    prior = copy.deepcopy(review)
+    prior.update(
+        {
+            "base_head_sha": "c" * 40,
+            "head_sha": "b" * 40,
+            "verdict": "blocking",
+            "findings": [
+                {
+                    "id": "P1-scoped",
+                    "severity": "P1",
+                    "status": "unresolved",
+                    "summary": "Fix the application defect.",
+                    "fix_paths": ["src/app.py"],
+                }
+            ],
+        }
+    )
+    review.update(
+        {
+            "round": 2,
+            "mode": "diff_only",
+            "base_head_sha": "b" * 40,
+            "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
+            "prior_review": prior,
+            "findings": [
+                {
+                    **prior["findings"][0],
+                    "status": "resolved",
+                    "introduced_by_diff": False,
+                }
+            ],
+        }
+    )
+
+    result = evaluate_review_gate(review, diff)
+
+    assert result["decision"] == "blocked"
+    assert any(
+        "start a new full review: docs/extra.md" in reason
+        for reason in result["reasons"]
+    )
+
+
+def test_round_two_rejects_clean_prior_review() -> None:
+    review = valid_review()
+    prior_review = copy.deepcopy(review)
+    prior_review["base_head_sha"] = "c" * 40
+    prior_review["head_sha"] = "b" * 40
+    review.update(
+        {
+            "round": 2,
+            "mode": "diff_only",
+            "base_head_sha": "b" * 40,
+            "prior_review": prior_review,
+        }
+    )
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert (
+        "round 2 requires an unresolved P0/P1 finding from round 1"
+        in result["reasons"]
+    )
 
 
 def test_round_one_digest_must_match_supplied_diff() -> None:

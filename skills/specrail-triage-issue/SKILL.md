@@ -21,7 +21,7 @@ Use this skill for the `triage_issue` route.
 
 ```sh
 python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issue-number> --json > issue-evidence.json
-python3 checks/route_gate.py --repo . --route triage_issue --issue <issue-number> --evidence issue-evidence.json --json
+python3 checks/route_gate.py --repo . --route triage_issue --issue <issue-number> --github-repo <owner/repo> --evidence issue-evidence.json --json
 python3 checks/route_gate.py --repo . --route triage_issue --issue <issue-number> --state <state> --json
 ```
 

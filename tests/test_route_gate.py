@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from route_gate_test_support import (
     ROOT,
+    complete_issue_evidence,
     run_route_gate,
     write_custom_pack,
     write_duplicate_evidence,
+    write_issue_evidence,
 )
 
 from route_gate import artifact_exists  # noqa: E402
@@ -19,19 +22,73 @@ def test_artifact_exists_rejects_empty_path() -> None:
     assert artifact_exists(ROOT, None) is False
 
 
+def test_collector_evidence_reports_all_invocation_binding_errors(
+    tmp_path: Path,
+) -> None:
+    evidence_path = tmp_path / "forged-issue-evidence.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "issue": 208,
+                "repository": "other/repo",
+                "body_sha256": "a" * 64,
+                "github_state": "OPEN",
+                "state": "ready_to_implement",
+                "state_source": "label",
+                "state_trusted": True,
+                "labels": ["area_runtime", "security_private"],
+                "outcomes": [],
+                "url": "https://github.com/other/repo/issues/208",
+                "title": "Forged reusable evidence",
+                "testable_plan": {
+                    "source": "issue_body_checklist",
+                    "items": ["observable result"],
+                    "body_sha256": "b" * 64,
+                },
+                "artifacts": {
+                    "product_spec": "specs/GH208/product.md",
+                    "tech_spec": "specs/GH208/tech.md",
+                    "task_plan": "specs/GH208/tasks.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--github-repo",
+        "expected/repo",
+        "--profile",
+        "standard",
+        "--evidence",
+        str(evidence_path),
+        "--mode",
+        "required",
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    reasons = payload["reasons"]
+    assert any("must match --issue 999" in reason for reason in reasons)
+    assert any("must match --github-repo expected/repo" in reason for reason in reasons)
+    assert "trusted label state must be present in issue evidence labels" in reasons
+    assert "issue evidence outcomes must exactly match outcome labels" in reasons
+    assert "testable_plan.body_sha256 must match issue evidence body_sha256" in reasons
+
+
 def test_route_gate_requires_trusted_state_for_readiness_gated_routes(
     tmp_path: Path,
 ) -> None:
     evidence_path = tmp_path / "issue-evidence.json"
     evidence_path.write_text(
-        json.dumps(
-            {
-                "github_state": "OPEN",
-                "state": "ready_to_spec",
-                "state_source": "body_hint",
-                "state_trusted": False,
-            }
-        ),
+        json.dumps(complete_issue_evidence(
+            state="ready_to_spec", state_source="body_hint",
+            state_trusted=False, labels=[],
+        )),
         encoding="utf-8",
     )
 
@@ -40,6 +97,8 @@ def test_route_gate_requires_trusted_state_for_readiness_gated_routes(
         "write_spec",
         "--issue",
         "999",
+        "--github-repo",
+        "example/consumer",
         "--evidence",
         str(evidence_path),
     )
@@ -55,14 +114,10 @@ def test_route_gate_required_mode_fails_untrusted_readiness_state(
 ) -> None:
     evidence_path = tmp_path / "issue-evidence.json"
     evidence_path.write_text(
-        json.dumps(
-            {
-                "github_state": "OPEN",
-                "state": "ready_to_spec",
-                "state_source": "body_hint",
-                "state_trusted": False,
-            }
-        ),
+        json.dumps(complete_issue_evidence(
+            state="ready_to_spec", state_source="body_hint",
+            state_trusted=False, labels=[],
+        )),
         encoding="utf-8",
     )
 
@@ -71,6 +126,8 @@ def test_route_gate_required_mode_fails_untrusted_readiness_state(
         "write_spec",
         "--issue",
         "999",
+        "--github-repo",
+        "example/consumer",
         "--evidence",
         str(evidence_path),
         "--mode",
@@ -84,14 +141,7 @@ def test_route_gate_required_mode_fails_untrusted_readiness_state(
 def test_route_gate_allows_trusted_readiness_label_evidence(tmp_path: Path) -> None:
     evidence_path = tmp_path / "issue-evidence.json"
     evidence_path.write_text(
-        json.dumps(
-            {
-                "github_state": "OPEN",
-                "state": "ready_to_spec",
-                "state_source": "label",
-                "state_trusted": True,
-            }
-        ),
+        json.dumps(complete_issue_evidence(state="ready_to_spec")),
         encoding="utf-8",
     )
 
@@ -100,6 +150,8 @@ def test_route_gate_allows_trusted_readiness_label_evidence(tmp_path: Path) -> N
         "write_spec",
         "--issue",
         "999",
+        "--github-repo",
+        "example/consumer",
         "--evidence",
         str(evidence_path),
     )
@@ -110,17 +162,13 @@ def test_route_gate_allows_trusted_readiness_label_evidence(tmp_path: Path) -> N
 
 def test_route_gate_blocks_terminal_outcome_evidence(tmp_path: Path) -> None:
     evidence_path = tmp_path / "issue-evidence.json"
+    evidence = complete_issue_evidence(
+        state="ready_to_spec",
+        labels=["ready_to_spec", "security_private"],
+    )
+    evidence["outcomes"] = ["security_private"]
     evidence_path.write_text(
-        json.dumps(
-            {
-                "github_state": "OPEN",
-                "state": "ready_to_spec",
-                "state_source": "label",
-                "state_trusted": True,
-                "labels": ["ready_to_spec", "security_private"],
-                "outcomes": ["security_private"],
-            }
-        ),
+        json.dumps(evidence),
         encoding="utf-8",
     )
 
@@ -129,6 +177,8 @@ def test_route_gate_blocks_terminal_outcome_evidence(tmp_path: Path) -> None:
         "write_spec",
         "--issue",
         "999",
+        "--github-repo",
+        "example/consumer",
         "--evidence",
         str(evidence_path),
     )
@@ -193,8 +243,16 @@ def test_implement_preserves_configured_required_evidence(tmp_path: Path) -> Non
         "implement",
         "--issue",
         "999",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(
+            tmp_path,
+            testable_plan={
+                "source": "issue_body_checklist",
+                "items": ["verify the configured requirement"],
+            },
+        )),
         repo=repo,
     )
 
@@ -213,8 +271,10 @@ def test_route_gate_uses_configured_spec_packet_in_verification_command(
         "write_spec",
         "--issue",
         "999",
-        "--state",
-        "ready_to_spec",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, state="ready_to_spec")),
         repo=repo,
     )
 
@@ -231,10 +291,14 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
     repo = tmp_path / "repo"
     write_custom_pack(repo, "./specs")
     schema_dir = repo / "schemas"
-    schema_dir.mkdir()
+    schema_dir.mkdir(exist_ok=True)
     duplicate_schema = schema_dir / "duplicate_work_evidence.schema.json"
     duplicate_schema.write_text(
         (ROOT / "schemas" / duplicate_schema.name).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (schema_dir / "issue_evidence.schema.json").write_text(
+        (ROOT / "schemas/issue_evidence.schema.json").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     packet = repo / "specs" / "GH999"
@@ -247,17 +311,39 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         "Done when: fixture exists | Verify: `true`\n",
         encoding="utf-8",
     )
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "-c", "user.name=SpecRail Test",
+            "-c", "user.email=specrail@example.invalid", "commit", "-qm", "approved",
+        ],
+        check=True,
+    )
+    approved_revision = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
     duplicate_evidence = write_duplicate_evidence(tmp_path)
+    issue_evidence = tmp_path / "issue-evidence.json"
+    issue_evidence.write_text(
+        json.dumps(complete_issue_evidence()),
+        encoding="utf-8",
+    )
 
     result, payload = run_route_gate(
         "--route",
         "implement",
         "--issue",
         "999",
-        "--state",
-        "ready_to_implement",
         "--profile",
         "heavy",
+        "--github-repo",
+        "example/consumer",
+        "--approved-spec-revision",
+        approved_revision,
+        "--evidence",
+        str(issue_evidence),
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--artifact",
@@ -278,10 +364,14 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         "implement",
         "--issue",
         "999",
-        "--state",
-        "ready_to_implement",
         "--profile",
         "heavy",
+        "--github-repo",
+        "example/consumer",
+        "--approved-spec-revision",
+        approved_revision,
+        "--evidence",
+        str(issue_evidence),
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--artifact",
@@ -302,10 +392,10 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         "implement",
         "--issue",
         "999",
-        "--state",
-        "ready_to_implement",
         "--profile",
         "heavy",
+        "--evidence",
+        str(issue_evidence),
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--artifact",
@@ -332,8 +422,10 @@ def test_route_gate_shell_quotes_configured_spec_packet_command(
         "write_spec",
         "--issue",
         "999",
-        "--state",
-        "ready_to_spec",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, state="ready_to_spec")),
         repo=repo,
     )
 
@@ -356,8 +448,10 @@ def test_route_gate_uses_equals_for_leading_dash_spec_packet(
         "write_spec",
         "--issue",
         "999",
-        "--state",
-        "ready_to_spec",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, state="ready_to_spec")),
         repo=repo,
     )
 
@@ -384,8 +478,10 @@ def test_route_gate_blocks_root_symlink_outside_repo(tmp_path: Path) -> None:
         "write_spec",
         "--issue",
         "999",
-        "--state",
-        "ready_to_spec",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, state="ready_to_spec")),
         repo=repo,
     )
 
@@ -411,8 +507,10 @@ def test_route_gate_reports_root_symlink_loop_as_blocked(tmp_path: Path) -> None
         "write_spec",
         "--issue",
         "999",
-        "--state",
-        "ready_to_spec",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, state="ready_to_spec")),
         repo=repo,
     )
 
@@ -439,8 +537,10 @@ def test_route_gate_blocks_invalid_spec_packet_template(tmp_path: Path) -> None:
         "write_spec",
         "--issue",
         "999",
-        "--state",
-        "ready_to_spec",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, state="ready_to_spec")),
         repo=repo,
     )
 
@@ -456,13 +556,16 @@ def test_route_gate_dry_run_warns_for_missing_artifacts_but_required_blocks(
     tmp_path: Path,
 ) -> None:
     duplicate_evidence = write_duplicate_evidence(tmp_path)
+    issue_evidence = write_issue_evidence(tmp_path)
     dry_run, dry_payload = run_route_gate(
         "--route",
         "implement",
         "--issue",
         "999",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(issue_evidence),
         "--profile",
         "heavy",
         "--duplicate-evidence",
@@ -475,8 +578,10 @@ def test_route_gate_dry_run_warns_for_missing_artifacts_but_required_blocks(
         "implement",
         "--issue",
         "999",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(issue_evidence),
         "--profile",
         "heavy",
         "--duplicate-evidence",
@@ -496,13 +601,16 @@ def test_route_gate_dry_run_warns_for_missing_artifacts_but_required_blocks(
 
 def test_route_gate_duplicate_success_reason_not_itemized(tmp_path: Path) -> None:
     duplicate_evidence = write_duplicate_evidence(tmp_path)
+    issue_evidence = write_issue_evidence(tmp_path)
     result, payload = run_route_gate(
         "--route",
         "implement",
         "--issue",
         "999",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(issue_evidence),
         "--profile",
         "heavy",
         "--duplicate-evidence",
@@ -525,14 +633,16 @@ def test_route_gate_duplicate_success_reason_not_itemized(tmp_path: Path) -> Non
     )
 
 
-def test_route_gate_missing_duplicate_evidence_is_advisory() -> None:
+def test_route_gate_missing_duplicate_evidence_is_advisory(tmp_path: Path) -> None:
     result, payload = run_route_gate(
         "--route",
         "implement",
         "--issue",
         "142",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, issue=142)),
     )
 
     assert result.returncode == 0
@@ -558,8 +668,10 @@ def test_route_gate_warns_for_duplicate_open_pr(tmp_path: Path) -> None:
         "implement",
         "--issue",
         "142",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, issue=142)),
         "--duplicate-evidence",
         str(duplicate_evidence),
     )
@@ -581,8 +693,10 @@ def test_route_gate_duplicate_branch_is_advisory(tmp_path: Path) -> None:
         "implement",
         "--issue",
         "142",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, issue=142)),
         "--duplicate-evidence",
         str(duplicate_evidence),
     )
@@ -595,7 +709,7 @@ def test_route_gate_duplicate_branch_is_advisory(tmp_path: Path) -> None:
 def test_route_gate_blocks_unknown_current_state() -> None:
     result, payload = run_route_gate(
         "--route",
-        "implement",
+        "triage_issue",
         "--issue",
         "999",
         "--state",
@@ -626,7 +740,7 @@ def _write_implement_pack(tmp_path: Path, product_text: str) -> Path:
     repo = tmp_path / "repo"
     write_custom_pack(repo, "./specs")
     schema_dir = repo / "schemas"
-    schema_dir.mkdir()
+    schema_dir.mkdir(exist_ok=True)
     duplicate_schema = schema_dir / "duplicate_work_evidence.schema.json"
     duplicate_schema.write_text(
         (ROOT / "schemas" / duplicate_schema.name).read_text(encoding="utf-8"),
@@ -717,8 +831,12 @@ def test_implement_allows_non_legacy_spec_unchanged(tmp_path: Path) -> None:
         "implement",
         "--issue",
         "999",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path)),
+        "--profile",
+        "fastlane",
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--mode",
@@ -746,8 +864,12 @@ def test_legacy_marker_outside_linked_issue_does_not_block_implement(
         "implement",
         "--issue",
         "999",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path)),
+        "--profile",
+        "fastlane",
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--mode",
@@ -788,14 +910,7 @@ def test_route_gate_allowed_result_has_empty_rejection_items(
 ) -> None:
     evidence_path = tmp_path / "issue-evidence.json"
     evidence_path.write_text(
-        json.dumps(
-            {
-                "github_state": "OPEN",
-                "state": "ready_to_spec",
-                "state_source": "label",
-                "state_trusted": True,
-            }
-        ),
+        json.dumps(complete_issue_evidence(state="ready_to_spec")),
         encoding="utf-8",
     )
 
@@ -804,6 +919,8 @@ def test_route_gate_allowed_result_has_empty_rejection_items(
         "write_spec",
         "--issue",
         "999",
+        "--github-repo",
+        "example/consumer",
         "--evidence",
         str(evidence_path),
     )

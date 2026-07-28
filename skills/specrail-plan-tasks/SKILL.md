@@ -19,7 +19,9 @@ Use this skill to create or update the task plan before implementation.
 python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO \
   --issue <issue-number> --json > issue-evidence.json
 python3 checks/route_gate.py --repo . --route implement --issue <issue-number> \
-  --profile heavy --evidence issue-evidence.json --mode required --json
+  --github-repo OWNER/REPO --profile heavy --evidence issue-evidence.json \
+  --approved-spec-revision <40-char-sha> \
+  --mode required --json
 ```
 
 Continue only when the route decision is `allowed`; stop and report every

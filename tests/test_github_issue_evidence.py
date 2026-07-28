@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -23,6 +24,7 @@ from github_issue_evidence import (  # noqa: E402
     main as issue_evidence_main,
     parse_github_repo,
     parse_issue_number,
+    extract_testable_plan_from_body,
 )
 from specrail_lib import SpecRailError  # noqa: E402
 
@@ -95,6 +97,10 @@ def write_sensitive_implement_pack(repo: Path, issue: int = 16) -> str:
         ),
         encoding="utf-8",
     )
+    (schema_dir / "issue_evidence.schema.json").write_text(
+        (ROOT / "schemas" / "issue_evidence.schema.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     packet = repo / "specs" / f"GH{issue}"
     packet.mkdir(parents=True)
     (packet / "product.md").write_text(
@@ -131,30 +137,6 @@ def write_sensitive_implement_pack(repo: Path, issue: int = 16) -> str:
     )
     return head
 
-def approval_query_payload(head: str) -> dict[str, object]:
-    connection = {"pageInfo": {"hasNextPage": False, "endCursor": None}}
-    labels = dict(connection, nodes=[{"name": "ready_to_implement"}])
-    timeline = dict(
-        connection,
-        nodes=[{
-            "createdAt": "2030-07-14T00:00:00Z",
-            "actor": {"login": "maintainer"},
-            "label": {"name": "ready_to_implement"},
-        }],
-    )
-    return {
-        "data": {
-            "repository": {
-                "defaultBranchRef": {"name": "main", "target": {"oid": head}},
-                "issue": {
-                    "state": "OPEN",
-                    "labels": labels,
-                    "timelineItems": timeline,
-                },
-            }
-        }
-    }
-
 def mock_sensitive_github(
     monkeypatch: pytest.MonkeyPatch,
     head: str,
@@ -170,17 +152,6 @@ def mock_sensitive_github(
     def fake_run_json(args: list[str]) -> object:
         if args[:2] == ["issue", "view"]:
             return github_issue
-        if args[:2] == ["api", "graphql"]:
-            return approval_query_payload(head)
-        if args[:3] == ["api", "--method", "GET"]:
-            return [
-                {
-                    "number": 7,
-                    "merged_at": "2029-07-13T00:00:00Z",
-                    "merge_commit_sha": head,
-                    "base": {"ref": "main"},
-                }
-            ]
         raise AssertionError(f"unexpected GitHub call: {args}")
 
     monkeypatch.setattr("github_issue_evidence.run_gh_json", fake_run_json)
@@ -201,6 +172,7 @@ def write_duplicate_evidence(path: Path, issue: int = 16) -> Path:
 
 def run_implement_route(
     repo: Path, evidence: dict[str, object], tmp_path: Path,
+    approved_revision: str,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     evidence_path = tmp_path / "issue-evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
@@ -210,6 +182,8 @@ def run_implement_route(
             "--repo", str(repo),
             "--route", "implement",
             "--issue", "16",
+            "--github-repo", "example/consumer",
+            "--approved-spec-revision", approved_revision,
             "--evidence", str(evidence_path),
             "--duplicate-evidence",
             str(write_duplicate_evidence(tmp_path / "duplicate-evidence.json")),
@@ -256,6 +230,7 @@ def test_build_evidence_matches_route_gate_contract_from_label() -> None:
 
     assert evidence == {
         "issue": 16,
+        "body_sha256": hashlib.sha256(b"").hexdigest(),
         "github_state": "OPEN",
         "state": "ready_to_spec",
         "state_source": "label",
@@ -270,6 +245,22 @@ def test_build_evidence_matches_route_gate_contract_from_label() -> None:
             "task_plan": "specs/GH16/tasks.md",
         },
     }
+
+
+def test_issue_done_when_checklist_becomes_bound_testable_plan() -> None:
+    body = (
+        "## Context\n\nText.\n\n"
+        "## Done-When（all required）\n\n"
+        "### Behavior\n\n- [ ] first result\n- [x] second result\n"
+        "## Notes\n\n- [ ] not part of the plan\n"
+    )
+
+    plan = extract_testable_plan_from_body(body)
+    evidence = build_issue_evidence(issue_payload(body=body))
+
+    assert plan == evidence["testable_plan"]
+    assert plan["items"] == ["first result", "second result"]
+    assert len(plan["body_sha256"]) == 64
 
 
 def test_configured_artifacts_uses_workflow_templates(tmp_path: Path) -> None:
@@ -563,6 +554,8 @@ def test_route_gate_consumes_issue_fixture() -> None:
             "write_spec",
             "--issue",
             "16",
+            "--github-repo",
+            "majiayu000/specrail",
             "--evidence",
             str(fixture),
             "--json",
@@ -592,6 +585,8 @@ def test_route_gate_requires_human_for_body_hint_state() -> None:
             "implement",
             "--issue",
             "142",
+            "--github-repo",
+            "majiayu000/specrail",
             "--evidence",
             str(fixture),
             "--json",
@@ -615,8 +610,10 @@ def test_route_gate_rejects_inconsistent_trust_metadata(tmp_path: Path) -> None:
         issue_payload(
             labels=[{"name": "area_runtime"}],
             body="state: ready_to_implement",
+            number=142,
         )
     )
+    evidence["repository"] = "majiayu000/specrail"
     evidence["state_trusted"] = True
     evidence_path = tmp_path / "inconsistent-evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
@@ -631,6 +628,8 @@ def test_route_gate_rejects_inconsistent_trust_metadata(tmp_path: Path) -> None:
             "implement",
             "--issue",
             "142",
+            "--github-repo",
+            "majiayu000/specrail",
             "--evidence",
             str(evidence_path),
             "--json",
@@ -641,13 +640,13 @@ def test_route_gate_rejects_inconsistent_trust_metadata(tmp_path: Path) -> None:
         text=True,
     )
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1
     payload = json.loads(result.stdout)
-    assert payload["decision"] == "needs_human"
-    assert "trusted_state" in payload["missing"]
+    assert payload["decision"] == "blocked"
+    assert "state_trusted=true requires state_source=label" in payload["reasons"]
 
 
-def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence(
+def test_route_gate_explicit_state_does_not_override_body_hint_evidence(
     tmp_path: Path,
 ) -> None:
     # The shipped fixture targets the non-legacy GH142 packet, so this test
@@ -677,6 +676,8 @@ def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence(
             "implement",
             "--issue",
             "142",
+            "--github-repo",
+            "majiayu000/specrail",
             "--state",
             "ready_to_implement",
             "--evidence",
@@ -693,7 +694,7 @@ def test_route_gate_explicit_state_stays_compatible_with_body_hint_evidence(
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["decision"] == "allowed"
+    assert payload["decision"] == "needs_human"
     assert payload["current_state"] == "ready_to_implement"
 
 
@@ -727,6 +728,8 @@ def test_route_gate_shipped_ready_to_implement_fixture_passes(
             "implement",
             "--issue",
             "142",
+            "--github-repo",
+            "majiayu000/specrail",
             "--evidence",
             str(fixture),
             "--duplicate-evidence",
@@ -748,6 +751,7 @@ def test_route_gate_shipped_ready_to_implement_fixture_passes(
 
 def test_route_gate_blocks_closed_issue_evidence(tmp_path: Path) -> None:
     evidence = build_issue_evidence(issue_payload(state="CLOSED"))
+    evidence["repository"] = "majiayu000/specrail"
     evidence_path = tmp_path / "closed-issue.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
@@ -761,6 +765,8 @@ def test_route_gate_blocks_closed_issue_evidence(tmp_path: Path) -> None:
             "write_spec",
             "--issue",
             "16",
+            "--github-repo",
+            "majiayu000/specrail",
             "--evidence",
             str(evidence_path),
             "--json",
@@ -786,7 +792,7 @@ def test_sensitive_issue_adapter_serializes_allowed_implement_route(
     mock_sensitive_github(monkeypatch, head)
 
     evidence = collect_issue_evidence("example/consumer", 16, repo)
-    result, payload = run_implement_route(repo, evidence, tmp_path)
+    result, payload = run_implement_route(repo, evidence, tmp_path, head)
 
     assert evidence["repository"] == "example/consumer"
     assert evidence["enforcement_sensitive"] is True
@@ -831,7 +837,7 @@ def test_sensitive_issue_adapter_does_not_upgrade_untrusted_or_missing_label(
     mock_sensitive_github(monkeypatch, head, labels=labels, body=body)
 
     evidence = collect_issue_evidence("example/consumer", 16, repo)
-    result, payload = run_implement_route(repo, evidence, tmp_path)
+    result, payload = run_implement_route(repo, evidence, tmp_path, head)
 
     assert "approved_spec" not in evidence
     assert result.returncode == 1
@@ -851,7 +857,7 @@ def test_sensitive_issue_adapter_does_not_copy_default_base_state(
     commit_all(repo, "advance base")
     update_origin_main(repo)
 
-    result, payload = run_implement_route(repo, evidence, tmp_path)
+    result, payload = run_implement_route(repo, evidence, tmp_path, head)
 
     assert "base_sha" not in evidence
     assert "default_base_sha" not in evidence
@@ -859,7 +865,7 @@ def test_sensitive_issue_adapter_does_not_copy_default_base_state(
     assert payload["decision"] == "allowed"
 
 
-def test_sensitive_issue_adapter_uses_current_spec_without_approval_ledger(
+def test_sensitive_issue_adapter_blocks_spec_drift_after_approved_revision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -872,8 +878,9 @@ def test_sensitive_issue_adapter_uses_current_spec_without_approval_ledger(
     commit_all(repo, "change approved spec")
     update_origin_main(repo)
 
-    result, payload = run_implement_route(repo, evidence, tmp_path)
+    result, payload = run_implement_route(repo, evidence, tmp_path, head)
 
     assert "approved_spec" not in evidence
-    assert result.returncode == 0
-    assert payload["decision"] == "allowed"
+    assert result.returncode == 1
+    assert payload["decision"] == "needs_human"
+    assert "security_evidence" in payload["missing"]

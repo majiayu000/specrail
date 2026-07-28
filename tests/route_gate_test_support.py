@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -43,6 +44,12 @@ def write_custom_pack(repo: Path, spec_root: str = "docs/specs") -> None:
             (ROOT / name).read_text(encoding="utf-8"),
             encoding="utf-8",
         )
+    schema_dir = repo / "schemas"
+    schema_dir.mkdir()
+    (schema_dir / "issue_evidence.schema.json").write_text(
+        (ROOT / "schemas" / "issue_evidence.schema.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
 
 
 def write_sensitive_pack(
@@ -60,11 +67,15 @@ def write_sensitive_pack(
         encoding="utf-8",
     )
     schema_dir = repo / "schemas"
-    schema_dir.mkdir()
+    schema_dir.mkdir(exist_ok=True)
     (schema_dir / "duplicate_work_evidence.schema.json").write_text(
         (ROOT / "schemas" / "duplicate_work_evidence.schema.json").read_text(
             encoding="utf-8"
         ),
+        encoding="utf-8",
+    )
+    (schema_dir / "issue_evidence.schema.json").write_text(
+        (ROOT / "schemas" / "issue_evidence.schema.json").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
@@ -142,14 +153,74 @@ def write_sensitive_pack(
 
 
 def sensitive_route_evidence(_repo: Path, _head: str) -> dict[str, object]:
+    tech_spec = "specs/GH999/tech.md"
     return {
+        "issue": 999,
+        "body_sha256": hashlib.sha256(b"").hexdigest(),
         "github_state": "OPEN",
         "state": "ready_to_implement",
         "state_source": "label",
         "state_trusted": True,
+        "labels": ["ready_to_implement"],
+        "outcomes": [],
+        "url": "https://github.com/example/consumer/issues/999",
+        "title": "Sensitive fixture",
         "repository": "example/consumer",
+        "artifacts": {
+            "product_spec": "specs/GH999/product.md",
+            "tech_spec": tech_spec,
+            "task_plan": "specs/GH999/tasks.md",
+        },
         "enforcement_sensitive": True,
     }
+
+
+def complete_issue_evidence(
+    *,
+    issue: int = 999,
+    repository: str = "example/consumer",
+    state: str | None = "ready_to_implement",
+    state_source: str = "label",
+    state_trusted: bool = True,
+    labels: list[str] | None = None,
+    testable_plan: dict[str, object] | None = None,
+) -> dict[str, object]:
+    body_sha256 = "a" * 64
+    evidence: dict[str, object] = {
+        "issue": issue,
+        "repository": repository,
+        "body_sha256": body_sha256,
+        "github_state": "OPEN",
+        "state": state,
+        "state_source": state_source,
+        "state_trusted": state_trusted,
+        "labels": ([state] if labels is None and state_source == "label" and state else labels or []),
+        "outcomes": [],
+        "url": f"https://github.com/{repository}/issues/{issue}",
+        "title": "Complete route evidence fixture",
+        "artifacts": {
+            "product_spec": f"specs/GH{issue}/product.md",
+            "tech_spec": f"specs/GH{issue}/tech.md",
+            "task_plan": f"specs/GH{issue}/tasks.md",
+        },
+    }
+    if testable_plan is not None:
+        evidence["testable_plan"] = {**testable_plan, "body_sha256": body_sha256}
+    return evidence
+
+
+def write_issue_evidence(
+    tmp_path: Path,
+    *,
+    filename: str = "issue-evidence.json",
+    **kwargs: object,
+) -> Path:
+    path = tmp_path / filename
+    path.write_text(
+        json.dumps(complete_issue_evidence(**kwargs)),
+        encoding="utf-8",
+    )
+    return path
 
 
 def write_duplicate_evidence(

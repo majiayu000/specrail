@@ -7,10 +7,11 @@ import argparse
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from rejection_items import (
@@ -49,6 +50,7 @@ REVIEW_TOP_LEVEL_KEYS = {
     "verdict",
 }
 FINDING_KEYS = {
+    "fix_paths",
     "id",
     "introduced_by_diff",
     "line",
@@ -118,6 +120,7 @@ VERDICT_HEADING_RE = re.compile(r"^## Verdict\s*$", re.MULTILINE)
 class DiffIndex:
     left: dict[str, set[int]]
     right: dict[str, set[int]]
+    paths: set[str]
 
 
 def _non_empty_string(value: Any) -> bool:
@@ -126,6 +129,22 @@ def _non_empty_string(value: Any) -> bool:
 
 def _positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _valid_review_path(value: Any) -> bool:
+    if not _non_empty_string(value) or "\\" in str(value):
+        return False
+    path = PurePosixPath(str(value))
+    return not path.is_absolute() and ".." not in path.parts and not set("*?[]") & set(str(path))
+
+
+def _finding_fix_paths(finding: dict[str, Any]) -> set[str]:
+    value = finding.get("fix_paths")
+    if value is None:
+        return {str(finding["path"])} if _valid_review_path(finding.get("path")) else set()
+    if not isinstance(value, list) or not value or not all(_valid_review_path(item) for item in value):
+        return set()
+    return {str(item) for item in value}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -159,6 +178,7 @@ def parse_unified_diff(diff_text: str) -> DiffIndex:
 
     left: dict[str, set[int]] = {}
     right: dict[str, set[int]] = {}
+    paths: set[str] = set()
     old_path: str | None = None
     new_path: str | None = None
     old_line = 0
@@ -166,14 +186,28 @@ def parse_unified_diff(diff_text: str) -> DiffIndex:
     in_hunk = False
     for raw_line in diff_text.splitlines():
         if raw_line.startswith("diff --git "):
+            try:
+                header = shlex.split(raw_line)
+            except ValueError as exc:
+                raise ValueError(f"invalid diff file header: {exc}") from exc
+            if len(header) != 4:
+                raise ValueError("invalid diff --git file header")
+            for raw_path in header[2:]:
+                path = _clean_diff_path(raw_path)
+                if path is not None:
+                    paths.add(path)
             old_path = new_path = None
             in_hunk = False
             continue
         if not in_hunk and raw_line.startswith("--- "):
             old_path = _clean_diff_path(raw_line[4:])
+            if old_path is not None:
+                paths.add(old_path)
             continue
         if not in_hunk and raw_line.startswith("+++ "):
             new_path = _clean_diff_path(raw_line[4:])
+            if new_path is not None:
+                paths.add(new_path)
             continue
         hunk = HUNK_RE.match(raw_line)
         if hunk:
@@ -198,7 +232,7 @@ def parse_unified_diff(diff_text: str) -> DiffIndex:
             new_line += 1
         elif not raw_line.startswith("\\"):
             raise ValueError(f"unsupported diff line inside hunk: {raw_line!r}")
-    return DiffIndex(left=left, right=right)
+    return DiffIndex(left=left, right=right, paths=paths)
 
 
 def validate_exact_git_diff(
@@ -313,6 +347,7 @@ def evaluate_review_gate(
     blocking: list[str] = []
     follow_ups: list[str] = []
     outdated: list[str] = []
+    round_two_fix_paths: set[str] = set()
     required = {
         "artifact_id",
         "base_head_sha",
@@ -404,6 +439,10 @@ def evaluate_review_gate(
                 verify_diff=False,
                 requires_independent_review=independent_required,
             )
+            if not prior_result["blocking_findings"]:
+                reasons.append(
+                    "round 2 requires an unresolved P0/P1 finding from round 1"
+                )
             if verify_diff and repo is not None:
                 reasons.extend(
                     "prior_review: " + reason
@@ -448,6 +487,12 @@ def evaluate_review_gate(
                     )
                     continue
                 prior_finding = prior_findings[finding_id]
+                scoped_paths = _finding_fix_paths(prior_finding)
+                if not scoped_paths:
+                    reasons.append(
+                        f"round 2 prior finding {finding_id} must predeclare path or fix_paths"
+                    )
+                round_two_fix_paths.update(scoped_paths)
                 for field in ("severity", "summary"):
                     if current_finding.get(field) != prior_finding.get(field):
                         reasons.append(
@@ -504,8 +549,15 @@ def evaluate_review_gate(
     try:
         diff_index = parse_unified_diff(diff_text)
     except ValueError as exc:
-        diff_index = DiffIndex(left={}, right={})
+        diff_index = DiffIndex(left={}, right={}, paths=set())
         reasons.append(str(exc))
+    if review_round == 2:
+        unexpected_paths = sorted(diff_index.paths - round_two_fix_paths)
+        if unexpected_paths:
+            reasons.append(
+                "round 2 diff contains paths outside prior blocker fix scope; "
+                "start a new full review: " + ", ".join(unexpected_paths)
+            )
 
     findings = review.get("findings")
     if not isinstance(findings, list):
@@ -528,6 +580,8 @@ def evaluate_review_gate(
         seen_ids.add(str(finding_id))
         if not _non_empty_string(finding.get("summary")):
             reasons.append(f"{prefix} summary must be a non-empty string")
+        if "fix_paths" in finding and not _finding_fix_paths(finding):
+            reasons.append(f"{prefix} fix_paths must contain safe repo-relative paths")
 
         severity = finding.get("severity")
         status = finding.get("status")
