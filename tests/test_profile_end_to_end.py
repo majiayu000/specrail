@@ -80,5 +80,9 @@ def test_profile_route_review_and_pr_gate_end_to_end(
         pr_payload["human_merge_authorization"] = authorization(pr_payload)
     pr_result = evaluate_pr_gate(pr_payload, ROOT, pack)
 
-    assert pr_result["decision"] == "allowed", pr_result["reasons"]
+    if profile == "heavy":
+        assert pr_result["decision"] == "needs_human", pr_result["reasons"]
+        assert "human_merge_authorization" in pr_result["missing"]
+    else:
+        assert pr_result["decision"] == "allowed", pr_result["reasons"]
     assert pr_result["advisory_only"] is True
