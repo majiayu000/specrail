@@ -25,9 +25,11 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 
 - 定义 `legacy_round1_normalization_v1` 迁移合同：仅覆盖 round-1、
   `round_policy_version: 1`、至少一个 bounded 字段非 null 的存量 artifact。
-- 提供确定性 CLI、闭集迁移记录与外部 role-mapped 授权 schema，把旧 artifact 转换为
+- 提供确定性 CLI、闭集迁移记录与 fresh-provider 授权 schema，把旧 artifact 转换为
   v2 可消费的派生证据，并绑定迁移前 Git commit/blob、source/派生摘要、目标 policy 与
   exact 人工决定。
+- 授权与 PR identity 必须来自调用方不可伪造的 fresh provider；本地 JSON、CLI
+  字符串或自报 role map 只能作为待校验输入，不能成为授权信任根。
 - 白名单只允许把 round-1 的 `base_head_sha` 规范化为 null，并删除
   `diff_sha256`；finding、
   head、时间戳、verdict、content binding 等其余字段永久禁止改动。
@@ -96,18 +98,48 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
     已持久化的存量文件。
 11. B-011 迁移 CLI 默认 dry-run，只输出完整候选计划与 source/derived/policy digests；
     WHEN 未收到显式 `--apply` THEN 不得写任何文件。apply 必须消费一次性 closed
-    `migration_authorization` 与显式 maintainer role map：授权精确绑定 repo immutable ID、
+    `migration_authorization`：授权由受保护 provider 取得并精确绑定 repo immutable ID、
     PR、fresh base/head、source path + pre-migration commit/blob/digest、derived path/digest、
     唯一 record path/digest、target policy digest、
     `decision: migrate_legacy_round1_once`、actor/source/time。record 的 `migrated_at`
     必须等于 `authorized_at`，canonical record bytes/digest 不得由 apply 时另选。
-    CLI 字符串、自报角色、auto/merge/cap 授权均不能替代或代填。
+    CLI 字符串、本地 JSON/role map、自报角色、auto/merge/cap 授权均不能替代或代填。
 12. B-012 WHEN 回滚 THEN 删除派生 artifact、迁移记录与 manifest `migrations[]`
     条目即可回到迁移前的 fail-closed 状态；原始 artifact 不受影响，重复执行
     迁移对相同输入与同一授权必须产出逐字节相同的派生结果与记录内容；同一
     authorization ID 只能标识这一组 exact bytes，response-loss retry 或 rollback 后的
     exact reapply 可复用，跨 PR/base/head/artifact/source/derived scope 或不同 bytes
     复用必须 block。
+13. B-013 WHEN 验证 `migration_authorization` THEN actor 身份、maintainer 权限、
+    授权事件及其 payload 必须由 fresh GitHub provider 查询并在查询前后保持一致；
+    调用方提供的 authorization JSON、role map、actor/source 字符串或其任意自洽组合
+    不得单独建立授权，provider 缺失、不可用、权限不足、事件被编辑/删除或双读漂移
+    必须 fail closed。
+14. B-014 WHEN CLI 执行 dry-run THEN repo immutable ID、PR base/head 与 migration
+    base 必须由受保护 provider/registry 取得并绑定到输出的
+    `authorization_request`；dry-run 不得把缺少远端授权事件的 request 宣称为完整
+    authorization。provider 不可用或 identity 不完整时不得输出可用于 apply 的候选。
+15. B-015 `migration_base_sha` 必须进入 migration record 与 authorization 的闭集
+    shape，并与 trusted registry cutoff、provider snapshot、cross-binding 和 replay
+    比较完全一致；只存在于 CLI 参数、缺失、额外或任一处不一致必须 block。
+16. B-016 authorization、record、registry identity 与 provenance 必须分别携带
+    `source_artifact_head_sha` 和 `authorized_pr_head_sha`；前者匹配 legacy round-1
+    artifact，后者匹配 fresh 当前 PR head，两者不得由单一 `head_sha` 字段代替，
+    且合法多轮流允许二者不同。
+17. B-017 source Git commit 的 ancestry 必须相对 trusted
+    `authorized_pr_head_sha` 验证；`migration_base_sha` 只用于 registry/cutoff
+    identity，不得被误用为 source ancestry 目标。
+18. B-018 WHEN 源 artifact 缺失 `base_head_sha` 或其值已为 null THEN 派生 artifact
+    必须保持同一形态且不得声明 `set_null`；仅源字段存在且 non-null 时才允许
+    `base_head_sha/set_null`。`diff_sha256/delete` 同理只适用于存在且 non-null 的源字段。
+19. B-019 `authorization_id` 必须由 trusted authorization event identity 与完整
+    canonical authorized scope/bytes 确定性派生并由 verifier 重算；不得由调用方任意
+    选择。rollback 删除 derived/record 后，同一 ID 仍只能重建同一 exact scope；
+    不同 scope/bytes 必须产生不同 ID，强行复用必须 block。
+20. B-020 WHEN loader 遇到 registry 命中的 legacy artifact THEN 必须在通用
+    round-1 origin 规则之前完成 trusted legacy classification：未迁移时只产生稳定
+    `legacy_round1_migration_required` rejection；creation-mode 的新 artifact 仍由
+    origin gate 拒绝。不得因验证顺序先产生泛化 schema/origin 错误而遮蔽迁移路径。
 
 ## 验收标准
 
@@ -127,10 +159,24 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
   coverage scope 均 fail closed（B-006/B-009）。
 - [ ] round >= 2 或字段已合规的 artifact 请求迁移被拒；新产出的 round-1 bounded
   artifact 带非 null base/diff 在 `review_json_gate.py` 即 block（B-001/B-010）。
-- [ ] CLI dry-run 不落盘；apply 缺授权/role map、错 actor role、错 repo/PR/head/
+- [ ] CLI dry-run 不落盘；apply 缺 fresh provider authorization、错 actor permission、
+  错 repo/PR/head/
   commit/blob/source/derived/record path 或 digest、`migrated_at != authorized_at`、同 ID
   不同 bytes 均拒绝；exact 授权幂等
   （B-011/B-012）。
+- [ ] 本地 authorization/role-map 自证、伪造 actor/source、GitHub actor 无
+  maintain/admin 权限、authorization comment 编辑/删除、provider 前后快照漂移均
+  fail closed；dry-run 只输出 provider-bound `authorization_request`，不能直接 apply
+  （B-013/B-014）。
+- [ ] record/authorization 均持久化并重放 `migration_base_sha`，legacy artifact head
+  与 fresh PR head 使用两个独立字段；source commit 只对 trusted current PR head
+  做 ancestry 校验（B-015/B-016/B-017）。
+- [ ] #186 形态保持缺失/null `base_head_sha`，不新增字段或虚构 normalization；
+  authorization ID 对完整 trusted scope 确定性派生，rollback 后跨 scope/bytes 复用仍拒绝
+  （B-018/B-019）。
+- [ ] registry 命中的未迁移 legacy artifact 在通用 origin gate 前分类，仅产生稳定
+  `legacy_round1_migration_required`；creation-mode 新 artifact 仍被源头 gate 拒绝
+  （B-020）。
 - [ ] `python3 -m pytest -q`、`python3 checks/check_workflow.py --repo .
   --all-specs`、`python3 tools/spec_depth_audit.py --spec-dir specs/GH197 --gate`
   全绿。
@@ -139,19 +185,20 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
-| 空/缺失输入 | covered: B-002 B-003 B-006（source/记录/manifest 条目缺失均 block） |
-| 错误与失败路径 | covered: B-004 B-005 B-008（重放不一致、声明不符、未迁移均给出定位错误） |
-| 授权/权限 | covered: B-011（外部 role-mapped exact authorization；auto/CLI 字符串不得代授权） |
+| 空/缺失输入 | covered: B-002 B-003 B-006 B-013 B-014 B-015（source/记录/provider/identity 缺失均 block） |
+| 错误与失败路径 | covered: B-004 B-005 B-008 B-018 B-020（重放不一致、声明不符、未迁移均给出定位错误） |
+| 授权/权限 | covered: B-011 B-013 B-014 B-019（fresh provider exact authorization；本地 JSON/role map 不自证） |
 | 并发/竞态 | covered: B-002 B-004（验证按只读摘要比对，检查中源文件变化即失配 block） |
-| 重试/幂等 | covered: B-012（重复迁移逐字节确定；重复验证结论一致） |
-| 非法状态转换 | covered: B-001 B-010（round>=2 或新 artifact 走迁移通道非法） |
-| 兼容/迁移 | covered: B-006 B-009 B-012（迁移显式声明；迁移后按 v2 正常评估；可回滚） |
-| 降级/回退 | covered: B-008 B-012（无迁移证据时保持 fail-closed，无 warning 放行） |
-| 证据与审计完整性 | covered: B-002 B-003 B-004 B-007（原字节保留、闭集记录、摘要绑定、防复用） |
-| 取消/中断 | covered: B-011 B-012（dry-run 无副作用；apply 中断后重放可判定、可回滚） |
+| 重试/幂等 | covered: B-012 B-019（重复迁移逐字节确定；ID 从完整 scope 派生） |
+| 非法状态转换 | covered: B-001 B-010 B-020（creation 与 legacy migration 路由不可混用） |
+| 兼容/迁移 | covered: B-006 B-009 B-012 B-016 B-018 B-020（多轮 head 分离、缺失字段形态与迁移路由保持） |
+| 降级/回退 | covered: B-008 B-012 B-013（无迁移或 provider 证据时保持 fail-closed） |
+| 证据与审计完整性 | covered: B-002 B-003 B-004 B-007 B-015 B-016 B-017 B-019（完整 identity/ancestry/scope 绑定） |
+| 取消/中断 | covered: B-011 B-012 B-013（dry-run 无副作用；provider 双读与 apply 重试可判定） |
 
 ## 发布说明
 
-存量 round-1 review artifact 可通过一次性、role-mapped 人工授权的确定性迁移进入
+存量 round-1 review artifact 可通过一次性、fresh-provider 人工授权的确定性迁移进入
 bounded v2 manifest；原始证据由迁移前 Git blob 锚定并永久保留，迁移记录、派生 marker
-与 trusted legacy identity 共同绑定，未迁移、手工复制或被篡改的形态继续 fail closed。
+与 trusted legacy identity 共同绑定；人工授权与当前 PR identity 来自 fresh GitHub
+provider，未迁移、手工复制、本地自证授权或被篡改的形态继续 fail closed。

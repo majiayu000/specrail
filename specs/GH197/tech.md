@@ -6,14 +6,17 @@ GH-197
 
 <!-- specrail-requires-planned-changes-v1 -->
 <!-- specrail-planned-changes
-{"version":1,"issue":197,"complete":true,"paths":[".specrail/review_legacy_round1_registry.json","CHANGELOG.md","checks/github_pr_evidence.py","checks/github_review_evidence.py","checks/pack_asset_validation.py","checks/pr_gate.py","checks/pr_review_contract.py","checks/rejection_items.py","checks/review_json_gate.py","checks/review_migration.py","checks/review_result_semantics.py","checks/review_round_semantics.py","schemas/pr_review_gate.schema.json","schemas/review_legacy_registry.schema.json","schemas/review_migration_authorization.schema.json","schemas/review_migration_record.schema.json","schemas/review_result.schema.json","skills/specrail-pr-gate/SKILL.md","skills/specrail-review-pr/SKILL.md","tests/test_github_pr_evidence.py","tests/test_pack_asset_validation.py","tests/test_pr_gate_terminal.py","tests/test_review_json_gate.py","tests/test_review_migration.py","tests/test_review_result_semantics.py","tests/test_specrail_schema.py","tools/migrate_review_round1.py"],"spec_refs":["specs/GH197/product.md","specs/GH197/tech.md","specs/GH197/tasks.md"]}
+{"version":1,"issue":197,"complete":true,"paths":[".specrail/review_legacy_round1_registry.json","CHANGELOG.md","checks/github_pr_evidence.py","checks/github_review_evidence.py","checks/github_review_migration_evidence.py","checks/pack_asset_validation.py","checks/pr_gate.py","checks/pr_review_contract.py","checks/rejection_items.py","checks/review_json_gate.py","checks/review_migration.py","checks/review_result_semantics.py","checks/review_round_semantics.py","schemas/pr_review_gate.schema.json","schemas/review_legacy_registry.schema.json","schemas/review_migration_authorization.schema.json","schemas/review_migration_record.schema.json","schemas/review_result.schema.json","skills/specrail-pr-gate/SKILL.md","skills/specrail-review-pr/SKILL.md","tests/test_github_pr_evidence.py","tests/test_github_review_migration_evidence.py","tests/test_pack_asset_validation.py","tests/test_pr_gate_terminal.py","tests/test_review_json_gate.py","tests/test_review_migration.py","tests/test_review_result_semantics.py","tests/test_specrail_schema.py","tools/migrate_review_round1.py"],"spec_refs":["specs/GH197/product.md","specs/GH197/tech.md","specs/GH197/tasks.md"]}
 -->
 
 ## Product Spec
 
-见 `product.md`，实现 B-001..B-012；四条 active review root 固定映射为
+见 `product.md`，实现 B-001..B-020；既有四条 active review root 固定映射为
 `discussion_r3652956666 → B-005`、`discussion_r3652956667 → B-002/B-011`、
-`discussion_r3652956670 → B-006`、`discussion_r3652956671 → B-011/B-012`。
+`discussion_r3652956670 → B-006`、`discussion_r3652956671 → B-011/B-012`；
+GH-213 三条依次映射 B-013、B-014、B-015；PR #206 current roots
+`discussion_r3660108740/8753/8770/8782/8797` 依次映射
+B-016/B-017/B-018/B-019/B-020。
 
 ## Codebase Context
 
@@ -27,7 +30,9 @@ GH-197
 | 内容绑定 | `checks/review_content_binding.py:34-50` | artifact 的 content binding 从仓库路径加载并校验 | 派生 artifact 逐字段复制 binding 字段，绑定语义不变，篡改仍可检出 |
 | 稳定 rejection | `checks/rejection_items.py:46-70` | `make_item(category, subject, expected, found)` 生成稳定 item id | 未迁移形态的 rejection 必须可定位、可复现（B-008） |
 | GH-167 合同 | `specs/GH167/tech.md:135` | 明确"既有多轮流首次迁移到 v2 时显式 block"是预期行为，但未定义迁移载体 | 本规格补齐该合同缺口，不推翻 GH-167 语义 |
-| 外部 maintainer 授权 | `checks/github_review_evidence.py:236-404` | 已有 closed role map 与 exact `continue_once` 授权 loader；自由 actor/source 不构成授权 | 复用同一 role-map trust boundary，新增独立 migration decision/fields，不能把 cap/merge 授权当迁移授权 |
+| caller role map | `checks/github_review_evidence.py:236-282` | `load_maintainer_role_map()` 只校验调用方 JSON 的闭集 shape，无法证明 actor 的真实仓库权限 | migration authorization 不得复用该输入作为信任根；它只可用于其它现有合同 |
+| fresh PR identity | `checks/github_pr_evidence.py:68-72`、`checks/github_pr_evidence.py:448-514` | collector 已双读 GitHub PR view 并绑定 `baseRefOid`/`headRefOid`，主文件已达 800 行 | 新 migration provider 使用独立 helper，复用双读模式并保持主文件 one-in-one-out |
+| loader 验证顺序 | `checks/review_result_semantics.py:424-525` | `load_review_manifest()` 先对 lane artifact 调用通用 `validate_review_artifact()`，之后才进入 bounded-round 派生 | trusted legacy identity 必须在 origin 规则前分类，否则稳定 migration rejection 不可达 |
 | artifact schema | `schemas/review_result.schema.json:269-277` | `base_head_sha` 可为 null；`diff_sha256` 若存在只能是 64 hex，不能为 null | 派生规则必须删除 `diff_sha256` 而非写 null；schema 只新增 closed provenance marker |
 
 ## 设计方案
@@ -44,7 +49,8 @@ artifact 走 v1 原路径；字段已全 null 的 artifact 无需迁移。
 迁移不触碰原文件，只新增两个文件（默认与源同目录）：
 
 - 派生 artifact `<name>.migrated.json`：源 JSON 的规范化序列（UTF-8、排序键、
-  紧凑分隔符）中，仅把 `base_head_sha` 置 null、删除 `diff_sha256`，并新增 closed
+  紧凑分隔符）中，仅在 `base_head_sha` 存在且 non-null 时将其置 null，仅在
+  `diff_sha256` 存在且 non-null 时删除该字段，并新增 closed
   `migration_provenance` marker；`artifact_id` 与其余全部字段等价复制，round-2 的
   `prior_findings[].source_artifact_id` 引用因此保持有效。删除而非写 null 是因为
   `review_result.schema.json` 的 optional `diff_sha256` 只接受 64 hex；round audit 通过
@@ -52,7 +58,8 @@ artifact 走 v1 原路径；字段已全 null 的 artifact 无需迁移。
 
 ```text
 migration_id, authorization_id, source_artifact_id, source_sha256,
-source_git_commit_sha, source_git_blob_oid
+source_artifact_head_sha, authorized_pr_head_sha, migration_base_sha,
+source_git_commit_sha, source_git_blob_oid, authorization_provider_snapshot_sha256
 ```
 - 迁移记录 `<name>.migration.json`，新增闭集 schema
   `schemas/review_migration_record.schema.json`：
@@ -63,6 +70,10 @@ source_git_commit_sha, source_git_blob_oid
   "migration_id": "MIG-181-round1",
   "source_artifact_path": ".../round1.json",
   "source_sha256": "<64hex>",
+  "source_artifact_head_sha": "<40hex>",
+  "authorized_pr_head_sha": "<40hex>",
+  "authorized_pr_base_sha": "<40hex>",
+  "migration_base_sha": "<40hex>",
   "source_git_commit_sha": "<40hex>",
   "source_git_blob_oid": "<git-object-id>",
   "derived_artifact_path": ".../round1.migrated.json",
@@ -73,7 +84,9 @@ source_git_commit_sha, source_git_blob_oid
     {"field": "diff_sha256", "operation": "delete", "original_value": "<64hex>"}
   ],
   "reason": "pre_v2_round1_bounded_fields",
-  "authorization_id": "MRA-181-round1",
+  "authorization_id": "MRA-<canonical-scope-sha256>",
+  "authorization_sha256": "<64hex>",
+  "authorization_provider_snapshot_sha256": "<64hex>",
   "migrated_at": "<ISO-8601>"
 }
 ```
@@ -81,23 +94,34 @@ source_git_commit_sha, source_git_blob_oid
 `normalizations[]` 的 field/operation 对闭集为
 `base_head_sha/set_null | diff_sha256/delete`；`original_value` 必须等于源值且源值
 非 null；源值为 null/缺失的字段禁止出现，非 null 字段缺声明即 block（B-005）。
-`reason` 目前唯一合法值为 `pre_v2_round1_bounded_fields`。
+派生算法保留源字段的 absent/null 差异：#186 缺失 `base_head_sha` 时派生结果仍缺失，
+禁止新增 `base_head_sha: null`（B-018）。`reason` 目前唯一合法值为
+`pre_v2_round1_bounded_fields`。record/authorization 的
+`source_artifact_head_sha`、`authorized_pr_head_sha`、`authorized_pr_base_sha` 与
+`migration_base_sha` 均为不同语义的必填字段，不得折叠成 `head_sha/base_sha`
+（B-015/B-016）。
 
 ### 3. 确定性重放验证（不可伪造核心）
 
 新模块 `checks/review_migration.py` 提供 `verify_migration_record()`：
 
 1. 用参数数组执行 `git cat-file -e <source_git_commit_sha>^{commit}`、
-   `git merge-base --is-ancestor <source_git_commit_sha> <pr_head_sha>`（source 提交在
+   `git merge-base --is-ancestor <source_git_commit_sha> <authorized_pr_head_sha>`
+   （source 提交在
    受影响 PR 的历史中，不要求它是 default-branch cutoff 的 ancestor）与
    `git show <source_git_commit_sha>:<source_artifact_path>`；commit 必须在授权前已存在且
    可达，返回 blob OID/原始 bytes 必须分别等于授权和记录的
-   `source_git_blob_oid`/`source_sha256`，当前 source 文件 bytes 也必须相等（B-002）。
+   `source_git_blob_oid`/`source_sha256`，当前 source 文件 bytes 也必须相等。
+   source artifact 内的 `head_sha` 必须等于 `source_artifact_head_sha`；fresh provider
+   PR head 必须等于 `authorized_pr_head_sha`，二者允许不同。`migration_base_sha`
+   只与 trusted registry cutoff/default-base snapshot 比较，不参与 source ancestry
+   （B-002/B-015/B-016/B-017）。
 2. 从该 Git blob bytes 按同一规范化算法与 `normalizations[]` 重放派生结果，注入与
    exact authorization 一致的 closed `migration_provenance`，重放摘要必须
    同时等于 `derived_sha256` 与派生文件实际摘要（B-004）。
-3. 校验记录/授权 schema 闭集、受理域、authorization consumption 与全部 cross-binding
-   （B-001/B-003/B-005/B-011/B-012）。
+3. 校验记录/授权 schema 闭集、受理域、fresh authorization provider snapshot、
+   deterministic authorization ID 与全部 cross-binding
+   （B-001/B-003/B-005/B-011..B-019）。
 
 因为派生结果由源字节函数式决定，调用方对 finding、head、时间或任何非白名单
 字段的增删改都会导致重放失配；同时篡改 source 和记录也会与迁移前 Git blob 及外部
@@ -116,7 +140,7 @@ manifest 不能指定路径。registry 绑定：
 version, registry_id, repo_id, cutoff_base_sha,
 coverage = expected_prs[], expected_identity_keys[], expected_entry_count,
            entries_digest, provider_snapshot_digest,
-entries[] = pr, artifact_id, head_sha, source_artifact_path,
+entries[] = pr, artifact_id, source_artifact_head_sha, source_artifact_path,
             source_git_commit_sha, source_git_blob_oid, source_sha256
 ```
 
@@ -125,8 +149,11 @@ canonical entries digest；每个 source commit 必须可达且属于该 entry �
 提交在受影响的 open PR 分支上，其 `source_git_commit_sha` 在该 PR 历史中而**不是**
 default-branch `cutoff_base_sha` 的 ancestor，因此不得用
 `git merge-base --is-ancestor <source> <cutoff>` 作为通过条件（那会拒绝全部合法 source）。
-判定改为：source commit 必须是该 entry 的 PR head 的 ancestor（`--is-ancestor <source>
-<pr_head_sha>`），且该 PR 必须在 cutoff provider snapshot 覆盖的受理域内；
+判定改为：source commit 必须是该 entry 的 fresh
+`authorized_pr_head_sha` 的 ancestor（`--is-ancestor <source>
+<authorized_pr_head_sha>`），且该 PR 必须在 `migration_base_sha` 所绑定的 cutoff
+provider snapshot 覆盖域内；entry 的 `source_artifact_head_sha` 只绑定 legacy
+artifact 自身，不代替当前 PR head；
 source 既不在 PR 历史也不在 cutoff 祖先链中时 fail closed。
 blob/path/sha 必须匹配。registry 明确覆盖 PR #181/#186/#193 在 cutoff provider snapshot
 中的全量已知 legacy identities；缺 registry、repo/cutoff/snapshot 不符、entries 子集/
@@ -137,7 +164,8 @@ repo-specific entries 留在 `.specrail` overlay，不硬编码进 evaluator。
 `legacy_review_artifacts[]`：
 
 ```text
-repo_id, pr, artifact_id, base_sha, head_sha, source_artifact_path,
+repo_id, pr, artifact_id, authorized_pr_base_sha, authorized_pr_head_sha,
+migration_base_sha, source_artifact_head_sha, source_artifact_path,
 source_git_commit_sha, source_git_blob_oid, source_sha256,
 registry_id, registry_entries_digest, adapter_run_id, provider_as_of
 ```
@@ -145,27 +173,41 @@ registry_id, registry_entries_digest, adapter_run_id, provider_as_of
 该集合必须与 registry 中目标 PR 的 expected entries exact-set 相等并进入 PR evidence
 closed schema；caller/manifest 不能自报、过滤、传空或选择 coverage scope。loader 对该
 registry 覆盖的 PR 强制接收同一 non-empty verified 集合，不提供 optional/default empty
-降级。`github_pr_evidence.py` 还输出由
-role-map loader 规范化的 closed `review_migration_authorizations[]`；PR schema 和
+降级。新增 `checks/github_review_migration_evidence.py` 使用 GitHub API/GraphQL
+fresh 双读 authorization comment、repository immutable ID、PR base/head 与 actor
+repository permission；只有 `maintain|admin` 权限的 actor 才能签发
+`migrate_legacy_round1_once`。授权事件闭集限定为同仓库 GH-197 issue 上的单条
+`IssueComment`：provider 以 node ID 取回 comment，要求 body 只含一个 closed
+authorization JSON，且 REST collaborator permission 与 GraphQL comment actor 一致。
+其它 issue/PR、跨仓库 URL、普通本地文件或多个候选 payload 均拒绝。
+`github_pr_evidence.py` 只做薄委托，并输出 closed
+`review_migration_authorizations[]` 与 provider snapshot；PR schema 和
 `pr_review_contract.py` 要求每个 legacy identity 使用的 authorization 与该数组 exact
-匹配，manifest/record 嵌入副本不自证权限：
+匹配。本地 authorization JSON、role map、actor/source CLI 字符串及
+manifest/record 嵌入副本均不自证权限（B-013/B-014）：
 
-- `load_review_manifest()`（`checks/review_result_semantics.py:424`）在
-  `validate_bounded_rounds()` 前解析 `migrations[]`：逐条 `verify_migration_record()`，
+- `load_review_manifest()`（`checks/review_result_semantics.py:424`）在调用通用
+  `validate_review_artifact()` 的 origin rule 前，先用 trusted registry exact identity
+  将 lane 分类为 `native_creation | trusted_legacy_candidate | migrated_legacy`。
+  `trusted_legacy_candidate` 只延迟 round-1 origin rule，随后必须产生
+  `legacy_round1_migration_required`；其它 schema/内容错误仍照常拒绝。
+  `migrations[]` 在 `validate_bounded_rounds()` 前逐条 `verify_migration_record()`，
   并要求 `derived_artifact_path` 恰为该 `artifact_id` 在 lane `artifact_paths`
   中加载的路径；重复条目、未知 artifact_id、记录指向的路径与 manifest 不一致
   均 block（B-006/B-007）。
-- 对每个 loaded round-1 artifact，以 `(repo_id, pr, artifact_id, head_sha)` 匹配
+- 对每个 loaded round-1 artifact，以
+  `(repo_id, pr, artifact_id, source_artifact_head_sha)` 匹配
   registry-derived legacy identity；命中时必须同时存在唯一 `migrations[]` 条目、
   marker、record 与 exact
   authorization。换路径、手工 normalized copy、删除 marker/条目或冒充 native artifact
   都仍命中 identity 并 block（B-006）。
 - 通过验证后按现有 v2 语义评估派生 artifact；round 派生、carry、escalation
   逻辑零改动（B-009）。
-- 未迁移的 legacy 形态触发 `validate_bounded_rounds()` 的 round-1 非 null 错误时，
-  loader 检测该 artifact 满足受理域且无对应 `migrations[]` 条目，则替换为稳定
+- 未迁移且 registry 命中的 legacy 形态在通用 origin rule 前即分类；无对应
+  `migrations[]` 条目时只产生稳定
   rejection：category `legacy_round1_migration_required`、subject 为 artifact_id、
-  expected 指向本合同（B-008）。该 category 当前不存在——`checks/rejection_items.py:18-27`
+  expected 指向本合同（B-008/B-020）。该 category 当前不存在——
+  `checks/rejection_items.py:18-27`
   的 `CATEGORIES` 是闭集且不含该值，构造会直接失败。因此 `checks/rejection_items.py`
   进入 planned changes，实现必须把 `legacy_round1_migration_required` 加入该闭集，并为
   新值补齐既有 category 的同等测试；未注册前 loader 不得改用近似 category 顶替，
@@ -179,34 +221,50 @@ role-map loader 规范化的 closed `review_migration_authorizations[]`；PR sch
 
 `checks/review_json_gate.py::_validate_review_round` 增加：bounded 且
 `review_round == 1` 时 `base_head_sha` 与 `diff_sha256` 必须缺失或为 null，否则
-block（B-010）。该 gate 只在 artifact 产出时运行，不追溯存量文件；
-`checks/review_result_semantics.py:358-373` 的 artifact 层校验同步补齐同一规则，
-两处共享常量避免漂移。
+block（B-010）。`validate_review_artifact()` 增加显式闭集
+`artifact_origin: creation | trusted_legacy_candidate | migrated_legacy`：
+creation 应用同一 origin rule；legacy 两类只能由 loader 在 registry identity
+预分类后传入，普通调用方不得选择。这样新 artifact 在源头被拒，而存量 candidate
+仍能到达唯一稳定 migration rejection（B-020）。
 
 ### 6. CLI：`tools/migrate_review_round1.py`
 
 ```
 python3 tools/migrate_review_round1.py --repo . \
-  --artifact <path> --pr <number> --migration-base <sha> \
-  [--authorization <json> --maintainer-role-map <json> --apply]
+  --github-repo <owner/repo> --artifact <path> --pr <number> \
+  [--authorization-comment <github-url-or-node-id> --apply]
 ```
 
-- 默认 dry-run：从 pre-migration Git object 打印受理域、将写入路径、source/derived/
-  policy digests 与完整 authorization candidate，不落盘（B-011）。
+- 默认 dry-run：fresh 查询 repository immutable ID、PR base/head 与 default-base
+  migration cutoff，从 pre-migration Git object 打印受理域、将写入路径、
+  source/derived/policy digests 与 provider-bound `authorization_request`，不落盘。
+  request 明确标记 `authorized: false`，没有远端 authorization event 时绝不输出
+  可供 apply 消费的完整 authorization（B-011/B-014/B-015）。
 - `schemas/review_migration_authorization.schema.json` 的 exact decision shape：
 
 ```text
 authorization_id, decision = migrate_legacy_round1_once,
-repo_id, pr, artifact_id, base_sha, head_sha, source_artifact_path,
+repo_id, pr, artifact_id,
+source_artifact_head_sha, authorized_pr_base_sha, authorized_pr_head_sha,
+migration_base_sha, source_artifact_path,
 source_git_commit_sha, source_git_blob_oid, source_sha256,
 derived_artifact_path, derived_sha256, record_path, record_sha256,
 target_policy_digest,
-actor, source, authorized_at
+provider = github, authorization_comment_node_id, authorization_comment_url,
+authorization_payload_sha256, provider_snapshot_sha256,
+actor_login, actor_permission, authorized_at
 ```
 
-  `checks/github_review_evidence.py` 复用 closed maintainer role map 验证 actor，并拒绝
-  CLI 自报角色、cap/merge 授权、错 scope、未知字段和重复 ID。
-- `--apply` 强制加载 authorization + role map；exact fields/digests 全匹配后，先将
+  `authorization_id` 定义为上述 shape 去掉自身字段后的 canonical SHA-256 派生 ID，
+  verifier 必须重算；不同 comment/scope/bytes 必须得到不同 ID（B-019）。
+  `checks/github_review_migration_evidence.py` fresh 双读 comment body/node/url/time、
+  actor login、repository permission、repo/PR identity；前后任一漂移即拒绝，只有
+  `maintain|admin` 权限可授权。本地 authorization/role-map 文件、CLI actor/source、
+  cap/merge/auto 授权均拒绝（B-013）。
+- `--apply` 强制提供远端 authorization comment；provider 解析 exact decision、验证
+  actor permission 并将其与 dry-run request 全字段匹配。provider 不可用、comment
+  被编辑/删除、PR/base/head 漂移或 migration base 与 trusted registry cutoff 不一致
+  均在写入前 fail closed。通过后先将
   派生与 record 写入同目录 temp、fsync，再按 authorization ID 派生的唯一目标路径
   create-only publish；任何只发布一侧的中断状态均不被 loader 接受，retry 只能补全同一
   exact bytes。已存在同 ID 只在 record/derived bytes 完全相同时作为 response-loss retry；
@@ -216,15 +274,18 @@ actor, source, authorized_at
 - 同一 exact authorization 的 response-loss retry 只返回既有同 digest 文件/record；
   record path 由 authorization ID 唯一派生，`migrated_at` 固定等于 `authorized_at`，
   canonical record 必须匹配 `record_sha256`。任一 bytes 不同或跨
-  PR/base/head/artifact/source/derived/record scope 均 block；rollback 后的 exact
-  reapply 可重新发布相同 bytes。记录的 actor/source/time 只来自授权，因此相同授权
-  输出逐字节确定（B-012）。
+  PR/base/head/migration-base/artifact/source/derived/record scope 均 block；rollback
+  后的 exact reapply 可重新发布相同 bytes。authorization ID 从完整 trusted scope
+  确定性派生，不依赖可被 rollback 删除的本地 consumption 状态；相同授权输出逐字节
+  确定，不同 scope 无法复用同一 ID（B-012/B-019）。
 
 ### 7. 回滚与兼容
 
 删除派生 artifact、迁移记录与 manifest `migrations[]` 条目即回到迁移前状态：
 legacy artifact 原样保留并继续 fail closed（B-012）。v1 单轮证据、既有 v2 合法
 manifest、GH-167 全部语义零改动；`migrations[]` 缺省为空列表时行为与现状一致。
+回滚不改变 authorization ID 的 scope-derived 算法：同一远端授权只能 exact reapply，
+修改任何 scope/bytes 必须重新取得不同的远端授权与 ID（B-019）。
 
 ## Product-to-Test Mapping
 
@@ -234,14 +295,20 @@ manifest、GH-167 全部语义零改动；`migrations[]` 缺省为空列表时�
 | B-003 B-006 | record/marker schema + trusted legacy identity + manifest `migrations[]` | `python3 -m pytest -q tests/test_review_migration.py tests/test_review_result_semantics.py -k "record or provenance or legacy_identity or manifest"` |
 | B-008 B-009 | loader 路由与稳定 rejection、trusted reload | `python3 -m pytest -q tests/test_review_result_semantics.py -k migration` |
 | B-010 | 单 artifact gate 源头封口 | `python3 -m pytest -q tests/test_review_json_gate.py -k round1` |
-| B-011 B-012 | role-mapped exact authorization + CLI dry-run/apply/幂等/回滚 | `python3 -m pytest -q tests/test_review_migration.py tests/test_github_pr_evidence.py -k "migration_authorization or cli or rollback or replay"` |
+| B-011 B-012 | provider exact authorization + CLI dry-run/apply/幂等/回滚 | `python3 -m pytest -q tests/test_review_migration.py tests/test_github_pr_evidence.py -k "migration_authorization or cli or rollback or replay"` |
+| B-013 B-014 | fresh GitHub authorization provider + provider-bound dry-run request | `python3 -m pytest -q tests/test_github_review_migration_evidence.py tests/test_review_migration.py -k "provider or permission or comment or dry_run"` |
+| B-015 B-016 B-017 | migration base、legacy/current PR head 闭集 identity 与 ancestry | `python3 -m pytest -q tests/test_review_migration.py tests/test_github_review_migration_evidence.py -k "migration_base or head_identity or ancestry"` |
+| B-018 | absent/null normalization shape 保持 | `python3 -m pytest -q tests/test_review_migration.py -k "absent_base or null_base or normalization_shape"` |
+| B-019 | canonical scope-derived authorization ID 与 rollback reapply | `python3 -m pytest -q tests/test_review_migration.py tests/test_github_review_migration_evidence.py -k "authorization_id or cross_scope or rollback"` |
+| B-020 | trusted legacy pre-classification 与 creation origin mode | `python3 -m pytest -q tests/test_review_result_semantics.py tests/test_review_json_gate.py -k "legacy_classification or migration_required or creation_origin"` |
 
 ## 数据流
 
 `fixed base registry exact-set → protected adapter: pre-migration commit/path →
-Git blob + legacy identity →
-CLI dry-run authorization candidate → maintainer role-map exact decision →
---apply consumes authorization → marker-bearing derived artifact + record →
+Git blob + source artifact identity → fresh GitHub PR/default-base identity →
+CLI dry-run authorization_request → maintainer GitHub comment + permission query →
+provider double-read exact authorization → --apply consumes authorization →
+marker-bearing derived artifact + record →
 manifest v2 migrations[] → loader: legacy identity + auth + Git blob replay →
 validate_bounded_rounds() → pr_review_contract trusted reload → pr_gate`。
 任一层验证失败均 fail closed，未迁移/手工复制形态得到指向本合同的稳定 rejection。
@@ -259,11 +326,21 @@ validate_bounded_rounds() → pr_review_contract trusted reload → pr_gate`。
   必须绑定迁移前可达 Git commit/blob 和外部 exact authorization。
 - 在 evidence JSON 里内嵌迁移证明：嵌入副本不可信，必须仓库安全路径重载，拒绝。
 - 用 `implx auto` 授权批量迁移：违反 issue 非目标，人工 actor 不可代填，拒绝。
+- 复用本地 `maintainer_role_map` + authorization JSON：两份文件均由调用方控制，
+  无法证明真实人工决定，拒绝；migration authorization 必须来自 fresh GitHub event
+  与 permission 查询。
+- 把 `migration_base_sha` 留作 CLI 参数：调用方可任选且 replay 无 durable 值，拒绝；
+  必须由 provider/registry 取得并进入 record/authorization。
+- 用一个 `head_sha` 同时表示 legacy artifact 与当前 PR：真实 round-2 流两者不同，
+  合同不可满足，拒绝；使用两个具名字段。
+- rollback 时删除任意 authorization consumption state：会恢复 ID 跨 scope 复用窗口，
+  拒绝；authorization ID 必须由完整 trusted scope 确定性派生。
 
 ## 风险
 
-- Security: 记录与派生文件路径经 repo 安全解析；迁移前 Git blob 与 role-mapped exact
-  authorization 共同构成信任根，所有 Git 命令使用参数数组，无 shell 拼接。
+- Security: 记录与派生文件路径经 repo 安全解析；迁移前 Git blob 与 fresh GitHub
+  authorization event/permission 双读共同构成信任根，本地 role map 不参与 migration
+  授权，所有 Git 命令使用参数数组，无 shell 拼接。
 - Compatibility: `migrations[]` 可选且缺省为空；v1、既有 v2、GH-167 语义零改动。
   首次部署后 #181/#186/#193 需一次人工迁移，这是预期操作而非回归。
 - Correctness: 规范化序列算法必须单一实现并被 CLI 与验证方共享，防止重放漂移；
@@ -271,8 +348,9 @@ validate_bounded_rounds() → pr_review_contract trusted reload → pr_gate`。
 - Data integrity: Git blob/source/derived 声明/derived 实际摘要 + marker + 逐字段
   normalization + fixed registry exact-set identity + record digest，防止丢字段、改字段、
   手工复制、空集合降级与记录复用。
-- Operations: dry-run 先产出 exact candidate，maintainer 再授权；授权的
-  `authorized_at`/actor/source 与 apply 的 `migrated_at` 使审计可追。
+- Operations: dry-run 先产出 provider-bound request，maintainer 在 GitHub 发布 exact
+  decision；授权的 comment node/url/actor permission/`authorized_at` 与 apply 的
+  `migrated_at` 使审计可追。GitHub/provider 不可用时预期 fail closed。
 - Maintenance: 新逻辑集中在 `checks/review_migration.py`；
   `checks/review_result_semantics.py`（当前 702 行）只增薄路由，实现后
   `wc -l` 断言相关文件均小于 800 行。
@@ -280,15 +358,17 @@ validate_bounded_rounds() → pr_review_contract trusted reload → pr_gate`。
 ## 测试计划
 
 - [ ] Unit: 受理域、set-null/delete 白名单、record/authorization/marker schemas、
-  pre-migration Git blob、重放算法（含键序/Unicode/嵌套）、摘要失配、记录复用。
+  pre-migration Git blob、absent/null shape、双 head、migration base、重放算法
+  （含键序/Unicode/嵌套）、摘要失配、scope-derived ID 与记录复用。
 - [ ] Integration: PR #181/#186/#193 三种真实形态的迁移前 block（稳定 rejection）
   与迁移后全链路通过；篡改派生文件、替换源文件、同提交重算 source digest、
   手工 copy 省略 marker/record、manifest 条目缺失/重复、registry 缺失/子集/空集合/
   cutoff/digest 漂移负例；`specrail-pr-gate` + `pr_gate.py` terminal forward test 以
   fixed-base registry、trusted identity/auth 复核。
-- [ ] CLI: dry-run 无副作用；apply 缺/错 role-mapped authorization、错 commit/blob/
+- [ ] CLI: dry-run 无副作用；apply 缺/错 provider authorization、错 commit/blob/
   source/derived/record scope 或 digest、`migrated_at` 漂移、同 ID 不同 bytes 拒绝；
-  exact retry/reapply 幂等；自验失败清理。
+  fresh GitHub comment/permission/PR identity/provider 前后漂移负例；migration base、
+  source/current head 与 ancestry 边界；exact retry/reapply 幂等；自验失败清理。
 - [ ] Full: `python3 -m pytest -q`、`python3 checks/check_workflow.py --repo .
   --all-specs`、`python3 tools/spec_depth_audit.py --spec-dir specs/GH197 --gate`、
   `git diff --check`。
@@ -298,4 +378,5 @@ validate_bounded_rounds() → pr_review_contract trusted reload → pr_gate`。
 回滚实现即删除 migration 模块/CLI/schema 与 loader 路由；已生成的派生 artifact
 与记录会被回滚后的 loader 当作普通 v2 输入中的未知形态拒绝，不会静默放行。
 运维层回滚只需删除派生 artifact、迁移记录与 manifest `migrations[]` 条目，
-原始 artifact 从未被改动，队列回到迁移前的 fail-closed 状态。
+原始 artifact 从未被改动，队列回到迁移前的 fail-closed 状态；remote authorization
+event 与 scope-derived ID 不被回滚，之后只能对同一 exact scope 重放。
