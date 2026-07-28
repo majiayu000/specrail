@@ -218,6 +218,36 @@ def test_route_gate_blocks_terminal_outcome_evidence(tmp_path: Path) -> None:
     assert any("security_private" in reason for reason in payload["reasons"])
 
 
+@pytest.mark.parametrize(
+    "labels",
+    [
+        ["ready_to_spec", "parked"],
+        ["ready_to_spec", "ready_to_implement"],
+        ["duplicate", "security_private"],
+    ],
+)
+def test_route_gate_uses_shared_label_exclusivity(
+    tmp_path: Path,
+    labels: list[str],
+) -> None:
+    evidence = complete_issue_evidence(
+        state="ready_to_spec",
+        labels=labels,
+    )
+    evidence_path = tmp_path / "issue-evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    _result, payload = run_route_gate(
+        "--route", "write_spec",
+        "--issue", "999",
+        "--github-repo", "example/consumer",
+        "--evidence", str(evidence_path),
+    )
+
+    assert payload["decision"] == "blocked"
+    assert any("conflicting" in reason for reason in payload["reasons"])
+
+
 def test_release_note_allows_done_lifecycle_state(tmp_path: Path) -> None:
     evidence_path = tmp_path / "issue-evidence.json"
     evidence_path.write_text(

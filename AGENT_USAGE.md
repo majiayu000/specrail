@@ -151,7 +151,9 @@ The review JSON uses compact contract v3. Its `review_source` follows the
 canonical profile policy: fastlane self-review; standard/heavy independent.
 For standard/heavy, the trusted host/coordinator supplies the separate
 head-and-invocation-bound `--review-attestation`; agents must not mint or edit
-it. Fastlane self-review omits the flag.
+it. The raw current and embedded prior review JSON never contains the
+attestation; round 2's single current attestation also binds the prior artifact
+ID and head. Fastlane self-review omits the flag.
 Round 1 is
 full and binds the exact PR base-to-head diff with `base_head_sha` and
 `diff_sha256`; round 2 is diff-only after P0/P1 fixes. P2/P3 are
@@ -200,7 +202,10 @@ permission.
     it against the diff:
 
 ```sh
-python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-number>.json --diff <patch> --json
+python3 checks/review_json_gate.py --repo . \
+  --review artifacts/review/pr-<pr-number>.json --diff <patch> \
+  --review-attestation <host-attestation.json> \
+  --gate-invocation-id <current-id> --json
 ```
 
 The review gate validates advisory review JSON and optional finding locations.

@@ -44,6 +44,8 @@ REQUIRED_FILES = [
     "states.yaml",
     "labels.yaml",
     "examples/adoptions/matrix.json",
+    "checks/_lib/issue_labels.py",
+    "checks/_lib/review_attestation.py",
     "checks/duplicate_work_gate.py",
     "checks/github_evidence_common.py",
     "checks/github_duplicate_evidence.py",
@@ -183,7 +185,8 @@ def validate_required_files(repo: Path) -> list[str]:
         {
             rel
             for rel in REQUIRED_FILES
-            if rel.startswith("checks/") and rel.endswith(".py")
+            if PurePosixPath(rel).parent == PurePosixPath("checks")
+            and rel.endswith(".py")
         }
     )
     if checker_count > 18:

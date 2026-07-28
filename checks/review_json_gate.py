@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from _lib.review_attestation import validate_review_attestation
 from rejection_items import (
     add_prior_rejection_argument,
     apply_prior_rejection,
@@ -33,8 +34,7 @@ FINDING_STATUSES = {"unresolved", "resolved"}
 FINDING_ORIGINS = {"local", "hosted"}
 REVIEW_TOP_LEVEL_KEYS = set(
     "artifact_id base_head_sha body contract_version diff_sha256 findings "
-    "head_sha mode pr prior_review profile repository review_attestation "
-    "review_source round verdict".split()
+    "head_sha mode pr prior_review profile repository review_source round verdict".split()
 )
 FINDING_KEYS = {
     "fix_paths",
@@ -56,7 +56,6 @@ LEGACY_REVIEW_FIELDS = set(
     "review_round review_started_at reviewer_lane round_cap_escalation "
     "round_policy_version spec_alignment status tier_attestation tier_dispute".split()
 )
-ATTESTATION_FIELDS = {"lane_id", "reviewer_actor", "head_sha", "invocation_id"}
 FORBIDDEN_FINAL_AUTHORITY = {
     "approved for merge": re.compile(r"\bapproved\s+for\s+merge\b", re.IGNORECASE),
     "I approve this PR": re.compile(r"\bi\s+approve\s+this\s+pr\b", re.IGNORECASE),
@@ -354,6 +353,8 @@ def evaluate_review_gate(
     max_review_rounds: int | None = None,
     requires_independent_review: bool | None = None,
     gate_invocation_id: str | None = None,
+    attestation: dict[str, Any] | None = None,
+    _embedded_review: bool = False,
 ) -> dict[str, Any]:
     """Validate a v3 review artifact and return all failures in one result."""
 
@@ -413,33 +414,17 @@ def evaluate_review_gate(
     )
     if independent_required and source != "independent_lane":
         reasons.append(f"{profile} profile requires an independent_lane review")
-    attestation = review.get("review_attestation")
-    if source == "independent_lane":
-        if not isinstance(attestation, dict):
-            missing.append("review_attestation")
-        else:
-            unknown = sorted(set(attestation) - ATTESTATION_FIELDS)
-            absent = sorted(ATTESTATION_FIELDS - set(attestation))
-            if unknown:
-                reasons.append(
-                    "review_attestation contains unsupported fields: "
-                    + ", ".join(unknown)
-                )
-            missing.extend(f"review_attestation.{field}" for field in absent)
-            for field in ("lane_id", "reviewer_actor", "invocation_id"):
-                if field in attestation and not _non_empty_string(attestation.get(field)):
-                    reasons.append(f"review_attestation.{field} must be non-empty")
-            if attestation.get("head_sha") != review.get("head_sha"):
-                reasons.append("review_attestation.head_sha must match review head_sha")
-            if (
-                gate_invocation_id is not None
-                and attestation.get("invocation_id") != gate_invocation_id
-            ):
-                reasons.append(
-                    "review_attestation.invocation_id must match gate invocation"
-                )
-    elif attestation is not None:
-        reasons.append("self_review must not include review_attestation")
+    if not independent_required and source != "self_review":
+        reasons.append(f"{profile} profile requires a self_review")
+    if not _embedded_review:
+        att_missing, att_reasons = validate_review_attestation(
+            review,
+            attestation,
+            gate_invocation_id=gate_invocation_id,
+            required=independent_required,
+        )
+        missing.extend(att_missing)
+        reasons.extend(att_reasons)
 
     review_round = review.get("round")
     mode = review.get("mode")
@@ -482,6 +467,7 @@ def evaluate_review_gate(
                 verify_diff=False,
                 requires_independent_review=independent_required,
                 gate_invocation_id=gate_invocation_id,
+                _embedded_review=True,
             )
             if not prior_result["blocking_findings"]:
                 reasons.append(
@@ -740,6 +726,8 @@ def main() -> int:
     )
     parser.add_argument("--repo", default=".", help="Workflow pack root")
     parser.add_argument("--review", required=True, help="Review artifact JSON file")
+    parser.add_argument("--review-attestation", help="Trusted host attestation JSON")
+    parser.add_argument("--gate-invocation-id", help="Current trusted gate invocation")
     parser.add_argument("--diff", required=True, help="Unified diff patch file")
     parser.add_argument("--json", action="store_true", help="Print JSON output")
     add_prior_rejection_argument(parser)
@@ -749,6 +737,13 @@ def main() -> int:
         review_path = Path(args.review)
         diff_path = Path(args.diff)
         review = _load_json(review_path if review_path.is_absolute() else repo / review_path)
+        attestation = None
+        if args.review_attestation:
+            attestation_path = Path(args.review_attestation)
+            attestation = _load_json(
+                attestation_path if attestation_path.is_absolute()
+                else repo / attestation_path
+            )
         from specrail_lib import load_pack, verification_profiles
 
         _default_profile, profiles = verification_profiles(load_pack(repo))
@@ -764,6 +759,8 @@ def main() -> int:
             requires_independent_review=profile_policy.get(
                 "requires_independent_review"
             ),
+            gate_invocation_id=args.gate_invocation_id,
+            attestation=attestation,
         )
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         result = _result(

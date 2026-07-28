@@ -8,12 +8,6 @@
   "head_sha": "aaaa000000000000000000000000000000000001",
   "diff_sha256": "7e80ecec92e75fd391a74ee4807936c1e9169ef39a7a181b81e601f6deaf3be6",
   "review_source": "independent_lane",
-  "review_attestation": {
-    "lane_id": "fixture-review-lane",
-    "reviewer_actor": "fixture-reviewer",
-    "head_sha": "aaaa000000000000000000000000000000000001",
-    "invocation_id": "fixture-gate-1"
-  },
   "round": 1,
   "mode": "full",
   "verdict": "clean",

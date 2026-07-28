@@ -19,7 +19,7 @@ from review_json_gate import (  # noqa: E402
     CONTRACT_VERSION,
     LEGACY_REVIEW_FIELDS,
     REVIEW_TOP_LEVEL_KEYS,
-    evaluate_review_gate,
+    evaluate_review_gate as _evaluate_review_gate,
     parse_unified_diff,
     validate_exact_git_diff,
 )
@@ -27,6 +27,52 @@ from review_json_gate import (  # noqa: E402
 
 def load_diff() -> str:
     return (FIXTURES / "pr-diff.patch").read_text(encoding="utf-8")
+
+
+def review_attestation_for(review: dict[str, object]) -> dict[str, str] | None:
+    if (
+        review.get("profile") == "fastlane"
+        or not isinstance(review.get("artifact_id"), str)
+        or not isinstance(review.get("head_sha"), str)
+    ):
+        return None
+    attestation = {
+        "artifact_id": str(review["artifact_id"]),
+        "lane_id": "review-lane-1",
+        "reviewer_actor": "reviewer-agent-1",
+        "head_sha": str(review["head_sha"]),
+        "invocation_id": "gate-1",
+    }
+    prior = review.get("prior_review")
+    if review.get("round") == 2 and isinstance(prior, dict):
+        attestation["prior_artifact_id"] = str(prior["artifact_id"])
+        attestation["prior_head_sha"] = str(prior["head_sha"])
+    return attestation
+
+
+_AUTO_ATTESTATION = object()
+
+
+def evaluate_review_gate(
+    review: dict[str, object],
+    diff: str,
+    *,
+    attestation: object = _AUTO_ATTESTATION,
+    gate_invocation_id: str | None = "gate-1",
+    **kwargs: object,
+) -> dict[str, object]:
+    resolved = (
+        review_attestation_for(review)
+        if attestation is _AUTO_ATTESTATION
+        else attestation
+    )
+    return _evaluate_review_gate(
+        review,
+        diff,
+        attestation=resolved,
+        gate_invocation_id=gate_invocation_id,
+        **kwargs,
+    )
 
 
 def valid_review() -> dict[str, object]:
@@ -41,12 +87,6 @@ def valid_review() -> dict[str, object]:
         "head_sha": "a" * 40,
         "diff_sha256": hashlib.sha256(diff).hexdigest(),
         "review_source": "independent_lane",
-        "review_attestation": {
-            "lane_id": "review-lane-1",
-            "reviewer_actor": "reviewer-agent-1",
-            "head_sha": "a" * 40,
-            "invocation_id": "gate-1",
-        },
         "round": 1,
         "mode": "full",
         "verdict": "clean",
@@ -112,7 +152,7 @@ def test_review_gate_reports_legacy_and_unknown_fields_together() -> None:
 
 
 def test_review_gate_top_level_contract_is_compact() -> None:
-    assert len(REVIEW_TOP_LEVEL_KEYS) == 16
+    assert len(REVIEW_TOP_LEVEL_KEYS) == 15
     assert not (LEGACY_REVIEW_FIELDS & REVIEW_TOP_LEVEL_KEYS)
 
 
@@ -301,7 +341,6 @@ def test_round_two_digest_can_be_checked_without_git_repo() -> None:
     prior_review = copy.deepcopy(review)
     prior_review["base_head_sha"] = "c" * 40
     prior_review["head_sha"] = "b" * 40
-    prior_review["review_attestation"]["head_sha"] = "b" * 40
     prior_review["diff_sha256"] = hashlib.sha256(diff.encode()).hexdigest()
     prior_review["verdict"] = "blocking"
     prior_review["findings"] = [
@@ -360,7 +399,6 @@ def test_round_two_rejects_paths_outside_prior_blocker_fix_scope() -> None:
             ],
         }
     )
-    prior["review_attestation"]["head_sha"] = "b" * 40
     review.update(
         {
             "round": 2,
@@ -391,7 +429,6 @@ def test_round_two_rejects_clean_prior_review() -> None:
     prior_review = copy.deepcopy(review)
     prior_review["base_head_sha"] = "c" * 40
     prior_review["head_sha"] = "b" * 40
-    prior_review["review_attestation"]["head_sha"] = "b" * 40
     review.update(
         {
             "round": 2,
@@ -492,10 +529,13 @@ def test_review_gate_cli_json_contract(tmp_path: Path) -> None:
             "diff_sha256": hashlib.sha256(diff).hexdigest(),
         }
     )
-    review["review_attestation"]["head_sha"] = head
+    attestation = review_attestation_for(review)
+    assert attestation is not None
     review_path = repo / "review.json"
+    attestation_path = repo / "review-attestation.json"
     diff_path = repo / "review.patch"
     review_path.write_text(json.dumps(review), encoding="utf-8")
+    attestation_path.write_text(json.dumps(attestation), encoding="utf-8")
     diff_path.write_bytes(diff)
     for name in ("workflow.yaml", "states.yaml", "labels.yaml"):
         (repo / name).write_bytes((ROOT / name).read_bytes())
@@ -507,6 +547,10 @@ def test_review_gate_cli_json_contract(tmp_path: Path) -> None:
             str(repo),
             "--review",
             str(review_path),
+            "--review-attestation",
+            str(attestation_path),
+            "--gate-invocation-id",
+            "gate-1",
             "--diff",
             str(diff_path),
             "--json",

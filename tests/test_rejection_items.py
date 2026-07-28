@@ -79,16 +79,31 @@ def run_review_gate_cli(*args: str) -> subprocess.CompletedProcess[str]:
         review = json.loads(original_review.read_text(encoding="utf-8"))
         review["base_head_sha"] = base
         review["head_sha"] = head
-        if isinstance(review.get("review_attestation"), dict):
-            review["review_attestation"]["head_sha"] = head
         review["diff_sha256"] = hashlib.sha256(diff).hexdigest()
         review_path = repo / "review.json"
+        attestation_path = repo / "review-attestation.json"
         diff_path = repo / "review.patch"
         review_path.write_text(json.dumps(review), encoding="utf-8")
+        attestation = {
+            "artifact_id": review["artifact_id"],
+            "lane_id": "fixture-review-lane",
+            "reviewer_actor": "fixture-reviewer",
+            "head_sha": head,
+            "invocation_id": "fixture-gate-1",
+        }
+        prior = review.get("prior_review")
+        if review.get("round") == 2 and isinstance(prior, dict):
+            attestation["prior_artifact_id"] = prior["artifact_id"]
+            attestation["prior_head_sha"] = prior["head_sha"]
+        attestation_path.write_text(json.dumps(attestation), encoding="utf-8")
         diff_path.write_bytes(diff)
         normalized[review_index] = str(review_path)
         diff_index = normalized.index("--diff") + 1
         normalized[diff_index] = str(diff_path)
+        normalized.extend([
+            "--review-attestation", str(attestation_path),
+            "--gate-invocation-id", "fixture-gate-1",
+        ])
         for name in ("workflow.yaml", "states.yaml", "labels.yaml"):
             (repo / name).write_bytes((ROOT / name).read_bytes())
         return subprocess.run(

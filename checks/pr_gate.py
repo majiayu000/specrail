@@ -63,6 +63,7 @@ EVIDENCE_KEYS = {
     "profile",
     "repository",
     "review",
+    "review_attestation",
     "sensitive_classification",
     "state",
 }
@@ -581,6 +582,7 @@ def evaluate_pr_gate(
                 "requires_independent_review"
             ),
             gate_invocation_id=evidence.get("gate_invocation_id"),
+            attestation=evidence.get("review_attestation"),
         )
         if review.get("repository") != evidence.get("repository"):
             reasons.append("review.repository must match PR evidence")

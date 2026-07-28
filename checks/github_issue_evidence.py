@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _lib.issue_labels import validate_issue_labels
 from github_evidence_common import EvidenceError, json_object
 from github_pr_evidence import (
     _require_positive_int,
@@ -27,7 +28,6 @@ from specrail_lib import (
     ISSUE_STATES,
     PackConfig,
     SpecRailError,
-    label_groups,
     load_pack,
     resolve_path,
     resolve_repo_path,
@@ -50,11 +50,11 @@ STATE_HINT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 KNOWN_STATES = set(ISSUE_STATES)
-OUTCOME_LABELS = {"duplicate", "abandoned", "security_private"}
 PLAN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 PLAN_ITEM_RE = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+(.+?)\s*$")
 PLAN_HEADINGS = ("done-when", "done when", "acceptance criteria", "完成标准", "验收标准")
-FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`+|~+)[ \t]*$")
 
 
 def parse_issue_number(raw: str) -> int:
@@ -106,41 +106,15 @@ def normalize_labels(value: Any) -> list[str]:
     return labels
 
 
-def _workflow_label_sets(
-    config: PackConfig | None,
-) -> tuple[set[str], set[str], set[str]]:
-    if config is None:
-        return KNOWN_STATES, OUTCOME_LABELS, {"done", "parked"}
-    groups = label_groups(config)
-    states = state_map(config)
-    readiness = set(groups.get("readiness", []))
-    lifecycle = set(groups.get("lifecycle", []))
-    terminal = {
-        name
-        for name, body in states.items()
-        if isinstance(body, dict) and body.get("terminal") is True
-    }
-    reserved = terminal | ({"parked"} if "parked" in states else set())
-    return readiness | lifecycle | reserved, set(groups.get("outcome", [])), reserved
-
-
 def infer_state_from_labels(
     labels: list[str],
     config: PackConfig | None = None,
 ) -> str | None:
-    state_labels, outcome_labels, _reserved = _workflow_label_sets(config)
-    state_matches = sorted(set(labels) & state_labels)
-    outcome_matches = sorted(set(labels) & outcome_labels)
-    if state_matches and outcome_matches:
-        combined = sorted(set(state_matches) | set(outcome_matches))
-        raise EvidenceError(
-            f"conflicting terminal/readiness labels: {', '.join(combined)}"
-        )
-    if len(state_matches) == 1:
-        return state_matches[0]
-    if len(state_matches) > 1:
-        raise EvidenceError(f"conflicting state labels: {', '.join(state_matches)}")
-    return None
+    try:
+        state, _outcomes = validate_issue_labels(config, labels)
+    except SpecRailError as exc:
+        raise EvidenceError(str(exc)) from exc
+    return state
 
 
 def infer_state_from_body(
@@ -185,8 +159,8 @@ def _visible_issue_body(body: str) -> str:
     in_comment = False
     fence: str | None = None
     for raw_line in body.splitlines():
-        fence_match = FENCE_RE.match(raw_line)
         if fence is not None:
+            fence_match = FENCE_CLOSE_RE.fullmatch(raw_line)
             if (
                 fence_match is not None
                 and fence_match.group(1)[0] == fence[0]
@@ -210,8 +184,10 @@ def _visible_issue_body(body: str) -> str:
                 line, in_comment = line[:start], True
                 break
             line = line[:start] + line[end + 3:]
-        match = FENCE_RE.match(line)
-        if match is not None:
+        match = FENCE_OPEN_RE.match(line)
+        if match is not None and (
+            match.group(1)[0] == "~" or "`" not in match.group(2)
+        ):
             fence = match.group(1)
             continue
         visible_lines.append(line)
@@ -275,8 +251,10 @@ def build_issue_evidence(
     labels = normalize_labels(issue_payload.get("labels"))
     body = _optional_body(issue_payload)
     state, state_source, state_trusted = infer_state_with_source(labels, body, config)
-    _state_labels, outcome_labels, _reserved = _workflow_label_sets(config)
-    outcomes = sorted(set(labels) & outcome_labels)
+    try:
+        _label_state, outcomes = validate_issue_labels(config, labels)
+    except SpecRailError as exc:
+        raise EvidenceError(str(exc)) from exc
 
     evidence: dict[str, Any] = {
         "issue": issue_number,

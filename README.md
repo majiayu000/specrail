@@ -145,11 +145,16 @@ Issues.
 Validate an advisory review artifact against a unified diff:
 
 ```sh
-python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-123.json --diff pr.diff --json
+python3 checks/review_json_gate.py --repo . \
+  --review artifacts/review/pr-123.json --diff pr.diff \
+  --review-attestation <host-attestation.json> \
+  --gate-invocation-id <current-id> --json
 ```
 
 Review artifacts are advisory evidence only. They do not grant final approval
-or merge authority. Round 1 is full and binds the exact PR base-to-head diff.
+or merge authority. Raw current and prior review JSON never embeds
+`review_attestation`; standard/heavy validation receives a separate current
+host attestation. Round 1 is full and binds the exact PR base-to-head diff.
 Round 2 exists only after an unresolved round-1 P0/P1, is diff-only, and embeds
 the bound round-1
 artifact as `prior_review`, and carries every prior unresolved P0/P1 finding
