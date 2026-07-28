@@ -473,22 +473,52 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             )
         registry = sensitive_registry(config)
         if registry["paths"] or registry["specs"]:
-            try:
-                sensitive_classification = classification_from_tech_spec(
-                    config,
+            tech_spec = (
+                spec_packet_artifact_paths(config, args.issue)["tech_spec"]
+                if args.issue is not None
+                else None
+            )
+            has_tech_spec = bool(
+                tech_spec
+                and resolve_repo_path(
                     repo,
-                    issue=args.issue,
-                )
-                satisfied.append("sensitive classification derived from current tech spec")
-                if (
-                    sensitive_classification["enforcement_sensitive"]
-                    and effective_profile != "heavy"
-                ):
-                    sensitive_errors.append(
-                        "sensitive planned changes must use the heavy profile"
+                    tech_spec,
+                    label="configured tech spec",
+                ).is_file()
+            )
+            if effective_profile == "heavy" or has_tech_spec:
+                try:
+                    sensitive_classification = classification_from_tech_spec(
+                        config,
+                        repo,
+                        issue=args.issue,
                     )
-            except (SpecRailError, TypeError) as exc:
-                sensitive_errors.append(str(exc))
+                    satisfied.append(
+                        "sensitive classification derived from current tech spec"
+                    )
+                    if (
+                        sensitive_classification["enforcement_sensitive"]
+                        and effective_profile != "heavy"
+                    ):
+                        sensitive_errors.append(
+                            "sensitive planned changes must use the heavy profile"
+                        )
+                except (SpecRailError, TypeError) as exc:
+                    sensitive_errors.append(str(exc))
+            else:
+                sensitive_classification = {
+                    "source": "deferred_to_pr",
+                    "changed_paths": [],
+                    "spec_refs": [],
+                    "matched_paths": [],
+                    "matched_specs": [],
+                    "registry_configured": True,
+                    "enforcement_sensitive": False,
+                }
+                satisfied.append(
+                    "non-heavy route defers exact changed-path classification "
+                    "to the PR gate"
+                )
         else:
             sensitive_classification = {
                 "source": "tech_spec",

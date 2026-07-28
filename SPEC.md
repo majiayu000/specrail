@@ -31,14 +31,16 @@ This pack defines:
 - `fastlane`: small mechanical, documentation, or test fixes. Requires a linked
   Issue, focused diff, project tests, one review, and a human merge boundary.
 - `standard`: ordinary feature/fix work. Requires a linked Issue, a testable
-  plan, project tests, one independent full review, and at most one diff-only
-  review after P0/P1 fixes.
+  plan, project tests, one full review, and at most one diff-only review after
+  P0/P1 fixes.
 - `heavy`: architecture, public contracts, migrations, auth, payments, secrets,
   permissions, or configured sensitive paths. Requires a complete durable spec
-  packet, independent review, security evidence, and explicit current-invocation
-  human merge authorization.
+  packet, security evidence, and explicit current-invocation human merge
+  authorization.
 
 Sensitive classification always selects `heavy`.
+For every profile, the configured `requires_independent_review` value decides
+whether the review source and hosted-thread collection must be independent.
 
 ## Workflow Model
 

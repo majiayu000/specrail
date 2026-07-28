@@ -85,8 +85,9 @@ merge-review gate with risk-based review sources.
 > 1. B-001 每个 merge 候选项必须记录 review 来源，取值为闭集
 >    {independent_lane, self_review}；缺失、为空或越界取值时该项判为
 >    blocked。
-> 2. B-002 fastlane 可以使用 self-review；standard 和 heavy 必须使用
->    independent_lane，来源不匹配时一次返回全部问题。
+> 2. B-002 选中 profile 的 `requires_independent_review` 为 true 时必须使用
+>    independent_lane，否则可以使用 self_review；来源不匹配时一次返回全部
+>    问题。
 > 3. B-003 review 最多两轮：第一轮必须 full，第二轮只能 diff-only；第三轮
 >    返回 needs_human。
 > 4. B-004 当前 head 上未解决的 P0/P1 必须阻断，P2/P3 只进入 follow-ups。

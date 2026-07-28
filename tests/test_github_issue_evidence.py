@@ -797,6 +797,21 @@ def test_sensitive_issue_adapter_serializes_allowed_implement_route(
     assert "sensitive classification derived from current tech spec" in payload["satisfied"]
 
 
+def test_sensitive_registry_without_tech_spec_does_not_require_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    head = write_sensitive_implement_pack(repo)
+    (repo / "specs" / "GH16" / "tech.md").unlink()
+    mock_sensitive_github(monkeypatch, head)
+
+    evidence = collect_issue_evidence("example/consumer", 16, repo)
+
+    assert "enforcement_sensitive" not in evidence
+    assert "sensitive_classification" not in evidence
+
+
 @pytest.mark.parametrize(
     ("labels", "body", "expected_missing"),
     [

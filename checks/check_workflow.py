@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path, PurePosixPath
@@ -12,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from specrail_lib import (
     SpecRailError,
     artifact_templates,
+    label_groups,
     load_pack,
     read_text,
     resolve_path,
@@ -19,6 +21,7 @@ from specrail_lib import (
     resolve_spec_packet_root,
     spec_packet_artifact_paths,
     validate_action_policy,
+    validate_ci_component_coverage,
     validate_labels,
     validate_state_graph,
     validate_skills_lock,
@@ -202,6 +205,27 @@ def validate_tokens(repo: Path) -> list[str]:
             if token not in text:
                 errors.append(f"{rel}: missing token {token!r}")
     return errors
+
+
+def validate_issue_triage_contract(repo: Path, config: object) -> list[str]:
+    schema_path = repo / "schemas" / "issue_triage.schema.json"
+    if not schema_path.is_file():
+        return []
+    try:
+        schema = json.loads(read_text(schema_path))
+        recommended = schema["properties"]["recommended_state"]["enum"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return []
+    if not isinstance(recommended, list):
+        return []
+    expected = set(label_groups(config).get("readiness", []))  # type: ignore[arg-type]
+    actual = {str(state) for state in recommended}
+    if actual != expected:
+        return [
+            "schemas/issue_triage.schema.json: recommended_state must match "
+            "labels.yaml readiness states"
+        ]
+    return []
 
 
 def validate_pack_assets(repo: Path) -> list[str]:
@@ -522,7 +546,9 @@ def main() -> int:
         errors.extend(validate_pack_assets(repo))
         errors.extend(validate_state_graph(config))
         errors.extend(validate_labels(config))
+        errors.extend(validate_issue_triage_contract(repo, config))
         errors.extend(validate_action_policy(config))
+        errors.extend(validate_ci_component_coverage(config))
         errors.extend(validate_verification_profiles(config))
         errors.extend(validate_sensitive_registry(config))
         errors.extend(validate_impl_branch_template(config))

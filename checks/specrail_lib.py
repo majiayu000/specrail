@@ -230,6 +230,53 @@ def verification_profiles(config: PackConfig) -> tuple[str, dict[str, dict[str, 
     return default, normalized
 
 
+def ci_component_coverage(config: PackConfig) -> dict[str, list[str]]:
+    evidence = config.workflow.get("evidence", {})
+    if not isinstance(evidence, dict):
+        raise SpecRailError("workflow.yaml evidence must be a mapping")
+    raw = evidence.get("ci_component_coverage", {})
+    if not isinstance(raw, dict):
+        raise SpecRailError(
+            "workflow.yaml evidence.ci_component_coverage must be a mapping"
+        )
+    normalized: dict[str, list[str]] = {}
+    for name, categories in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            raise SpecRailError(
+                "workflow.yaml evidence.ci_component_coverage check names "
+                "must be non-empty strings"
+            )
+        if (
+            not isinstance(categories, list)
+            or not categories
+            or not all(
+                isinstance(category, str) and bool(category.strip())
+                for category in categories
+            )
+        ):
+            raise SpecRailError(
+                "workflow.yaml evidence.ci_component_coverage."
+                f"{name} must be a non-empty list of component names"
+            )
+        normalized[name.strip()] = [category.strip() for category in categories]
+    return normalized
+
+
+def validate_ci_component_coverage(config: PackConfig) -> list[str]:
+    try:
+        coverage = ci_component_coverage(config)
+    except SpecRailError as exc:
+        return [str(exc)]
+    errors: list[str] = []
+    for name, categories in coverage.items():
+        if len(categories) != len(set(categories)):
+            errors.append(
+                "workflow.yaml evidence.ci_component_coverage."
+                f"{name} contains duplicate component names"
+            )
+    return errors
+
+
 def artifact_templates(config: PackConfig) -> dict[str, str]:
     artifacts = config.workflow.get("artifacts", {})
     if not isinstance(artifacts, dict):

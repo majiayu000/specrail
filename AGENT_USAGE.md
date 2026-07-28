@@ -108,15 +108,17 @@ Any missing or drifted skill is reported in one pass. Reinstall explicitly with
 ```sh
 python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO --issue <issue-number> --json > issue-evidence.json
 python3 checks/github_duplicate_evidence.py --github-repo OWNER/REPO --issue <issue-number> --json > duplicate-work-evidence.json
-python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --evidence issue-evidence.json --json
+python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> \
+  --evidence issue-evidence.json --mode required --json
 python3 checks/route_gate.py --repo . --route implement --issue <issue-number> \
   --profile <fastlane|standard|heavy> --evidence issue-evidence.json \
-  --duplicate-evidence duplicate-work-evidence.json --json
+  --duplicate-evidence duplicate-work-evidence.json --mode required --json
 ```
 
 The duplicate-work adapter is read-only. It collects open PR and remote branch
 evidence; duplicate results are advisory and should steer the agent to existing
 ownership rather than create replacement work.
+Continue only when the route decision is `allowed`.
 
 8. Run deterministic checks before claiming completion:
 
@@ -144,9 +146,10 @@ python3 checks/github_pr_evidence.py \
 python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 ```
 
-The review JSON uses compact contract v3. Fastlane may use
-`review_source: self_review`; standard/heavy require `independent_lane`.
-Round 1 is full and round 2 is diff-only after P0/P1 fixes. P2/P3 are
+The review JSON uses compact contract v3. Its `review_source` follows the
+selected profile's configured `requires_independent_review` policy. Round 1 is
+full and binds the exact PR base-to-head diff with `base_head_sha` and
+`diff_sha256`; round 2 is diff-only after P0/P1 fixes. P2/P3 are
 non-blocking follow-ups, and outdated hosted findings do not block current
 head. A round-2 artifact must embed the bound round-1 artifact as
 `prior_review` and carry every prior unresolved P0/P1 finding forward.

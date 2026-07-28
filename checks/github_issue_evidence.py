@@ -27,6 +27,7 @@ from specrail_lib import (
     SpecRailError,
     load_pack,
     resolve_path,
+    resolve_repo_path,
     spec_packet_artifact_paths,
 )
 
@@ -207,6 +208,11 @@ def collect_issue_evidence(
         and evidence["state_source"] == "label"
         and evidence["state_trusted"] is True
         and any(sensitive_registry(config).values())
+        and resolve_repo_path(
+            repo,
+            artifacts["tech_spec"],
+            label="configured tech spec",
+        ).is_file()
     ):
         evidence.update(
             collect_sensitive_route_evidence(

@@ -24,6 +24,7 @@ from sensitive_enforcement import classify_sensitive_changes
 from specrail_lib import (
     PackConfig,
     SpecRailError,
+    ci_component_coverage,
     load_pack,
     resolve_path,
     validate_verification_profiles,
@@ -164,7 +165,11 @@ def _changed_files_digest(paths: list[str]) -> str:
     ).hexdigest()
 
 
-def _validate_checks(checks: Any, head_sha: Any) -> tuple[list[str], list[str], list[str]]:
+def _validate_checks(
+    checks: Any,
+    head_sha: Any,
+    required_check_names: set[str] | None = None,
+) -> tuple[list[str], list[str], list[str]]:
     satisfied: list[str] = []
     missing: list[str] = []
     reasons: list[str] = []
@@ -192,6 +197,11 @@ def _validate_checks(checks: Any, head_sha: Any) -> tuple[list[str], list[str], 
             reasons.append(f"{prefix} status must be COMPLETED")
         if check.get("conclusion") not in SUCCESS_CONCLUSIONS:
             reasons.append(f"{prefix} conclusion is not successful")
+    absent_checks = sorted((required_check_names or set()) - names)
+    if absent_checks:
+        reasons.append(
+            "configured CI checks are missing: " + ", ".join(absent_checks)
+        )
     if not reasons:
         satisfied.append(f"{len(checks)} current-head CI checks passed")
     return satisfied, missing, reasons
@@ -280,20 +290,35 @@ def _validate_authorization(
     return satisfied, missing, reasons
 
 
-def _round_two_diff(
+def _review_diff(
     review: dict[str, Any],
+    pr_base_sha: object,
     repo: Path | None,
 ) -> tuple[str, bytes | None, list[str]]:
-    if review.get("round") != 2:
+    review_round = review.get("round")
+    if review_round not in {1, 2}:
         return "", None, []
     if repo is None:
-        return "", None, ["round 2 review requires an exact local checkout"]
+        return "", None, ["review requires an exact local checkout"]
     base = review.get("base_head_sha")
     head = review.get("head_sha")
     if not isinstance(base, str) or not SHA_RE.fullmatch(base):
         return "", None, []
     if not isinstance(head, str) or not SHA_RE.fullmatch(head):
         return "", None, []
+    if review_round == 1 and base != pr_base_sha:
+        return "", None, [
+            "round 1 review.base_head_sha must match PR evidence base_sha"
+        ]
+    prior_review = review.get("prior_review")
+    if (
+        review_round == 2
+        and isinstance(prior_review, dict)
+        and prior_review.get("base_head_sha") != pr_base_sha
+    ):
+        return "", None, [
+            "round 2 prior_review.base_head_sha must match PR evidence base_sha"
+        ]
     try:
         completed = subprocess.run(
             ["git", "diff", "--no-ext-diff", "--binary", f"{base}..{head}", "--"],
@@ -303,10 +328,10 @@ def _round_two_diff(
             stderr=subprocess.PIPE,
         )
     except OSError as exc:
-        return "", None, [f"cannot execute round 2 exact diff: {exc}"]
+        return "", None, [f"cannot execute exact review diff: {exc}"]
     if completed.returncode != 0:
         detail = completed.stderr.decode("utf-8", errors="replace").strip()
-        return "", None, [f"round 2 exact diff failed: {detail}"]
+        return "", None, [f"exact review diff failed: {detail}"]
     return (
         completed.stdout.decode("utf-8", errors="replace"),
         completed.stdout,
@@ -401,18 +426,25 @@ def evaluate_pr_gate(
     elif "changed_files" in evidence:
         reasons.append("changed_files must contain non-empty path strings")
 
-    ci_satisfied, ci_missing, ci_reasons = _validate_checks(
-        evidence.get("checks"), evidence.get("head_sha")
-    )
-    satisfied.extend(ci_satisfied)
-    missing.extend(ci_missing)
-    reasons.extend(ci_reasons)
-
     if config is None and repo is not None:
         try:
             config = load_pack(resolve_path(repo, label="repository"))
         except SpecRailError as exc:
             reasons.append(str(exc))
+    required_check_names: set[str] = set()
+    if config is not None:
+        try:
+            required_check_names = set(ci_component_coverage(config))
+        except SpecRailError as exc:
+            reasons.append(str(exc))
+    ci_satisfied, ci_missing, ci_reasons = _validate_checks(
+        evidence.get("checks"),
+        evidence.get("head_sha"),
+        required_check_names,
+    )
+    satisfied.extend(ci_satisfied)
+    missing.extend(ci_missing)
+    reasons.extend(ci_reasons)
     sensitive, classification, sensitive_satisfied, sensitive_reasons = _validate_sensitive(
         evidence,
         repo=repo,
@@ -432,8 +464,9 @@ def evaluate_pr_gate(
     review = evidence.get("review")
     review_result: dict[str, Any] | None = None
     if isinstance(review, dict):
-        review_diff, review_diff_bytes, review_diff_reasons = _round_two_diff(
+        review_diff, review_diff_bytes, review_diff_reasons = _review_diff(
             review,
+            evidence.get("base_sha"),
             repo,
         )
         reasons.extend(review_diff_reasons)
@@ -444,6 +477,9 @@ def evaluate_pr_gate(
             diff_bytes=review_diff_bytes,
             verify_diff=True,
             max_review_rounds=profile_policy.get("max_review_rounds"),
+            requires_independent_review=profile_policy.get(
+                "requires_independent_review"
+            ),
         )
         if review.get("repository") != evidence.get("repository"):
             reasons.append("review.repository must match PR evidence")

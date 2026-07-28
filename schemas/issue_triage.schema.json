@@ -13,12 +13,9 @@
     "recommended_state": {
       "enum": [
         "needs_info",
-        "duplicate",
-        "security_private",
-        "triaged",
         "ready_to_spec",
         "ready_to_implement",
-        "reserved_internal"
+        "parked"
       ]
     },
     "confidence": {

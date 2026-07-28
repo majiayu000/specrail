@@ -68,9 +68,17 @@ def audit_closure(
         ("gate head", gate.get("head_sha")),
         ("gate query head", gate.get("gate_query_head_sha")),
         ("merge head", merge.get("merge_head_sha")),
+        ("confirmed merged head", merge.get("merged_head_sha")),
     ):
         if final_head and value != final_head:
             warnings.append({"code": "closure_head_mismatch", "message": f"{label} does not match final head"})
+    if merge.get("remote_confirmed") is not True:
+        warnings.append(
+            {
+                "code": "closure_remote_not_confirmed",
+                "message": "remote merge confirmation is required",
+            }
+        )
 
     queried = _timestamp(gate.get("gate_query_completed_at"), "gate query", warnings)
     dispatched = _timestamp(merge.get("merge_dispatched_at"), "merge dispatch", warnings)
