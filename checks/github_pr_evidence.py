@@ -39,6 +39,8 @@ PR_VIEW_FIELDS = [
     "isDraft",
     "headRefOid",
     "headRefName",
+    "headRepository",
+    "headRepositoryOwner",
     "baseRefOid",
     "mergeStateStatus",
     "body",
@@ -261,6 +263,45 @@ def _require_string(payload: dict[str, Any], field: str) -> str:
     return value.strip()
 
 
+def _head_repository_name(payload: dict[str, Any]) -> str:
+    repository = payload.get("headRepository")
+    if not isinstance(repository, dict) or "nameWithOwner" not in repository:
+        raise EvidenceError("headRepository.nameWithOwner is required")
+    name_with_owner = repository.get("nameWithOwner")
+    if not isinstance(name_with_owner, str):
+        raise EvidenceError("headRepository.nameWithOwner must be a string")
+    owner = payload.get("headRepositoryOwner")
+    owner_login = owner.get("login") if isinstance(owner, dict) else None
+    repository_name = repository.get("name")
+    if name_with_owner.strip():
+        normalized = "/".join(parse_github_repo(name_with_owner))
+        if (
+            isinstance(owner_login, str)
+            and owner_login.strip()
+            and owner_login.strip() != normalized.split("/", 1)[0]
+        ):
+            raise EvidenceError("headRepository owner metadata is inconsistent")
+        if (
+            isinstance(repository_name, str)
+            and repository_name.strip()
+            and repository_name.strip() != normalized.split("/", 1)[1]
+        ):
+            raise EvidenceError("headRepository name metadata is inconsistent")
+        return normalized
+    if (
+        not isinstance(owner_login, str)
+        or not owner_login.strip()
+        or not isinstance(repository_name, str)
+        or not repository_name.strip()
+    ):
+        raise EvidenceError(
+            "empty headRepository.nameWithOwner requires owner login and repository name"
+        )
+    return "/".join(
+        parse_github_repo(f"{owner_login.strip()}/{repository_name.strip()}")
+    )
+
+
 def _require_bool(payload: dict[str, Any], field: str) -> bool:
     value = payload.get(field)
     if not isinstance(value, bool):
@@ -420,10 +461,11 @@ def collect_evidence(
         else None
     )
     before_head = _require_string(before, "headRefOid")
+    before_head_repository = _head_repository_name(before)
     prior_review_boundary = None
     if isinstance(review.get("prior_review"), dict):
         prior_review_boundary = collect_head_push_boundary(
-            github_repo,
+            before_head_repository,
             _require_string(before, "headRefName"),
             before_head,
         )
@@ -470,9 +512,14 @@ def collect_evidence(
             "PR file set changed while collecting gate evidence; rerun collection"
         )
     after_head = _require_string(after, "headRefOid")
+    if _head_repository_name(after) != before_head_repository:
+        raise EvidenceError(
+            "PR head repository changed while collecting gate evidence; "
+            "rerun collection"
+        )
     if prior_review_boundary is not None:
         after_boundary = collect_head_push_boundary(
-            github_repo,
+            before_head_repository,
             _require_string(after, "headRefName"),
             after_head,
         )

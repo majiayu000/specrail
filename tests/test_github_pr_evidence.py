@@ -28,6 +28,11 @@ def pr_payload(head: str = "a" * 40) -> dict[str, object]:
         "isDraft": False,
         "headRefOid": head,
         "headRefName": "feature",
+        "headRepository": {
+            "name": "widgets",
+            "nameWithOwner": "acme/widgets",
+        },
+        "headRepositoryOwner": {"login": "acme"},
         "baseRefOid": "b" * 40,
         "mergeStateStatus": "CLEAN",
         "body": "Fixes #208",
@@ -231,6 +236,7 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                             "nodes": [
                                 {
                                     "id": "thread-current",
+                                    "path": "src/current.py",
                                     "isResolved": False,
                                     "isOutdated": False,
                                     "comments": {
@@ -238,6 +244,8 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                             {
                                                 "body": "[P1] Current defect",
                                                 "createdAt": "2026-07-28T10:00:00Z",
+                                                "path": "src/current.py",
+                                                "originalLine": 12,
                                                 "originalCommit": {"oid": "a" * 40},
                                                 "pullRequestReview": {
                                                     "id": "PRR_current",
@@ -250,6 +258,7 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                 },
                                 {
                                     "id": "thread-old",
+                                    "path": "src/old.py",
                                     "isResolved": False,
                                     "isOutdated": True,
                                     "comments": {
@@ -257,6 +266,8 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                             {
                                                 "body": "P1 old defect",
                                                 "createdAt": "2026-07-28T09:00:00Z",
+                                                "path": "src/old.py",
+                                                "originalLine": 7,
                                                 "originalCommit": {"oid": "b" * 40},
                                                 "pullRequestReview": {
                                                     "id": "PRR_old",
@@ -320,19 +331,31 @@ def test_local_review_cannot_self_report_hosted_or_outdated_provenance() -> None
 
 def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     prior = review(head="b" * 40)
-    prior["artifact_id"] = "PRR_prior"
+    prior["artifact_id"] = "review-pr42-round1"
     prior["base_head_sha"] = "c" * 40
     prior["diff_sha256"] = "d" * 64
     prior["verdict"] = "blocking"
     prior["findings"] = [
         {
             "id": "hosted:thread-1",
-            "severity": "P1",
-            "status": "unresolved",
-            "summary": "Round-one blocker.",
+            "severity": "P3",
+            "status": "resolved",
+            "summary": "Caller-controlled summary.",
             "origin": "hosted",
             "outdated": False,
-            "fix_paths": ["src/app.py"],
+            "fix_paths": ["src/unrelated.py"],
+            "path": "src/unrelated.py",
+            "line": 999,
+            "introduced_by_diff": True,
+        },
+        {
+            "id": "hosted:thread-2",
+            "severity": "P1",
+            "status": "unresolved",
+            "summary": "Caller-controlled summary.",
+            "origin": "hosted",
+            "outdated": False,
+            "fix_paths": ["src/unrelated.py"],
         }
     ]
     current = review()
@@ -352,6 +375,14 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
                     "origin": "hosted",
                     "outdated": False,
                     "introduced_by_diff": False,
+                },
+                {
+                    "id": "hosted:thread-2",
+                    "severity": "P1",
+                    "status": "resolved",
+                    "summary": "Second hosted blocker.",
+                    "origin": "hosted",
+                    "outdated": False,
                 }
             ],
         }
@@ -369,6 +400,25 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
             "_review_id": "PRR_prior",
             "_review_submitted_at": "2026-07-28T09:01:00Z",
             "_review_head_sha": "b" * 40,
+            "path": "src/app.py",
+            "fix_paths": ["src/app.py"],
+            "line": 11,
+        },
+        {
+            "id": "hosted:thread-2",
+            "severity": "P1",
+            "status": "resolved",
+            "summary": "Second hosted blocker.",
+            "origin": "hosted",
+            "outdated": True,
+            "_original_head_sha": "b" * 40,
+            "_created_at": "2026-07-28T09:02:01Z",
+            "_review_id": "PRR_second",
+            "_review_submitted_at": "2026-07-28T09:02:00Z",
+            "_review_head_sha": "b" * 40,
+            "path": "src/second.py",
+            "fix_paths": ["src/second.py"],
+            "line": 21,
         }
     ]
 
@@ -379,17 +429,68 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     )
 
     assert [finding["id"] for finding in combined["findings"]] == [
-        "hosted:thread-1"
+        "hosted:thread-1",
+        "hosted:thread-2",
     ]
     assert combined["findings"][0]["status"] == "resolved"
     assert combined["findings"][0]["outdated"] is True
-    prior_finding = combined["prior_review"]["findings"][0]
-    assert prior_finding["origin"] == "hosted"
-    assert prior_finding["outdated"] is False
-    assert prior_finding["status"] == "unresolved"
+    prior_findings = combined["prior_review"]["findings"]
+    assert [finding["origin"] for finding in prior_findings] == [
+        "hosted",
+        "hosted",
+    ]
+    assert [finding["fix_paths"] for finding in prior_findings] == [
+        ["src/app.py"],
+        ["src/second.py"],
+    ]
+    assert [finding["summary"] for finding in prior_findings] == [
+        "Round-one blocker.",
+        "Second hosted blocker.",
+    ]
+    assert [finding["severity"] for finding in prior_findings] == ["P1", "P1"]
+    assert [finding["line"] for finding in prior_findings] == [11, 21]
+    assert all("introduced_by_diff" not in finding for finding in prior_findings)
+    assert all(finding["status"] == "unresolved" for finding in prior_findings)
     assert combined["verdict"] == "clean"
     gate = evaluate_review_gate(combined, "", verify_diff=False)
     assert gate["decision"] == "allowed", gate["reasons"]
+    unrelated_diff = (
+        "diff --git a/src/unrelated.py b/src/unrelated.py\n"
+        "--- a/src/unrelated.py\n"
+        "+++ b/src/unrelated.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    forged_scope_gate = evaluate_review_gate(
+        combined,
+        unrelated_diff,
+        verify_diff=False,
+    )
+    assert forged_scope_gate["decision"] == "blocked"
+    assert any(
+        "outside prior blocker fix scope" in reason
+        for reason in forged_scope_gate["reasons"]
+    )
+
+    equal_boundary = combine_review_findings(
+        current,
+        hosted,
+        prior_review_boundary="2026-07-28T09:01:01Z",
+    )
+    assert equal_boundary["prior_review"]["findings"][0] == {
+        "id": "hosted:thread-1"
+    }
+    submitted_equal_hosted = [dict(finding) for finding in hosted]
+    submitted_equal_hosted[0]["_created_at"] = "2026-07-28T09:00:59Z"
+    submitted_equal_boundary = combine_review_findings(
+        current,
+        submitted_equal_hosted,
+        prior_review_boundary="2026-07-28T09:01:00Z",
+    )
+    assert submitted_equal_boundary["prior_review"]["findings"][0] == {
+        "id": "hosted:thread-1"
+    }
 
 
 def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
@@ -447,6 +548,7 @@ def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
                             "nodes": [
                                 {
                                     "id": "thread-late",
+                                    "path": "src/app.py",
                                     "isResolved": True,
                                     "isOutdated": True,
                                     "comments": {
@@ -454,6 +556,8 @@ def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
                                             {
                                                 "body": "[P1] Late old-head blocker.",
                                                 "createdAt": "2026-07-28T10:00:00Z",
+                                                "path": "src/app.py",
+                                                "originalLine": 10,
                                                 "originalCommit": {"oid": "b" * 40},
                                                 "pullRequestReview": {
                                                     "id": "PRR_late",
@@ -486,7 +590,10 @@ def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
     gate = evaluate_review_gate(combined, "", verify_diff=False)
 
     assert gate["decision"] == "blocked"
-    assert any("preserve prior origin" in reason for reason in gate["reasons"])
+    assert combined["prior_review"]["findings"] == [
+        {"id": "hosted:thread-late"}
+    ]
+    assert any(reason.startswith("prior_review:") for reason in gate["reasons"])
 
 
 def test_spec_registry_uses_linked_issue_artifact_references(tmp_path: Path) -> None:
@@ -639,6 +746,69 @@ def test_collect_evidence_rejects_head_push_activity_drift(
     )
 
     with pytest.raises(EvidenceError, match="push activity changed"):
+        collect_evidence(
+            "acme/widgets",
+            42,
+            profile="standard",
+            gate_invocation_id="gate-1",
+            review=current_review,
+        )
+
+
+def test_collect_evidence_uses_fork_head_repository_for_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = pr_payload()
+    first["headRepository"] = {
+        "name": "widgets-fork",
+        "nameWithOwner": "",
+    }
+    first["headRepositoryOwner"] = {"login": "forker"}
+    second = dict(first)
+    snapshots = [first, second]
+    boundary_repositories: list[str] = []
+    current_review = review()
+    current_review["prior_review"] = review(head="b" * 40)
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_pr_view",
+        lambda _repo, _pr: snapshots.pop(0),
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_head_push_boundary",
+        lambda repository, *_args: (
+            boundary_repositories.append(repository)
+            or "2026-07-28T09:30:00Z"
+        ),
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_hosted_findings",
+        lambda *_args: [],
+    )
+
+    collect_evidence(
+        "acme/widgets",
+        42,
+        profile="standard",
+        gate_invocation_id="gate-1",
+        review=current_review,
+    )
+
+    assert boundary_repositories == ["forker/widgets-fork", "forker/widgets-fork"]
+
+
+def test_collect_evidence_rejects_missing_head_repository_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = pr_payload()
+    snapshot["headRepository"] = {"name": "widgets"}
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_pr_view",
+        lambda _repo, _pr: snapshot,
+    )
+    current_review = review()
+    current_review["prior_review"] = review(head="b" * 40)
+
+    with pytest.raises(EvidenceError, match="headRepository.nameWithOwner is required"):
         collect_evidence(
             "acme/widgets",
             42,
