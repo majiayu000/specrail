@@ -9,10 +9,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "checks"))
 
-from sensitive_enforcement import build_approved_spec_evidence  # noqa: E402
-from specrail_lib import load_pack  # noqa: E402
-
-
 def run_route_gate(
     *args: str,
     repo: Path = ROOT,
@@ -145,45 +141,14 @@ def write_sensitive_pack(
     return head
 
 
-def sensitive_route_evidence(repo: Path, head: str) -> dict[str, object]:
-    revisions = {
-        f"specs/GH999/{name}.md": {
-            "source_commit_sha": head,
-            "pr_number": 10,
-            "merged_at": "2029-01-01T00:00:00Z",
-            "merge_commit_sha": head,
-        }
-        for name in ["product", "tech"]
-    }
-    approval = build_approved_spec_evidence(
-        load_pack(repo),
-        repo,
-        repository="example/consumer",
-        issue=999,
-        spec_revisions=revisions,
-        approved_at="2030-07-14T00:00:00Z",
-        maintainer_actor="maintainer",
-        default_base_ref="main",
-        default_base_sha=head,
-    )
+def sensitive_route_evidence(_repo: Path, _head: str) -> dict[str, object]:
     return {
         "github_state": "OPEN",
         "state": "ready_to_implement",
         "state_source": "label",
         "state_trusted": True,
         "repository": "example/consumer",
-        "base_ref": "main",
-        "base_sha": head,
-        "default_base_ref": "main",
-        "default_base_sha": head,
         "enforcement_sensitive": True,
-        "sensitive_route": "approved_spec",
-        "sensitive_classification": {
-            "source": "tech_spec",
-            "changed_paths": ["checks/route_gate.py"],
-            "spec_refs": [],
-        },
-        "approved_spec": approval,
     }
 
 

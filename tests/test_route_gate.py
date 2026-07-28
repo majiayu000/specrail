@@ -419,19 +419,19 @@ def test_route_gate_duplicate_success_reason_not_itemized(tmp_path: Path) -> Non
 
     assert result.returncode == 1
     assert payload["decision"] == "blocked"
-    # duplicate-work gate itself passed and its success reason is carried...
+    # Duplicate-work evidence is carried as advisory context...
     assert any(
-        "duplicate work gate passed" in reason for reason in payload["reasons"]
+        "no open PR references" in item for item in payload["satisfied"]
     )
-    # ...but never turned into a rejection item asking to "fix" a passing gate.
+    # ...but never becomes a rejection item for unrelated blockers.
     assert not any(
-        "duplicate work gate passed" in item["expected"]
-        or "duplicate work gate passed" in item["found"]
+        "duplicate_work" in item["expected"]
+        or "duplicate_work" in item["found"]
         for item in payload["rejection_items"]
     )
 
 
-def test_route_gate_implement_requires_duplicate_evidence() -> None:
+def test_route_gate_missing_duplicate_evidence_is_advisory() -> None:
     result, payload = run_route_gate(
         "--route",
         "implement",
@@ -442,11 +442,11 @@ def test_route_gate_implement_requires_duplicate_evidence() -> None:
     )
 
     assert result.returncode == 0
-    assert payload["decision"] == "needs_human"
-    assert "duplicate_work:duplicate_evidence" in payload["missing"]
+    assert payload["decision"] == "allowed"
+    assert any("duplicate work evidence is missing" in item for item in payload["warnings"])
 
 
-def test_route_gate_blocks_duplicate_open_pr(tmp_path: Path) -> None:
+def test_route_gate_warns_for_duplicate_open_pr(tmp_path: Path) -> None:
     duplicate_evidence = write_duplicate_evidence(
         tmp_path,
         issue=142,
@@ -470,12 +470,12 @@ def test_route_gate_blocks_duplicate_open_pr(tmp_path: Path) -> None:
         str(duplicate_evidence),
     )
 
-    assert result.returncode == 1
-    assert payload["decision"] == "blocked"
-    assert any("#123" in reason for reason in payload["reasons"])
+    assert result.returncode == 0
+    assert payload["decision"] == "allowed"
+    assert any("#123" in warning for warning in payload["warnings"])
 
 
-def test_route_gate_duplicate_branch_needs_human(tmp_path: Path) -> None:
+def test_route_gate_duplicate_branch_is_advisory(tmp_path: Path) -> None:
     duplicate_evidence = write_duplicate_evidence(
         tmp_path,
         issue=142,
@@ -494,8 +494,8 @@ def test_route_gate_duplicate_branch_needs_human(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert payload["decision"] == "needs_human"
-    assert "duplicate_work:branch_ownership_decision" in payload["missing"]
+    assert payload["decision"] == "allowed"
+    assert any("remote branches may already own" in item for item in payload["warnings"])
 
 
 def test_route_gate_blocks_unknown_current_state() -> None:

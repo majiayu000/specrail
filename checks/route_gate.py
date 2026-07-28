@@ -40,10 +40,8 @@ from rejection_items import (
     make_item,
 )
 from sensitive_enforcement import (
-    classification_from_approved_tech,
-    evaluate_sensitive_evidence,
+    classification_from_tech_spec,
     sensitive_registry,
-    trusted_default_base,
     validate_sensitive_registry,
 )
 
@@ -453,48 +451,35 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                     "section",
                 )
             )
-        trusted_classification: dict[str, Any] | None = None
-        sensitive_input = dict(evidence)
-        sensitive_input.pop("sensitive_classification", None)
         registry = sensitive_registry(config)
         if registry["paths"] or registry["specs"]:
             try:
-                _trusted_base_ref, trusted_base_sha = trusted_default_base(
-                    repo,
-                    default_base_ref=evidence.get("default_base_ref"),
-                    default_base_sha=evidence.get("default_base_sha"),
-                )
-                trusted_classification = classification_from_approved_tech(
+                sensitive_classification = classification_from_tech_spec(
                     config,
                     repo,
                     issue=args.issue,
-                    base_sha=trusted_base_sha,
                 )
-                sensitive_input["sensitive_classification"] = {
-                    key: trusted_classification[key]
-                    for key in [
-                        "source", "changed_paths", "spec_refs", "matched_paths",
-                        "matched_specs", "registry_configured",
-                        "enforcement_sensitive",
-                    ]
-                }
+                satisfied.append("sensitive classification derived from current tech spec")
+                if (
+                    sensitive_classification["enforcement_sensitive"]
+                    and effective_profile != "heavy"
+                ):
+                    sensitive_errors.append(
+                        "sensitive planned changes must use the heavy profile"
+                    )
             except (SpecRailError, TypeError) as exc:
                 sensitive_errors.append(str(exc))
-        sensitive_classification, sensitive_satisfied, evaluated_sensitive_errors = (
-            evaluate_sensitive_evidence(
-                config,
-                repo,
-                sensitive_input,
-                expected_source="tech_spec",
-                issue=args.issue,
-                expected_base_ref=evidence.get("base_ref"),
-                expected_base_head=evidence.get("base_sha"),
-            )
-        )
-        sensitive_errors.extend(evaluated_sensitive_errors)
-        if trusted_classification is not None:
-            sensitive_classification = trusted_classification
-        satisfied.extend(sensitive_satisfied)
+        else:
+            sensitive_classification = {
+                "source": "tech_spec",
+                "changed_paths": [],
+                "spec_refs": [],
+                "matched_paths": [],
+                "matched_specs": [],
+                "registry_configured": False,
+                "enforcement_sensitive": False,
+            }
+            satisfied.append("sensitive registry is not configured")
         if sensitive_errors:
             reasons.extend(sensitive_errors)
             missing.append("sensitive_enforcement")
@@ -503,39 +488,13 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                 item_from_reason(error, "contract_violation")
                 for error in sensitive_errors
             )
-        if args.issue is None:
-            duplicate_work_result = {
-                "decision": "needs_human",
-                "issue": None,
-                "reasons": [
-                    "duplicate work evidence cannot be evaluated until a linked issue is provided"
-                ],
-                "satisfied": [],
-                "missing": ["duplicate_evidence"],
-                "blocked_actions": ["implement"],
-                "verification_commands": [
-                    "python3 checks/github_duplicate_evidence.py "
-                    "--github-repo OWNER/REPO --issue <issue> --json"
-                ],
-            }
-        else:
-            duplicate_work_result = evaluate_duplicate_work_gate_path(
-                repo,
-                args.issue,
-                Path(args.duplicate_evidence) if args.duplicate_evidence else None,
-            )
+        duplicate_work_result = evaluate_duplicate_work_gate_path(
+            repo,
+            args.issue,
+            Path(args.duplicate_evidence) if args.duplicate_evidence else None,
+        )
         for item in duplicate_work_result.get("satisfied", []):
             satisfied.append(f"duplicate_work: {item}")
-        for item in duplicate_work_result.get("missing", []):
-            missing.append(f"duplicate_work:{item}")
-            items.append(item_from_missing(f"duplicate_work:{item}"))
-        duplicate_work_allowed = duplicate_work_result.get("decision") == "allowed"
-        for reason in duplicate_work_result.get("reasons", []):
-            reasons.append(f"duplicate_work: {reason}")
-            if not duplicate_work_allowed:
-                items.append(
-                    item_from_reason(f"duplicate_work: {reason}", "contract_violation")
-                )
 
     for action, action_body in policies.items():
         allowed_states = [str(state) for state in action_body.get("allowed_from", [])]
@@ -560,8 +519,6 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         decision = "allowed"
         reasons.append(f"route {route} passed local SpecRail gates")
 
-    if duplicate_work_result is not None:
-        decision = stricter_decision(decision, str(duplicate_work_result["decision"]))
     if sensitive_errors:
         decision = "blocked"
     if legacy_spec:
@@ -602,6 +559,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         "allowed_actions": sorted(set(allowed_actions)),
         "blocked_actions": sorted(set(blocked_actions)),
         "duplicate_work_gate": duplicate_work_result,
+        "warnings": (
+            [
+                f"duplicate_work: {warning}"
+                for warning in duplicate_work_result.get("warnings", [])
+            ]
+            if duplicate_work_result is not None
+            else []
+        ),
         "sensitive_classification": sensitive_classification,
         "verification_commands": verification_commands,
     }

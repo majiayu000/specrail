@@ -65,20 +65,20 @@ def test_validation_requires_specrail_owned_assets(tmp_path: Path) -> None:
     ]
 
 
-def test_schema_validation_requires_extracted_reference_assets(tmp_path: Path) -> None:
+def test_schema_validation_requires_review_reference_asset(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     copy_pack_assets(repo)
-    fragment = repo / "schemas" / "runtime_thread_dispatch_gate.schema.json"
+    fragment = repo / "schemas" / "review_result.schema.json"
     fragment.unlink()
 
     errors = validate_json_schemas(repo)
 
     assert (
-        "schemas: missing SpecRail schema runtime_thread_dispatch_gate.schema.json"
+        "schemas: missing SpecRail schema review_result.schema.json"
         in errors
     )
     assert any(
-        "runtime_checkpoint.schema.json: unusable schema references" in error
+        "pr_review_gate.schema.json: unusable schema references" in error
         for error in errors
     )
 
@@ -86,7 +86,7 @@ def test_schema_validation_requires_extracted_reference_assets(tmp_path: Path) -
 def test_schema_validation_enforces_hard_line_limit(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     copy_pack_assets(repo)
-    schema = repo / "schemas" / "flow_manifest.schema.json"
+    schema = repo / "schemas" / "evaluation_result.schema.json"
     schema.write_text(
         schema.read_text(encoding="utf-8") + "\n" * MAX_SCHEMA_LINES,
         encoding="utf-8",
@@ -141,9 +141,9 @@ def test_schema_validation_reports_owned_schema_shape_errors(tmp_path: Path) -> 
     repo = tmp_path / "repo"
     copy_pack_assets(repo)
     schema_root = repo / "schemas"
-    (schema_root / "adoption_matrix.schema.json").write_text("{", encoding="utf-8")
+    (schema_root / "duplicate_work_evidence.schema.json").write_text("{", encoding="utf-8")
     (schema_root / "evaluation_result.schema.json").write_text("[]", encoding="utf-8")
-    (schema_root / "flow_manifest.schema.json").write_text(
+    (schema_root / "pr_review_gate.schema.json").write_text(
         '{"title":"Flow","type":"array"}',
         encoding="utf-8",
     )
@@ -155,10 +155,10 @@ def test_schema_validation_reports_owned_schema_shape_errors(tmp_path: Path) -> 
 
     errors = validate_json_schemas(repo)
 
-    assert any("adoption_matrix.schema.json: invalid JSON" in error for error in errors)
+    assert any("duplicate_work_evidence.schema.json: invalid JSON" in error for error in errors)
     assert "schemas/evaluation_result.schema.json: top-level JSON must be an object" in errors
-    assert "schemas/flow_manifest.schema.json: missing $schema" in errors
-    assert "schemas/flow_manifest.schema.json: top-level type must be object" in errors
+    assert "schemas/pr_review_gate.schema.json: missing $schema" in errors
+    assert "schemas/pr_review_gate.schema.json: top-level type must be object" in errors
     assert "schemas/issue_triage.schema.json: missing title" in errors
 
 
@@ -168,7 +168,7 @@ def test_schema_validation_reports_asset_read_errors(
 ) -> None:
     repo = tmp_path / "repo"
     copy_pack_assets(repo)
-    unreadable_path = repo / "schemas" / "flow_manifest.schema.json"
+    unreadable_path = repo / "schemas" / "evaluation_result.schema.json"
     original_read_text = Path.read_text
 
     def read_text(path: Path, *args, **kwargs) -> str:
@@ -179,5 +179,5 @@ def test_schema_validation_reports_asset_read_errors(
     monkeypatch.setattr(Path, "read_text", read_text)
 
     assert validate_json_schemas(repo) == [
-        "schemas/flow_manifest.schema.json: cannot read SpecRail asset: denied"
+        "schemas/evaluation_result.schema.json: cannot read SpecRail asset: denied"
     ]

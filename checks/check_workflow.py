@@ -43,22 +43,19 @@ REQUIRED_FILES = [
     "checks/duplicate_work_gate.py",
     "checks/github_evidence_common.py",
     "checks/github_duplicate_evidence.py",
-    "checks/evidence_content_binding.py",
-    "checks/github_approved_spec_evidence.py",
     "checks/github_issue_reference.py",
     "checks/github_issue_evidence.py",
     "checks/github_pr_evidence.py",
-    "checks/github_pr_snapshot.py",
-    "checks/github_review_evidence.py",
     "checks/pack_asset_validation.py",
     "checks/closure_audit.py",
     "checks/pr_gate.py",
-    "checks/pr_review_contract.py",
     "checks/review_json_gate.py",
-    "checks/review_content_binding.py",
-    "checks/review_result_semantics.py",
-    "checks/review_round_semantics.py",
-    "checks/runtime_review_evidence.py",
+    "checks/route_gate.py",
+    "checks/rejection_items.py",
+    "checks/check_workflow.py",
+    "checks/checks_availability.py",
+    "checks/skill_size_gate.py",
+    "checks/specrail_lib.py",
     "schemas/duplicate_work_evidence.schema.json",
     "tools/install_codex_skills.py",
     "skills-lock.json",
@@ -74,16 +71,12 @@ REQUIRED_FILES = [
     "templates/zh-CN/tech_spec.md",
     "templates/zh-CN/tasks.md",
     "templates/zh-CN/pull_request.md",
-    "templates/zh-CN/tranche_checkpoint.md",
     "review/agent_first_review.md",
     "review/human_final_review.md",
     "policies/security_disclosure.md",
     "policies/maintainer_escalation.md",
-    "checks/runtime_ledger_gate.py",
-    "checks/runtime_gate_rules.py",
     "checks/schema_validation.py",
     "checks/sensitive_enforcement.py",
-    "templates/tranche_checkpoint.md",
 ]
 REQUIRED_FILE_GLOBS = [
     "examples/fixtures/*",
@@ -153,6 +146,12 @@ def validate_required_files(repo: Path) -> list[str]:
         path = repo / rel
         if not path.is_file():
             errors.append(f"missing required file: {rel}")
+    checker_count = len(list((repo / "checks").glob("*.py")))
+    if checker_count > 18:
+        errors.append(f"checks: {checker_count} Python files exceeds 18-file hard limit")
+    schema_count = len(list((repo / "schemas").glob("*.json")))
+    if schema_count > 8:
+        errors.append(f"schemas: {schema_count} JSON files exceeds 8-file hard limit")
     return errors
 
 
