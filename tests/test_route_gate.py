@@ -305,6 +305,18 @@ def test_implement_preserves_configured_required_evidence(tmp_path: Path) -> Non
             "Done when: TBD | Verify: `true`\n"
         ),
         (
+            '# Tasks\n\n- [ ] `SP999-T1` Owner: test | '
+            'Done when: "TBD" | Verify: `true`\n'
+        ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: 'TODO' | Verify: `true`\n"
+        ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: “TBD” | Verify: `true`\n"
+        ),
+        (
             "# Tasks\n\n- [ ] `SP999-T1` Owner: | "
             "Done when: complete | Verify: `true`\n"
         ),
@@ -345,7 +357,8 @@ def test_standard_implement_accepts_valid_task_plan(tmp_path: Path) -> None:
     packet.mkdir(parents=True)
     (packet / "tasks.md").write_text(
         "# Tasks\n\n"
-        "- [ ] `SP999-T1` Owner: test | Done when: complete | Verify: `true`\n",
+        "- [ ] `SP999-T1` Owner: test | "
+        "Done when: “complete task implementation” | Verify: `true`\n",
         encoding="utf-8",
     )
 

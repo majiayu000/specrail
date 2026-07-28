@@ -21,6 +21,7 @@ from rejection_items import (  # noqa: E402
     apply_prior_rejection,
     finalize_items,
     item_from_reason,
+    is_substantive_text,
     load_prior_rejection,
     make_item,
     repeat_rejection,
@@ -137,6 +138,26 @@ def test_placeholder_expected_found_rejected() -> None:
             make_item("config_error", "subject", placeholder, "found")
         with pytest.raises(RejectionItemError):
             make_item("config_error", "subject", "expected", placeholder)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['"TBD"', "'TODO'", "“TBD”", "‘TODO’", '`"TBD"`', "“`TODO`”"],
+)
+def test_substantive_text_rejects_quoted_placeholder(value: str) -> None:
+    assert is_substantive_text(value) is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '"Reject TBD tokens in the parser"',
+        "‘Implement the TODO parser’",
+        '`“Run pytest -k placeholder”`',
+    ],
+)
+def test_substantive_text_accepts_quoted_sentence(value: str) -> None:
+    assert is_substantive_text(value) is True
 
 
 # --- B-004: dedup and conflict resolution ----------------------------------

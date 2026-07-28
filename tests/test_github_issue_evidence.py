@@ -265,7 +265,17 @@ def test_issue_done_when_checklist_becomes_bound_testable_plan() -> None:
 
 @pytest.mark.parametrize(
     "item",
-    ["TBD", "TODO:", "to be determined", "..."],
+    [
+        "TBD",
+        "TODO:",
+        "to be determined",
+        "...",
+        '"TBD"',
+        "'TODO'",
+        "“TBD”",
+        "‘TODO’",
+        '`"TBD"`',
+    ],
 )
 def test_issue_done_when_placeholder_is_not_a_testable_plan(item: str) -> None:
     body = f"## Done when\n\n- [ ] {item}\n"
@@ -275,12 +285,12 @@ def test_issue_done_when_placeholder_is_not_a_testable_plan(item: str) -> None:
 
 
 def test_issue_done_when_placeholder_word_inside_substantive_item_is_allowed() -> None:
-    body = "## Done when\n\n- [ ] Reject TBD tokens in the task parser\n"
+    body = '## Done when\n\n- [ ] “Reject TBD tokens in the task parser”\n'
 
     plan = extract_testable_plan_from_body(body)
 
     assert plan is not None
-    assert plan["items"] == ["Reject TBD tokens in the task parser"]
+    assert plan["items"] == ["“Reject TBD tokens in the task parser”"]
 
 
 def test_configured_artifacts_uses_workflow_templates(tmp_path: Path) -> None:
