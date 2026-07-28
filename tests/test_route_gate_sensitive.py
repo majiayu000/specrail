@@ -43,17 +43,23 @@ def test_route_gate_derives_sensitive_classification_from_current_tech_spec(
         str(evidence),
         "--duplicate-evidence",
         str(write_duplicate_evidence(tmp_path)),
+        "--mode",
+        "required",
         repo=repo,
     )
 
-    assert result.returncode == 0, result.stderr
-    assert payload["decision"] == "allowed", payload["reasons"]
+    assert result.returncode == 1, result.stderr
+    assert payload["decision"] == "needs_human", payload["reasons"]
     assert payload["sensitive_classification"]["matched_paths"] == [
         "checks/route_gate.py"
     ]
     assert "spec approval established by trusted readiness label" in payload["satisfied"]
     assert "security_decision" in payload["human_gates"]
-    assert "security evidence bound to explicit approved spec revision" in payload["satisfied"]
+    assert "security_evidence" in payload["missing"]
+    assert (
+        "candidate spec revision content matches the current spec packet"
+        in payload["satisfied"]
+    )
 
 
 def test_heavy_route_fails_closed_without_approved_spec_revision(

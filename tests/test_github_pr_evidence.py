@@ -16,6 +16,7 @@ from github_pr_evidence import (
     collect_pr_view,
     combine_review_findings,
 )
+from review_json_gate import evaluate_review_gate
 from specrail_lib import PackConfig
 
 
@@ -249,6 +250,70 @@ def test_local_review_cannot_self_report_hosted_or_outdated_provenance() -> None
         }
     ]
     assert combined["verdict"] == "blocking"
+
+
+def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
+    prior = review(head="b" * 40)
+    prior["base_head_sha"] = "c" * 40
+    prior["diff_sha256"] = "d" * 64
+    prior["verdict"] = "blocking"
+    prior["findings"] = [
+        {
+            "id": "hosted:thread-1",
+            "severity": "P1",
+            "status": "unresolved",
+            "summary": "Round-one blocker.",
+            "origin": "hosted",
+            "outdated": False,
+            "fix_paths": ["src/app.py"],
+        }
+    ]
+    current = review()
+    current.update(
+        {
+            "base_head_sha": "b" * 40,
+            "diff_sha256": "e" * 64,
+            "round": 2,
+            "mode": "diff_only",
+            "prior_review": prior,
+            "findings": [
+                {
+                    "id": "hosted:thread-1",
+                    "severity": "P1",
+                    "status": "unresolved",
+                    "summary": "Carried blocker.",
+                    "origin": "hosted",
+                    "outdated": False,
+                    "introduced_by_diff": False,
+                }
+            ],
+        }
+    )
+    hosted = [
+        {
+            "id": "hosted:thread-1",
+            "severity": "P1",
+            "status": "resolved",
+            "summary": "Round-one blocker.",
+            "origin": "hosted",
+            "outdated": True,
+        }
+    ]
+
+    combined = combine_review_findings(current, hosted)
+
+    assert [finding["id"] for finding in combined["findings"]] == [
+        "hosted:thread-1"
+    ]
+    assert combined["findings"][0]["status"] == "resolved"
+    assert combined["findings"][0]["outdated"] is True
+    prior_finding = combined["prior_review"]["findings"][0]
+    assert prior_finding["origin"] == "hosted"
+    assert prior_finding["outdated"] is False
+    assert prior_finding["status"] == "unresolved"
+    assert combined["verdict"] == "clean"
+    gate = evaluate_review_gate(combined, "", verify_diff=False)
+    assert gate["decision"] == "allowed", gate["reasons"]
 
 
 def test_spec_registry_uses_linked_issue_artifact_references(tmp_path: Path) -> None:

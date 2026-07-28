@@ -335,6 +335,7 @@ def validate_spec_packet(spec_dir: Path) -> list[str]:
     if resolved_spec_dir.name != spec_dir.name:
         errors.append(f"{spec_dir}: must preserve its GH<number> packet identity")
         return errors
+    resolved_product_path: Path | None = None
     for name in ["product.md", "tech.md"]:
         path = spec_dir / name
         if not path.is_file():
@@ -349,6 +350,8 @@ def validate_spec_packet(spec_dir: Path) -> list[str]:
         if resolved_path != resolved_spec_dir / name:
             errors.append(f"{path}: must preserve its declared artifact identity")
             continue
+        if name == "product.md":
+            resolved_product_path = resolved_path
         text = read_text(resolved_path)
         if not text.strip():
             errors.append(f"{path}: must not be empty")
@@ -394,7 +397,13 @@ def validate_spec_packet(spec_dir: Path) -> list[str]:
                     f"{task_path}: must preserve its declared artifact identity"
                 )
                 return errors
-            errors.extend(validate_task_plan(resolved_task_path, issue_number))
+            errors.extend(
+                validate_task_plan(
+                    resolved_task_path,
+                    issue_number,
+                    product_path=resolved_product_path,
+                )
+            )
     return errors
 
 
@@ -487,11 +496,42 @@ def select_spec_packet_dirs(
     return unique_spec_dirs
 
 
-def validate_task_plan(path: Path, issue_number: str | None) -> list[str]:
+def _behavior_ids(text: str) -> set[str]:
+    ids = set(re.findall(r"\bB-[0-9]{3}\b", text))
+    for start, end in re.findall(
+        r"\bB-([0-9]{3})\s*(?:\.\.|…|–|—)\s*B-([0-9]{3})\b",
+        text,
+    ):
+        first, last = int(start), int(end)
+        if first <= last:
+            ids.update(f"B-{number:03d}" for number in range(first, last + 1))
+    return ids
+
+
+def _product_behavior_ids(text: str) -> set[str]:
+    section = re.search(
+        r"(?ms)^## Behavior Invariants\s*$\n(.*?)(?=^## |\Z)",
+        text,
+    )
+    return _behavior_ids(section.group(1)) if section else set()
+
+
+def validate_task_plan(
+    path: Path,
+    issue_number: str | None,
+    *,
+    product_path: Path | None = None,
+) -> list[str]:
     errors: list[str] = []
     text = read_text(path)
     if not text.strip():
         return [f"{path}: must not be empty"]
+    product_ids = (
+        _product_behavior_ids(read_text(product_path))
+        if product_path is not None and product_path.is_file()
+        else set()
+    )
+    covered_ids: set[str] = set()
     prefix = f"SP{issue_number}-T" if issue_number else "SP"
     ids: list[str] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
@@ -505,6 +545,15 @@ def validate_task_plan(path: Path, issue_number: str | None) -> list[str]:
         ids.append(task_id)
         if issue_number and not task_id.startswith(prefix):
             errors.append(f"{path}:{line_number}: task ID {task_id} must start with {prefix}")
+        covers = re.search(
+            r"\bCovers:\s*(.*?)(?=\s*(?:[|.;。]\s*)?"
+            r"(?:Owner|Done when|Verify|Dependencies|Depends on):|$)",
+            line,
+        )
+        if product_ids and covers is None:
+            errors.append(f"{path}:{line_number}: task {task_id} missing Covers:")
+        elif covers is not None:
+            covered_ids.update(_behavior_ids(covers.group(1)))
         for token in ["Owner:", "Done when:", "Verify:"]:
             if token not in line:
                 errors.append(f"{path}:{line_number}: task {task_id} missing {token}")
@@ -513,6 +562,18 @@ def validate_task_plan(path: Path, issue_number: str | None) -> list[str]:
     duplicates = sorted({task_id for task_id in ids if ids.count(task_id) > 1})
     for duplicate in duplicates:
         errors.append(f"{path}: duplicate task ID {duplicate}")
+    missing_coverage = sorted(product_ids - covered_ids)
+    if missing_coverage:
+        errors.append(
+            f"{path}: product invariants not covered by any task: "
+            + ", ".join(missing_coverage)
+        )
+    unknown_coverage = sorted(covered_ids - product_ids)
+    if product_ids and unknown_coverage:
+        errors.append(
+            f"{path}: task coverage references undefined product invariants: "
+            + ", ".join(unknown_coverage)
+        )
     return errors
 
 

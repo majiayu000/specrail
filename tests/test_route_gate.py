@@ -80,6 +80,37 @@ def test_collector_evidence_reports_all_invocation_binding_errors(
     assert "testable_plan.body_sha256 must match issue evidence body_sha256" in reasons
 
 
+@pytest.mark.parametrize("field", ["labels", "outcomes"])
+def test_route_gate_reports_null_issue_evidence_arrays(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    issue_evidence = complete_issue_evidence()
+    issue_evidence[field] = None
+    evidence_path = tmp_path / "issue-evidence.json"
+    evidence_path.write_text(json.dumps(issue_evidence), encoding="utf-8")
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--github-repo",
+        "example/consumer",
+        "--profile",
+        "standard",
+        "--evidence",
+        str(evidence_path),
+        "--mode",
+        "required",
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert any(field in reason for reason in payload["reasons"])
+    assert "Traceback" not in result.stderr
+
+
 def test_route_gate_requires_trusted_state_for_readiness_gated_routes(
     tmp_path: Path,
 ) -> None:
@@ -423,8 +454,9 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         repo=repo,
     )
 
-    assert result.returncode == 0, payload
-    assert payload["decision"] == "allowed"
+    assert result.returncode == 1, payload
+    assert payload["decision"] == "needs_human"
+    assert "security_evidence" in payload["missing"]
     assert "product_spec: specs/GH999/product.md" in payload["satisfied"]
 
     dotted_result, dotted_payload = run_route_gate(
@@ -451,8 +483,9 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         repo=repo,
     )
 
-    assert dotted_result.returncode == 0, dotted_payload
-    assert dotted_payload["decision"] == "allowed"
+    assert dotted_result.returncode == 1, dotted_payload
+    assert dotted_payload["decision"] == "needs_human"
+    assert "security_evidence" in dotted_payload["missing"]
     assert "product_spec: specs/GH999/product.md" in dotted_payload["satisfied"]
 
     wrong_result, wrong_payload = run_route_gate(

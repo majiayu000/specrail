@@ -312,7 +312,22 @@ def test_gate_aggregates_all_legacy_fields() -> None:
 
     assert result["decision"] == "blocked"
     assert result["unsupported_legacy_evidence"] == sorted(LEGACY_EVIDENCE_FIELDS)
-    assert any("unsupported legacy evidence fields:" in item for item in result["reasons"])
+    assert len(result["reasons"]) == 1
+    assert result["reasons"][0].startswith("unsupported legacy evidence fields:")
+    assert "rebuild evidence from GitHub PR current state" in result["reasons"][0]
+    assert result["missing"] == []
+    assert len(result["rejection_items"]) == 1
+
+
+def test_gate_rejects_invalid_repository_even_when_review_matches() -> None:
+    payload, pack = evidence()
+    payload["repository"] = "not-a-repository"
+    payload["review"]["repository"] = "not-a-repository"
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert "GitHub repository must use OWNER/REPO format" in result["reasons"]
 
 
 def test_gate_blocks_stale_head_ci_and_review_together() -> None:

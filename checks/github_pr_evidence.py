@@ -298,33 +298,73 @@ def combine_review_findings(
     review: dict[str, Any],
     hosted_findings: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    def normalize_local_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
+    hosted_by_id: dict[str, dict[str, Any]] = {}
+    for finding in hosted_findings:
+        finding_id = finding.get("id")
+        if not isinstance(finding_id, str) or not finding_id:
+            raise EvidenceError("hosted review finding id must be a non-empty string")
+        if finding_id in hosted_by_id:
+            raise EvidenceError("hosted review findings contain duplicate thread ids")
+        hosted_by_id[finding_id] = dict(finding)
+
+    def normalize_local_artifact(
+        artifact: dict[str, Any],
+        *,
+        trusted_history: bool = False,
+    ) -> dict[str, Any]:
         normalized = dict(artifact)
         local = artifact.get("findings")
         if not isinstance(local, list):
             raise EvidenceError("review.findings must be an array")
-        normalized["findings"] = [
-            (
-                {
-                    key: value
-                    for key, value in finding.items()
-                    if key not in {"origin", "outdated"}
-                }
-                if isinstance(finding, dict)
-                else finding
-            )
-            for finding in local
-        ]
+        normalized_findings: list[Any] = []
+        for finding in local:
+            if not isinstance(finding, dict):
+                normalized_findings.append(finding)
+                continue
+            sanitized = {
+                key: value
+                for key, value in finding.items()
+                if key not in {"origin", "outdated"}
+            }
+            canonical = hosted_by_id.get(str(sanitized.get("id")))
+            if trusted_history and canonical is not None:
+                sanitized.update(
+                    {
+                        "origin": "hosted",
+                        "outdated": False,
+                    }
+                )
+            normalized_findings.append(sanitized)
+        normalized["findings"] = normalized_findings
         prior = artifact.get("prior_review")
         if isinstance(prior, dict):
-            normalized["prior_review"] = normalize_local_artifact(prior)
+            normalized["prior_review"] = normalize_local_artifact(
+                prior,
+                trusted_history=True,
+            )
         return normalized
 
     combined = normalize_local_artifact(review)
     local_findings = combined.get("findings")
     if not isinstance(local_findings, list):
         raise EvidenceError("review.findings must be an array")
-    merged = [*local_findings, *hosted_findings]
+    merged: list[Any] = []
+    matched_hosted_ids: set[str] = set()
+    for finding in local_findings:
+        if not isinstance(finding, dict):
+            merged.append(finding)
+            continue
+        canonical = hosted_by_id.get(str(finding.get("id")))
+        if canonical is None:
+            merged.append(finding)
+            continue
+        merged.append({**finding, **canonical})
+        matched_hosted_ids.add(str(finding.get("id")))
+    merged.extend(
+        finding
+        for finding_id, finding in hosted_by_id.items()
+        if finding_id not in matched_hosted_ids
+    )
     if review.get("round") == 2:
         merged = [
             {
