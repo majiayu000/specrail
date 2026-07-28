@@ -79,6 +79,8 @@ def run_review_gate_cli(*args: str) -> subprocess.CompletedProcess[str]:
         review = json.loads(original_review.read_text(encoding="utf-8"))
         review["base_head_sha"] = base
         review["head_sha"] = head
+        if isinstance(review.get("review_attestation"), dict):
+            review["review_attestation"]["head_sha"] = head
         review["diff_sha256"] = hashlib.sha256(diff).hexdigest()
         review_path = repo / "review.json"
         diff_path = repo / "review.patch"

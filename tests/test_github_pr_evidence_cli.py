@@ -66,6 +66,24 @@ def test_main_prints_compact_collector_result(
         "invocation_id": "gate-1",
     }
     authorization_path.write_text(json.dumps(authorization), encoding="utf-8")
+    attestation_path = tmp_path / "review-attestation.json"
+    attestation = {
+        "lane_id": "review-lane-1",
+        "reviewer_actor": "reviewer-agent-1",
+        "head_sha": "a" * 40,
+        "invocation_id": "gate-1",
+    }
+    attestation_path.write_text(json.dumps(attestation), encoding="utf-8")
+    unavailable_path = tmp_path / "checks-unavailable.json"
+    unavailable = {
+        "reason": "hosted_ci_not_triggered_for_base",
+        "base_ref": "feature-base",
+        "default_base_ref": "main",
+        "workflow_trigger_evidence": "pull_request branches excludes feature-base",
+        "local_verification": ["python3 -m pytest -q"],
+        "verified": True,
+    }
+    unavailable_path.write_text(json.dumps(unavailable), encoding="utf-8")
     expected = {"contract_version": 3, "pr": 4}
     observed: dict[str, object] = {}
     monkeypatch.setattr(github_pr_evidence, "load_pack", lambda _repo: object())
@@ -90,6 +108,10 @@ def test_main_prints_compact_collector_result(
             str(review_path),
             "--authorization",
             str(authorization_path),
+            "--review-attestation",
+            str(attestation_path),
+            "--checks-unavailable",
+            str(unavailable_path),
             "--json",
         ],
     )
@@ -97,4 +119,6 @@ def test_main_prints_compact_collector_result(
     assert github_pr_evidence.main() == 0
     assert json.loads(capsys.readouterr().out) == expected
     assert observed["authorization"] == authorization
+    assert observed["review_attestation"] == attestation
+    assert observed["checks_unavailable"] == unavailable
     assert observed["gate_invocation_id"] == "gate-1"

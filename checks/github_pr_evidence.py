@@ -41,6 +41,7 @@ PR_VIEW_FIELDS = [
     "headRefName",
     "headRepository",
     "headRepositoryOwner",
+    "baseRefName",
     "baseRefOid",
     "mergeStateStatus",
     "body",
@@ -354,6 +355,35 @@ def _linked_issue(
     return linked
 
 
+def _inject_review_attestation(
+    review: dict[str, Any],
+    attestation: dict[str, Any] | None,
+    *,
+    head_sha: str,
+    invocation_id: str,
+) -> dict[str, Any]:
+    if "review_attestation" in review:
+        raise EvidenceError(
+            "review_attestation must be injected separately by a trusted "
+            "host or coordinator"
+        )
+    independent = review.get("review_source") == "independent_lane"
+    if independent and attestation is None:
+        raise EvidenceError("independent_lane review requires host attestation")
+    if not independent and attestation is not None:
+        raise EvidenceError("self_review must not receive review attestation")
+    bound = dict(review)
+    if attestation is not None:
+        if attestation.get("head_sha") != head_sha:
+            raise EvidenceError("review attestation head_sha must match PR head")
+        if attestation.get("invocation_id") != invocation_id:
+            raise EvidenceError(
+                "review attestation invocation_id must match gate invocation"
+            )
+        bound["review_attestation"] = dict(attestation)
+    return bound
+
+
 def build_evidence(
     pr_payload: dict[str, Any],
     *,
@@ -366,6 +396,8 @@ def build_evidence(
     repo: Path | None = None,
     config: PackConfig | None = None,
     authorization: dict[str, Any] | None = None,
+    checks_unavailable: dict[str, Any] | None = None,
+    review_attestation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalize a single trusted PR snapshot into the compact contract."""
 
@@ -375,6 +407,12 @@ def build_evidence(
     if not isinstance(gate_invocation_id, str) or not gate_invocation_id.strip():
         raise EvidenceError("gate_invocation_id must be a non-empty string")
     head_sha = _require_string(pr_payload, "headRefOid")
+    review = _inject_review_attestation(
+        review,
+        review_attestation,
+        head_sha=head_sha,
+        invocation_id=gate_invocation_id.strip(),
+    )
     paths = _changed_files(pr_payload)
     linked_issue = _linked_issue(pr_payload, expected_issue, issue_payload)
     classification = None
@@ -408,6 +446,7 @@ def build_evidence(
         "state": _require_string(pr_payload, "state").upper(),
         "is_draft": _require_bool(pr_payload, "isDraft"),
         "base_sha": _require_string(pr_payload, "baseRefOid"),
+        "base_ref": _require_string(pr_payload, "baseRefName"),
         "head_sha": head_sha,
         "gate_query_head_sha": head_sha,
         "changed_files": paths,
@@ -424,6 +463,11 @@ def build_evidence(
         evidence["sensitive_classification"] = classification
     if authorization is not None:
         evidence["human_merge_authorization"] = authorization
+    if checks_unavailable is not None:
+        evidence["checks_unavailable"] = checks_unavailable
+        default_base_ref = checks_unavailable.get("default_base_ref")
+        if isinstance(default_base_ref, str):
+            evidence["default_base_ref"] = default_base_ref
     return evidence
 
 
@@ -447,6 +491,8 @@ def collect_evidence(
     gate_invocation_id: str,
     review: dict[str, Any],
     authorization: dict[str, Any] | None = None,
+    checks_unavailable: dict[str, Any] | None = None,
+    review_attestation: dict[str, Any] | None = None,
     expected_issue: int | None = None,
     repo: Path | None = None,
     config: PackConfig | None = None,
@@ -553,6 +599,8 @@ def collect_evidence(
         repo=repo,
         config=config,
         authorization=authorization,
+        checks_unavailable=checks_unavailable,
+        review_attestation=review_attestation,
     )
 
 
@@ -568,6 +616,14 @@ def main() -> int:
     parser.add_argument("--gate-invocation-id", required=True)
     parser.add_argument("--review", required=True, help="Compact review JSON")
     parser.add_argument("--authorization", help="Current-invocation authorization JSON")
+    parser.add_argument(
+        "--review-attestation",
+        help="Trusted current-invocation reviewer lane attestation JSON",
+    )
+    parser.add_argument(
+        "--checks-unavailable",
+        help="Trusted hosted-checks-unavailable declaration JSON",
+    )
     parser.add_argument("--json", action="store_true", help="Retained for CLI symmetry")
     args = parser.parse_args()
     repo = resolve_path(Path(args.repo), label="repository")
@@ -581,6 +637,24 @@ def main() -> int:
             if not auth_path.is_absolute():
                 auth_path = repo / auth_path
             authorization = _load_json(auth_path, "authorization")
+        checks_unavailable = None
+        if args.checks_unavailable:
+            unavailable_path = Path(args.checks_unavailable)
+            if not unavailable_path.is_absolute():
+                unavailable_path = repo / unavailable_path
+            checks_unavailable = _load_json(
+                unavailable_path,
+                "checks-unavailable declaration",
+            )
+        review_attestation = None
+        if args.review_attestation:
+            attestation_path = Path(args.review_attestation)
+            if not attestation_path.is_absolute():
+                attestation_path = repo / attestation_path
+            review_attestation = _load_json(
+                attestation_path,
+                "review attestation",
+            )
         evidence = collect_evidence(
             args.github_repo,
             args.pr,
@@ -588,6 +662,8 @@ def main() -> int:
             gate_invocation_id=args.gate_invocation_id,
             review=_load_json(review_path, "review"),
             authorization=authorization,
+            checks_unavailable=checks_unavailable,
+            review_attestation=review_attestation,
             expected_issue=args.issue,
             repo=repo,
             config=load_pack(repo),

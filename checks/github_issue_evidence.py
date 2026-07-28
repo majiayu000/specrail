@@ -27,10 +27,12 @@ from specrail_lib import (
     ISSUE_STATES,
     PackConfig,
     SpecRailError,
+    label_groups,
     load_pack,
     resolve_path,
     resolve_repo_path,
     spec_packet_artifact_paths,
+    state_map,
 )
 
 
@@ -52,6 +54,7 @@ OUTCOME_LABELS = {"duplicate", "abandoned", "security_private"}
 PLAN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 PLAN_ITEM_RE = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+(.+?)\s*$")
 PLAN_HEADINGS = ("done-when", "done when", "acceptance criteria", "完成标准", "验收标准")
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
 def parse_issue_number(raw: str) -> int:
@@ -103,23 +106,55 @@ def normalize_labels(value: Any) -> list[str]:
     return labels
 
 
-def infer_state_from_labels(labels: list[str]) -> str | None:
-    readiness_matches = sorted({label for label in labels if label in KNOWN_STATES})
-    if len(readiness_matches) == 1:
-        return readiness_matches[0]
-    if len(readiness_matches) > 1:
-        raise EvidenceError(f"conflicting readiness labels: {', '.join(readiness_matches)}")
+def _workflow_label_sets(
+    config: PackConfig | None,
+) -> tuple[set[str], set[str], set[str]]:
+    if config is None:
+        return KNOWN_STATES, OUTCOME_LABELS, {"done", "parked"}
+    groups = label_groups(config)
+    states = state_map(config)
+    readiness = set(groups.get("readiness", []))
+    lifecycle = set(groups.get("lifecycle", []))
+    terminal = {
+        name
+        for name, body in states.items()
+        if isinstance(body, dict) and body.get("terminal") is True
+    }
+    reserved = terminal | ({"parked"} if "parked" in states else set())
+    return readiness | lifecycle | reserved, set(groups.get("outcome", [])), reserved
+
+
+def infer_state_from_labels(
+    labels: list[str],
+    config: PackConfig | None = None,
+) -> str | None:
+    state_labels, outcome_labels, _reserved = _workflow_label_sets(config)
+    state_matches = sorted(set(labels) & state_labels)
+    outcome_matches = sorted(set(labels) & outcome_labels)
+    if state_matches and outcome_matches:
+        combined = sorted(set(state_matches) | set(outcome_matches))
+        raise EvidenceError(
+            f"conflicting terminal/readiness labels: {', '.join(combined)}"
+        )
+    if len(state_matches) == 1:
+        return state_matches[0]
+    if len(state_matches) > 1:
+        raise EvidenceError(f"conflicting state labels: {', '.join(state_matches)}")
     return None
 
 
-def infer_state_from_body(body: str) -> str | None:
+def infer_state_from_body(
+    body: str,
+    config: PackConfig | None = None,
+) -> str | None:
+    known_states = set(state_map(config)) if config is not None else KNOWN_STATES
     matches: list[str] = []
     for line in body.splitlines():
         match = STATE_HINT_PATTERN.fullmatch(line)
         if match is None:
             continue
         state = match.group(1)
-        if state in KNOWN_STATES:
+        if state in known_states:
             matches.append(state)
     unique_matches = sorted(set(matches))
     if len(unique_matches) == 1:
@@ -129,23 +164,65 @@ def infer_state_from_body(body: str) -> str | None:
     return None
 
 
-def infer_state_with_source(labels: list[str], body: str) -> tuple[str | None, str, bool]:
-    state = infer_state_from_labels(labels)
+def infer_state_with_source(
+    labels: list[str],
+    body: str,
+    config: PackConfig | None = None,
+) -> tuple[str | None, str, bool]:
+    state = infer_state_from_labels(labels, config)
     if state is not None:
         return state, "label", True
 
-    state = infer_state_from_body(body)
+    state = infer_state_from_body(body, config)
     if state is not None:
         return state, "body_hint", False
 
     return None, "none", False
 
 
+def _visible_issue_body(body: str) -> str:
+    visible_lines: list[str] = []
+    in_comment = False
+    fence: str | None = None
+    for raw_line in body.splitlines():
+        fence_match = FENCE_RE.match(raw_line)
+        if fence is not None:
+            if (
+                fence_match is not None
+                and fence_match.group(1)[0] == fence[0]
+                and len(fence_match.group(1)) >= len(fence)
+            ):
+                fence = None
+            continue
+        line = raw_line
+        while line:
+            if in_comment:
+                end = line.find("-->")
+                if end < 0:
+                    line = ""
+                    break
+                line, in_comment = line[end + 3:], False
+            start = line.find("<!--")
+            if start < 0:
+                break
+            end = line.find("-->", start + 4)
+            if end < 0:
+                line, in_comment = line[:start], True
+                break
+            line = line[:start] + line[end + 3:]
+        match = FENCE_RE.match(line)
+        if match is not None:
+            fence = match.group(1)
+            continue
+        visible_lines.append(line)
+    return "\n".join(visible_lines)
+
+
 def extract_testable_plan_from_body(body: str) -> dict[str, object] | None:
     section_level: int | None = None
     items: list[str] = []
     invalid_item = False
-    for line in body.splitlines():
+    for line in _visible_issue_body(body).splitlines():
         heading = PLAN_HEADING_RE.match(line)
         if heading is not None:
             level = len(heading.group(1))
@@ -189,6 +266,7 @@ def configured_artifacts(repo: Path, issue_number: int) -> dict[str, str]:
 def build_issue_evidence(
     issue_payload: dict[str, Any],
     artifacts: dict[str, str] | None = None,
+    config: PackConfig | None = None,
 ) -> dict[str, Any]:
     issue_number = _require_positive_int(issue_payload, "number")
     title = _require_string(issue_payload, "title")
@@ -196,8 +274,9 @@ def build_issue_evidence(
     url = _require_string(issue_payload, "url")
     labels = normalize_labels(issue_payload.get("labels"))
     body = _optional_body(issue_payload)
-    state, state_source, state_trusted = infer_state_with_source(labels, body)
-    outcomes = sorted(set(labels) & OUTCOME_LABELS)
+    state, state_source, state_trusted = infer_state_with_source(labels, body, config)
+    _state_labels, outcome_labels, _reserved = _workflow_label_sets(config)
+    outcomes = sorted(set(labels) & outcome_labels)
 
     evidence: dict[str, Any] = {
         "issue": issue_number,
@@ -239,6 +318,7 @@ def collect_issue_evidence(
     evidence = build_issue_evidence(
         issue_payload,
         artifacts,
+        config,
     )
     evidence["repository"] = github_repo
     tech_spec = resolve_repo_path(

@@ -36,6 +36,12 @@ def valid_review() -> dict[str, object]:
         "head_sha": "a" * 40,
         "diff_sha256": "c" * 64,
         "review_source": "independent_lane",
+        "review_attestation": {
+            "lane_id": "review-lane-1",
+            "reviewer_actor": "reviewer-agent-1",
+            "head_sha": "a" * 40,
+            "invocation_id": "gate-1",
+        },
         "round": 1,
         "mode": "full",
         "verdict": "clean",
@@ -64,6 +70,14 @@ def test_compact_review_schema_accepts_v3_and_rejects_legacy() -> None:
 
     with pytest.raises(SpecRailError):
         validate_instance(schema, legacy, "review")
+
+    unattested = valid_review()
+    unattested.pop("review_attestation")
+    with pytest.raises(SpecRailError):
+        validate_instance(schema, unattested, "review")
+    unattested["review_source"] = "self_review"
+    unattested["profile"] = "fastlane"
+    validate_instance(schema, unattested, "review")
 
 
 def test_compact_pr_schema_accepts_current_evidence() -> None:
@@ -108,6 +122,30 @@ def test_compact_pr_schema_accepts_current_evidence() -> None:
     schema = load_json_schema(ROOT / "schemas" / "pr_review_gate.schema.json")
 
     validate_instance(schema, payload, "pr")
+    unavailable = {
+        "reason": "hosted_ci_not_triggered_for_base",
+        "base_ref": "feature-base",
+        "default_base_ref": "main",
+        "workflow_trigger_evidence": "workflow only triggers for main",
+        "local_verification": ["python3 -m pytest -q"],
+        "verified": True,
+    }
+    payload["checks"] = []
+    payload["base_ref"] = "feature-base"
+    payload["default_base_ref"] = "main"
+    payload["checks_unavailable"] = unavailable
+    validate_instance(schema, payload, "pr")
+    payload["checks"] = [
+        {
+            "name": "tests",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "head_sha": "a" * 40,
+        }
+    ]
+    with pytest.raises(SpecRailError):
+        validate_instance(schema, payload, "pr")
+    payload.pop("checks_unavailable")
     payload["runtime_checkpoint"] = {}
     with pytest.raises(SpecRailError):
         validate_instance(schema, payload, "pr")

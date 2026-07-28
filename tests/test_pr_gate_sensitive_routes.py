@@ -177,7 +177,7 @@ def test_sensitive_gate_fails_closed_without_exact_checkout(tmp_path: Path) -> N
     result = evaluate_pr_gate(payload, tmp_path, detached_pack)
 
     assert result["decision"] == "blocked"
-    assert "sensitive PR gate requires an exact current-head checkout" in result["reasons"]
+    assert "PR gate requires a readable local checkout HEAD" in result["reasons"]
 
 
 def test_invalid_heavy_profile_cannot_bypass_round_or_authorization() -> None:

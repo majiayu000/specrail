@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from checks_availability import evaluate_checks_unavailable
 from github_evidence_common import EvidenceError
 from github_pr_evidence import parse_github_repo
 from rejection_items import (
@@ -41,12 +42,15 @@ PROFILES = {"fastlane", "standard", "heavy"}
 CLEAN_MERGE_STATES = {"CLEAN"}
 SUCCESS_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 EVIDENCE_KEYS = {
+    "base_ref",
     "base_sha",
     "changed_files",
     "changed_files_count",
     "changed_files_sha256",
     "checks",
+    "checks_unavailable",
     "contract_version",
+    "default_base_ref",
     "enforcement_sensitive",
     "gate_invocation_id",
     "gate_query_head_sha",
@@ -179,15 +183,21 @@ def _changed_files_digest(paths: list[str]) -> str:
 
 
 def _validate_checks(
-    checks: Any,
-    head_sha: Any,
+    evidence: dict[str, Any],
     required_check_names: set[str] | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     satisfied: list[str] = []
     missing: list[str] = []
     reasons: list[str] = []
-    if not isinstance(checks, list) or not checks:
+    checks = evidence.get("checks")
+    if not isinstance(checks, list):
         return satisfied, ["checks"], reasons
+    if not checks:
+        return evaluate_checks_unavailable(evidence)
+    if evidence.get("checks_unavailable") is not None:
+        reasons.append(
+            "checks_unavailable must not be present when checks are available"
+        )
     names: set[str] = set()
     for index, check in enumerate(checks, start=1):
         prefix = f"check #{index}"
@@ -204,7 +214,7 @@ def _validate_checks(
             reasons.append(f"duplicate CI check name: {name}")
         else:
             names.add(str(name))
-        if check.get("head_sha") != head_sha:
+        if check.get("head_sha") != evidence.get("head_sha"):
             reasons.append(f"{prefix} head_sha must match the gated head")
         if check.get("status") != "COMPLETED":
             reasons.append(f"{prefix} status must be COMPLETED")
@@ -265,9 +275,6 @@ def _validate_sensitive(
         reasons.append("enforcement_sensitive conflicts with repository sensitive registry")
     if computed:
         satisfied.append("sensitive paths classified as heavy")
-        checkout_head = _current_checkout_head(repo)
-        if checkout_head != evidence.get("head_sha"):
-            reasons.append("sensitive PR gate requires an exact current-head checkout")
     else:
         satisfied.append("changed files do not match the sensitive registry")
     return computed, classification, satisfied, reasons
@@ -492,6 +499,12 @@ def evaluate_pr_gate(
         and evidence.get("head_sha") != evidence.get("gate_query_head_sha")
     ):
         reasons.append("gate_query_head_sha must match the gated head")
+    if repo is not None:
+        checkout_head = _current_checkout_head(repo)
+        if checkout_head is None:
+            reasons.append("PR gate requires a readable local checkout HEAD")
+        elif checkout_head != evidence.get("head_sha"):
+            reasons.append("PR gate requires an exact current-head checkout")
 
     if str(evidence.get("state") or "").upper() != "OPEN":
         reasons.append(f"PR state must be OPEN; got {evidence.get('state')!r}")
@@ -526,8 +539,7 @@ def evaluate_pr_gate(
         except SpecRailError as exc:
             reasons.append(str(exc))
     ci_satisfied, ci_missing, ci_reasons = _validate_checks(
-        evidence.get("checks"),
-        evidence.get("head_sha"),
+        evidence,
         required_check_names,
     )
     satisfied.extend(ci_satisfied)
@@ -568,6 +580,7 @@ def evaluate_pr_gate(
             requires_independent_review=profile_policy.get(
                 "requires_independent_review"
             ),
+            gate_invocation_id=evidence.get("gate_invocation_id"),
         )
         if review.get("repository") != evidence.get("repository"):
             reasons.append("review.repository must match PR evidence")

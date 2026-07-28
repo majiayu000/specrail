@@ -31,23 +31,11 @@ VERDICTS = {"clean", "blocking", "non_blocking"}
 SEVERITIES = {"P0", "P1", "P2", "P3"}
 FINDING_STATUSES = {"unresolved", "resolved"}
 FINDING_ORIGINS = {"local", "hosted"}
-REVIEW_TOP_LEVEL_KEYS = {
-    "artifact_id",
-    "base_head_sha",
-    "body",
-    "contract_version",
-    "diff_sha256",
-    "findings",
-    "head_sha",
-    "mode",
-    "pr",
-    "prior_review",
-    "profile",
-    "repository",
-    "review_source",
-    "round",
-    "verdict",
-}
+REVIEW_TOP_LEVEL_KEYS = set(
+    "artifact_id base_head_sha body contract_version diff_sha256 findings "
+    "head_sha mode pr prior_review profile repository review_attestation "
+    "review_source round verdict".split()
+)
 FINDING_KEYS = {
     "fix_paths",
     "id",
@@ -60,32 +48,15 @@ FINDING_KEYS = {
     "status",
     "summary",
 }
-LEGACY_REVIEW_FIELDS = {
-    "comments",
-    "content_binding_evidence",
-    "content_binding_version",
-    "content_bindings",
-    "covered_categories",
-    "finding_classifications",
-    "gate_authorization",
-    "gate_status",
-    "human_final_review_required",
-    "human_full_review_request",
-    "prior_findings",
-    "producer_identity",
-    "review_completed_at",
-    "review_execution",
-    "review_mode",
-    "review_round",
-    "review_started_at",
-    "reviewer_lane",
-    "round_cap_escalation",
-    "round_policy_version",
-    "spec_alignment",
-    "status",
-    "tier_attestation",
-    "tier_dispute",
-}
+LEGACY_REVIEW_FIELDS = set(
+    "comments content_binding_evidence content_binding_version content_bindings "
+    "covered_categories finding_classifications gate_authorization gate_status "
+    "human_final_review_required human_full_review_request prior_findings "
+    "producer_identity review_completed_at review_execution review_mode "
+    "review_round review_started_at reviewer_lane round_cap_escalation "
+    "round_policy_version spec_alignment status tier_attestation tier_dispute".split()
+)
+ATTESTATION_FIELDS = {"lane_id", "reviewer_actor", "head_sha", "invocation_id"}
 FORBIDDEN_FINAL_AUTHORITY = {
     "approved for merge": re.compile(r"\bapproved\s+for\s+merge\b", re.IGNORECASE),
     "I approve this PR": re.compile(r"\bi\s+approve\s+this\s+pr\b", re.IGNORECASE),
@@ -382,6 +353,7 @@ def evaluate_review_gate(
     verify_diff: bool = True,
     max_review_rounds: int | None = None,
     requires_independent_review: bool | None = None,
+    gate_invocation_id: str | None = None,
 ) -> dict[str, Any]:
     """Validate a v3 review artifact and return all failures in one result."""
 
@@ -441,6 +413,33 @@ def evaluate_review_gate(
     )
     if independent_required and source != "independent_lane":
         reasons.append(f"{profile} profile requires an independent_lane review")
+    attestation = review.get("review_attestation")
+    if source == "independent_lane":
+        if not isinstance(attestation, dict):
+            missing.append("review_attestation")
+        else:
+            unknown = sorted(set(attestation) - ATTESTATION_FIELDS)
+            absent = sorted(ATTESTATION_FIELDS - set(attestation))
+            if unknown:
+                reasons.append(
+                    "review_attestation contains unsupported fields: "
+                    + ", ".join(unknown)
+                )
+            missing.extend(f"review_attestation.{field}" for field in absent)
+            for field in ("lane_id", "reviewer_actor", "invocation_id"):
+                if field in attestation and not _non_empty_string(attestation.get(field)):
+                    reasons.append(f"review_attestation.{field} must be non-empty")
+            if attestation.get("head_sha") != review.get("head_sha"):
+                reasons.append("review_attestation.head_sha must match review head_sha")
+            if (
+                gate_invocation_id is not None
+                and attestation.get("invocation_id") != gate_invocation_id
+            ):
+                reasons.append(
+                    "review_attestation.invocation_id must match gate invocation"
+                )
+    elif attestation is not None:
+        reasons.append("self_review must not include review_attestation")
 
     review_round = review.get("round")
     mode = review.get("mode")
@@ -482,6 +481,7 @@ def evaluate_review_gate(
                 "",
                 verify_diff=False,
                 requires_independent_review=independent_required,
+                gate_invocation_id=gate_invocation_id,
             )
             if not prior_result["blocking_findings"]:
                 reasons.append(

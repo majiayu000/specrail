@@ -121,7 +121,8 @@ Collect current evidence, then run the compact gate:
 ```sh
 python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <n> \
   --issue <issue> --profile <profile> --gate-invocation-id <id> \
-  --review <review.json> --json > pr-evidence.json
+  --review <review.json> --review-attestation <host-attestation.json> \
+  --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 ```
 
@@ -129,6 +130,10 @@ Current head, linked Issue, successful CI, clean merge state, compact review,
 profile, and sensitive classification must agree. Heavy additionally requires
 the current invocation's human authorization. Never run evidence collection and
 merge in one parallel batch.
+
+The trusted host/coordinator injects the head-and-invocation-bound review
+attestation for standard/heavy; implementation and review agents must not mint,
+edit, copy, persist, or reuse it. Fastlane self-review omits that flag.
 
 ## External Actions
 

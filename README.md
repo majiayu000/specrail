@@ -116,6 +116,7 @@ python3 checks/github_pr_evidence.py \
   --pr 123 \
   --gate-invocation-id <id> \
   --review <review.json> \
+  --review-attestation <host-attestation.json> \
   --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 ```
@@ -125,6 +126,8 @@ It verifies the complete REST-paginated changed-file set against GitHub's
 reported count and includes current hosted review-thread state for
 the canonical standard/heavy profiles. Fastlane never requires hosted/GraphQL
 review evidence.
+The standard/heavy example requires the trusted host/coordinator to inject the
+separate reviewer-lane attestation; fastlane self-review omits that flag.
 `checks/pr_gate.py` owns the offline merge-readiness decision.
 
 After a merge, audit that the allowed gate query, merge dispatch, and confirmed

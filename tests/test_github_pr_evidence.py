@@ -33,6 +33,7 @@ def pr_payload(head: str = "a" * 40) -> dict[str, object]:
             "nameWithOwner": "acme/widgets",
         },
         "headRepositoryOwner": {"login": "acme"},
+        "baseRefName": "main",
         "baseRefOid": "b" * 40,
         "mergeStateStatus": "CLEAN",
         "body": "Fixes #208",
@@ -58,6 +59,18 @@ def review(head: str = "a" * 40, profile: str = "standard") -> dict[str, object]
         "verdict": "clean",
         "body": "## Summary\nComplete review.\n\n## Verdict\nClean.",
         "findings": [],
+    }
+
+
+def review_attestation(
+    head: str = "a" * 40,
+    invocation_id: str = "gate-1",
+) -> dict[str, str]:
+    return {
+        "lane_id": "review-lane-1",
+        "reviewer_actor": "reviewer-agent-1",
+        "head_sha": head,
+        "invocation_id": invocation_id,
     }
 
 
@@ -87,6 +100,7 @@ def test_build_evidence_is_compact_and_deterministic(tmp_path: Path) -> None:
         profile="standard",
         gate_invocation_id="gate-1",
         review=review(),
+        review_attestation=review_attestation(),
         expected_issue=208,
         repo=tmp_path,
         config=config(tmp_path),
@@ -106,6 +120,87 @@ def test_build_evidence_is_compact_and_deterministic(tmp_path: Path) -> None:
     } & set(result)
 
 
+def test_independent_review_attestation_must_use_separate_host_input(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(EvidenceError, match="requires host attestation"):
+        build_evidence(
+            pr_payload(),
+            repository="acme/widgets",
+            profile="standard",
+            gate_invocation_id="gate-1",
+            review=review(),
+            expected_issue=208,
+            repo=tmp_path,
+            config=config(tmp_path),
+        )
+    embedded = review()
+    embedded["review_attestation"] = review_attestation()
+    with pytest.raises(EvidenceError, match="injected separately"):
+        build_evidence(
+            pr_payload(),
+            repository="acme/widgets",
+            profile="standard",
+            gate_invocation_id="gate-1",
+            review=embedded,
+            review_attestation=review_attestation(),
+            expected_issue=208,
+            repo=tmp_path,
+            config=config(tmp_path),
+        )
+
+
+def test_review_attestation_is_bound_to_current_head_and_invocation(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(EvidenceError, match="invocation_id"):
+        build_evidence(
+            pr_payload(),
+            repository="acme/widgets",
+            profile="standard",
+            gate_invocation_id="gate-1",
+            review=review(),
+            review_attestation=review_attestation(invocation_id="old-gate"),
+            expected_issue=208,
+            repo=tmp_path,
+            config=config(tmp_path),
+        )
+
+
+def test_build_evidence_preserves_trusted_checks_unavailable_declaration(
+    tmp_path: Path,
+) -> None:
+    payload = pr_payload()
+    payload["baseRefName"] = "feature-base"
+    payload["statusCheckRollup"] = []
+    declaration = {
+        "reason": "hosted_ci_not_triggered_for_base",
+        "base_ref": "feature-base",
+        "default_base_ref": "main",
+        "workflow_trigger_evidence": "pull_request branches only contains main",
+        "local_verification": ["python3 -m pytest -q"],
+        "verified": True,
+    }
+
+    result = build_evidence(
+        payload,
+        repository="acme/widgets",
+        profile="standard",
+        gate_invocation_id="gate-1",
+        review=review(),
+        review_attestation=review_attestation(),
+        checks_unavailable=declaration,
+        expected_issue=208,
+        repo=tmp_path,
+        config=config(tmp_path),
+    )
+
+    assert result["checks"] == []
+    assert result["base_ref"] == "feature-base"
+    assert result["default_base_ref"] == "main"
+    assert result["checks_unavailable"] == declaration
+
+
 def test_sensitive_paths_automatically_select_heavy(tmp_path: Path) -> None:
     result = build_evidence(
         pr_payload(),
@@ -113,6 +208,7 @@ def test_sensitive_paths_automatically_select_heavy(tmp_path: Path) -> None:
         profile="fastlane",
         gate_invocation_id="gate-1",
         review=review(profile="heavy"),
+        review_attestation=review_attestation(),
         expected_issue=208,
         repo=tmp_path,
         config=config(tmp_path, ["src/**"]),
@@ -137,6 +233,7 @@ def test_build_evidence_rejects_incomplete_file_snapshot(tmp_path: Path) -> None
             profile="standard",
             gate_invocation_id="gate-1",
             review=review(),
+            review_attestation=review_attestation(),
             repo=tmp_path,
             config=config(tmp_path),
         )
@@ -496,6 +593,10 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     assert all(finding["status"] == "unresolved" for finding in prior_findings)
     assert all(finding["outdated"] is False for finding in prior_findings)
     assert combined["verdict"] == "clean"
+    combined["review_attestation"] = review_attestation()
+    combined["prior_review"]["review_attestation"] = review_attestation(
+        head="b" * 40
+    )
     gate = evaluate_review_gate(combined, "", verify_diff=False)
     assert gate["decision"] == "allowed", gate["reasons"]
     unrelated_diff = (
@@ -696,6 +797,7 @@ def test_spec_registry_uses_linked_issue_artifact_references(tmp_path: Path) -> 
         profile="standard",
         gate_invocation_id="gate-1",
         review=review(profile="heavy"),
+        review_attestation=review_attestation(),
         expected_issue=208,
         repo=tmp_path,
         config=pack,
@@ -741,6 +843,7 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
         profile="fastlane",
         gate_invocation_id="gate-1",
         review=review(profile="heavy"),
+        review_attestation=review_attestation(),
         repo=tmp_path,
         config=config(tmp_path, ["src/**"]),
     )
@@ -783,6 +886,7 @@ def test_noncanonical_fastlane_independent_review_is_rejected(
             profile="fastlane",
             gate_invocation_id="gate-1",
             review=review(profile="fastlane"),
+            review_attestation=review_attestation(),
             repo=tmp_path,
             config=pack,
         )
@@ -807,6 +911,7 @@ def test_collect_evidence_rejects_head_drift(monkeypatch: pytest.MonkeyPatch) ->
             profile="standard",
             gate_invocation_id="gate-1",
             review=review(),
+            review_attestation=review_attestation(),
         )
 
 
@@ -840,6 +945,7 @@ def test_collect_evidence_rejects_head_push_activity_drift(
             profile="standard",
             gate_invocation_id="gate-1",
             review=current_review,
+            review_attestation=review_attestation(),
         )
 
 
@@ -879,6 +985,7 @@ def test_collect_evidence_uses_fork_head_repository_for_boundary(
         profile="standard",
         gate_invocation_id="gate-1",
         review=current_review,
+        review_attestation=review_attestation(),
     )
 
     assert boundary_repositories == ["forker/widgets-fork", "forker/widgets-fork"]
@@ -903,6 +1010,7 @@ def test_collect_evidence_rejects_missing_head_repository_identity(
             profile="standard",
             gate_invocation_id="gate-1",
             review=current_review,
+            review_attestation=review_attestation(),
         )
 
 
@@ -929,4 +1037,5 @@ def test_collect_evidence_rejects_file_set_drift(
             profile="standard",
             gate_invocation_id="gate-1",
             review=review(),
+            review_attestation=review_attestation(),
         )
