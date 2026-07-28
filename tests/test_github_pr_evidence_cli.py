@@ -58,12 +58,21 @@ def test_main_prints_compact_collector_result(
 ) -> None:
     review_path = tmp_path / "review.json"
     review_path.write_text("{}", encoding="utf-8")
+    authorization_path = tmp_path / "authorization.json"
+    authorization = {
+        "actor": "maintainer",
+        "authorized_at": "2026-07-28T12:00:00Z",
+        "head_sha": "a" * 40,
+        "invocation_id": "gate-1",
+    }
+    authorization_path.write_text(json.dumps(authorization), encoding="utf-8")
     expected = {"contract_version": 3, "pr": 4}
+    observed: dict[str, object] = {}
     monkeypatch.setattr(github_pr_evidence, "load_pack", lambda _repo: object())
     monkeypatch.setattr(
         github_pr_evidence,
         "collect_evidence",
-        lambda *_args, **_kwargs: expected,
+        lambda *_args, **kwargs: observed.update(kwargs) or expected,
     )
     monkeypatch.setattr(
         "sys.argv",
@@ -79,9 +88,13 @@ def test_main_prints_compact_collector_result(
             "gate-1",
             "--review",
             str(review_path),
+            "--authorization",
+            str(authorization_path),
             "--json",
         ],
     )
 
     assert github_pr_evidence.main() == 0
     assert json.loads(capsys.readouterr().out) == expected
+    assert observed["authorization"] == authorization
+    assert observed["gate_invocation_id"] == "gate-1"

@@ -126,7 +126,10 @@ def test_plan_tasks_validates_tasks_before_implementation_preflight() -> None:
         encoding="utf-8"
     )
 
-    write_index = text.index("Write `specs/GH<issue-number>/tasks.md`")
+    assert "specs/GH<issue-number>" not in text
+    assert "`workflow.yaml` `artifacts.*` templates" in text
+    assert "--spec-dir=<configured-spec-packet-dir>" in text
+    write_index = text.index("Write the resolved `artifacts.task_plan` path")
     validate_index = text.index("python3 checks/check_workflow.py")
     implement_index = text.index(
         "python3 checks/route_gate.py --repo . --route implement"

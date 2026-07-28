@@ -35,7 +35,7 @@
     {
       "name": "specrail-plan-tasks",
       "path": "skills/specrail-plan-tasks/SKILL.md",
-      "computedHash": "sha256:6a6141bdd272bd96dba86cb05aa318cb1a69ab8b17c4fb78eedb3743cc897bf8"
+      "computedHash": "sha256:d9077229eacc1695c7ecdf8337a1221812f832544aade0de1ff56c8e4103c0df"
     },
     {
       "name": "specrail-pr-gate",

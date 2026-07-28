@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import re
@@ -90,6 +91,15 @@ LEGACY_EVIDENCE_FIELDS = {
     "tier_dispute",
 }
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+NON_HUMAN_ACTORS = {
+    "agent",
+    "automation",
+    "codex",
+    "dependabot",
+    "github-actions",
+    "renovate",
+    "self",
+}
 DEFAULT_PROFILE_POLICIES = {
     "fastlane": {
         "max_review_rounds": 1,
@@ -290,6 +300,34 @@ def _validate_authorization(
     for field in ("actor", "authorized_at", "invocation_id"):
         if field in authorization and not _non_empty_string(authorization.get(field)):
             reasons.append(f"human_merge_authorization.{field} must be non-empty")
+    actor = authorization.get("actor")
+    if _non_empty_string(actor):
+        normalized_actor = str(actor).strip().casefold()
+        if (
+            normalized_actor in NON_HUMAN_ACTORS
+            or normalized_actor.endswith("[bot]")
+            or re.search(r"(?:^|[-_])(agent|automation|bot)$", normalized_actor)
+        ):
+            reasons.append("human_merge_authorization.actor must identify a human")
+    authorized_at = authorization.get("authorized_at")
+    if _non_empty_string(authorized_at):
+        authorized_at_text = str(authorized_at)
+        try:
+            parsed_at = datetime.fromisoformat(
+                authorized_at_text.replace("Z", "+00:00")
+            )
+        except ValueError:
+            parsed_at = None
+        if (
+            authorized_at_text != authorized_at_text.strip()
+            or parsed_at is None
+            or parsed_at.tzinfo is None
+            or parsed_at.utcoffset() is None
+        ):
+            reasons.append(
+                "human_merge_authorization.authorized_at must be a valid "
+                "timezone-aware timestamp"
+            )
     if authorization.get("head_sha") != evidence.get("head_sha"):
         reasons.append("human_merge_authorization.head_sha must match the gated head")
     if authorization.get("invocation_id") != evidence.get("gate_invocation_id"):
@@ -297,10 +335,9 @@ def _validate_authorization(
             "human_merge_authorization.invocation_id must match the current gate invocation"
         )
     if required and not reasons and not missing:
-        # A caller-authored offline JSON document cannot authenticate that its
-        # actor is human. Keep the final merge authorization outside this
-        # advisory evaluator and fail closed without inventing actor heuristics.
-        missing.append("human_merge_authorization")
+        # This current-conversation input is invocation-bound evidence, never
+        # persisted or reusable final merge authority; this gate stays advisory.
+        satisfied.append("current-invocation human merge authorization validated")
     return satisfied, missing, reasons
 
 
@@ -557,9 +594,12 @@ def evaluate_pr_gate(
     elif "review" in evidence:
         reasons.append("review must be an object")
 
+    authorization_required = (
+        profile_policy.get("merge_authorization") == "explicit_human"
+    )
     auth_satisfied, auth_missing, auth_reasons = _validate_authorization(
         evidence,
-        required=profile_policy.get("merge_authorization") == "explicit_human",
+        required=authorization_required,
     )
     satisfied.extend(auth_satisfied)
     missing.extend(auth_missing)
@@ -568,11 +608,17 @@ def evaluate_pr_gate(
     deterministic_missing = [
         item
         for item in missing
-        if item not in {"human_merge_authorization", "human_review"}
+        if not item.startswith("human_merge_authorization")
+        and item != "human_review"
     ]
-    if reasons or deterministic_missing:
+    blocking_reasons = [
+        reason
+        for reason in reasons
+        if not authorization_required or reason not in auth_reasons
+    ]
+    if blocking_reasons or deterministic_missing:
         decision = "blocked"
-    elif missing:
+    elif missing or (authorization_required and auth_reasons):
         decision = "needs_human"
     else:
         decision = "allowed"

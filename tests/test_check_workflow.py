@@ -42,6 +42,46 @@ def test_unadopted_repository_is_explicitly_skipped(tmp_path: Path) -> None:
     assert result.stdout == "SpecRail check skipped: repository is not adopted\n"
 
 
+@pytest.mark.parametrize(
+    ("relative_path", "content"),
+    [
+        ("states.yaml", "states: {}\n"),
+        ("labels.yaml", "labels: []\n"),
+        ("skills-lock.json", "{}\n"),
+        ("checks/route_gate.py", "# SpecRail route\n"),
+        ("skills/specrail-workflow/SKILL.md", "# SpecRail\n"),
+        ("skills/implx/SKILL.md", "# implx\n"),
+        ("AGENTS.md", "Use SpecRail for repository workflow.\n"),
+    ],
+)
+def test_missing_workflow_fails_when_adoption_sentinel_exists(
+    tmp_path: Path,
+    relative_path: str,
+    content: str,
+) -> None:
+    path = tmp_path / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+    result = run_check(tmp_path)
+
+    assert result.returncode == 1
+    assert "missing workflow.yaml in adopted repository" in result.stdout
+    assert relative_path.split(":", 1)[0] in result.stdout
+
+
+def test_unrelated_agents_file_does_not_imply_adoption(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text(
+        "Use the repository's native workflow.\n",
+        encoding="utf-8",
+    )
+
+    result = run_check(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout == "SpecRail check skipped: repository is not adopted\n"
+
+
 def test_adopted_repository_with_missing_assets_fails_closed(tmp_path: Path) -> None:
     shutil.copy(ROOT / "workflow.yaml", tmp_path / "workflow.yaml")
 
