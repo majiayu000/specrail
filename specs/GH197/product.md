@@ -30,6 +30,8 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
   exact 人工决定。
 - 授权与 PR identity 必须来自调用方不可伪造的 fresh provider；本地 JSON、CLI
   字符串或自报 role map 只能作为待校验输入，不能成为授权信任根。
+- 迁移终审必须区分授权前 head 与提交迁移结果后的 head，并以受保护 adapter
+  认证的 terminal envelope 证明唯一允许的 tree delta。
 - 白名单只允许把 round-1 的 `base_head_sha` 规范化为 null，并删除
   `diff_sha256`；finding、
   head、时间戳、verdict、content binding 等其余字段永久禁止改动。
@@ -149,8 +151,41 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
     同一 exact scope/bytes；不同 scope/bytes 必须产生不同 ID，强行复用必须 block。
 20. B-020 WHEN loader 遇到 registry 命中的 legacy artifact THEN 必须在通用
     round-1 origin 规则之前完成 trusted legacy classification：未迁移时只产生稳定
-    `legacy_round1_migration_required` rejection；creation-mode 的新 artifact 仍由
+    `legacy_round1_migration_required` rejection；`native_creation` 的新 artifact 仍由
     origin gate 拒绝。不得因验证顺序先产生泛化 schema/origin 错误而遮蔽迁移路径。
+21. B-021 WHEN 在授权前 PR head `authorized_pr_head_sha = H` 上 apply 并提交迁移结果
+    THEN terminal provider 必须另行绑定当前 `result_pr_head_sha = H'` 与
+    `result_pr_tree_oid`；`H != H'` 且 H 必须是 H' 的 ancestor。`H..H'` tree delta
+    必须恰好只包含 request 授权的 derived artifact、record 与 manifest entry 三项变化，
+    source 与其它路径零变化，各最终 bytes/digest 必须与确定性重放一致。仍要求
+    current head 等于 H、H' 不可达、delta 缺失/多余/rename 或 digest 不一致均 block；
+    H' 不得进入会影响自身 commit/tree 的 request、derived 或 record bytes。
+22. B-022 WHEN registry-covered migration 进入 offline terminal PR gate THEN
+    `terminal_provider_envelope` 必须携带受保护 adapter 使用 secret-manager key 对
+    canonical payload 计算的 HMAC-SHA256，gate 只能用 trusted target-base registry
+    选定的 key ID 与受保护运行环境中的 key 验证后信任。普通 caller JSON、自洽重算的
+    unkeyed digest、缺失/未知 key、错误 MAC、provider/secret 不可用均必须 block；
+    本地证据 shape 正确不得替代该认证。
+23. B-023 WHEN provider 收集 authorization comment THEN closed attestation 必须同时
+    绑定 `comment_created_at` 与 `comment_updated_at`，并要求两次 fresh read 中各自稳定
+    且 `comment_created_at == comment_updated_at == authorized_at`；任何收集前或收集中
+    编辑、时间缺失/漂移均必须 block。
+24. B-024 `migration_id` 必须由 closed canonical
+    `{authorization_id, repo_id, pr, artifact_id, source_sha256,
+    derived_artifact_path, record_path, manifest_path, target_policy_digest,
+    normalization_plan_sha256}` 确定性派生并由 verifier 重算；CLI、request caller 或
+    record 不得任意选择。相同授权/scope 的 initial apply、response-loss retry 与
+    rollback reapply 必须得到同一 ID/bytes，任一输入变化必须得到不同 ID。
+25. B-025 `artifact_origin` 的 closed IDs 必须且只能是
+    `native_creation | trusted_legacy_candidate | migrated_legacy`；loader、validator、
+    schema、tests 与 rejection 文本必须使用同一拼写。旧 `creation`、alias、缺失或其它值
+    不得静默归一化，必须 block。
+26. B-026 WHEN PR 被 trusted registry 覆盖 THEN registry 中该 PR 的 legacy entries
+    与 manifest 实际加载的完整 lineage 必须构成 exact one-to-one coverage：每个 entry
+    恰好对应一个 source 或其 verified migrated derivative，每个对应 lineage root 也恰好
+    命中一个 entry；匹配后 artifact_id、source head/path/commit/blob/digest 必须全等。
+    改 artifact_id 后手工 normalization、遗漏任一 registered lineage、重复加载/重复映射、
+    额外伪造 lineage 或只覆盖子集均必须 block，不得降级分类为 `native_creation`。
 
 ## 验收标准
 
@@ -189,8 +224,25 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
   均不自哈希或反向绑定下游 digest，rollback 后跨 scope/bytes 复用仍拒绝
   （B-018/B-019）。
 - [ ] registry 命中的未迁移 legacy artifact 在通用 origin gate 前分类，仅产生稳定
-  `legacy_round1_migration_required`；creation-mode 新 artifact 仍被源头 gate 拒绝
+  `legacy_round1_migration_required`；`native_creation` 新 artifact 仍被源头 gate 拒绝
   （B-020）。
+- [ ] authorization 在 H 取得、迁移提交后 terminal provider 在 H' 验证：H 是 H' 的
+  strict ancestor，H' tree 与 H..H' exact delta 只含 request 指定的 derived/record/
+  manifest 三项且摘要重放一致；继续要求 current head=H 或混入其它路径均拒绝
+  （B-021）。
+- [ ] schema-valid、内部摘要自洽但由 caller 伪造的 terminal envelope 被拒；仅受保护
+  adapter 的 HMAC-SHA256 在 trusted key ID/secret 下验证成功才可进入 offline gate，
+  provider、key 或 MAC 不可用时 fail closed（B-022）。
+- [ ] comment 的 `createdAt`/`updatedAt` 双读并持久化，只有二者均稳定且等于
+  `authorized_at` 时通过；收集前编辑与收集中编辑均拒绝（B-023）。
+- [ ] `migration_id` 由 authorization/source/path/policy canonical 输入重算；caller
+  指定 ID、同 scope 不同 ID/bytes、跨 scope 强行复用均拒绝（B-024）。
+- [ ] `artifact_origin` 只接受
+  `native_creation | trusted_legacy_candidate | migrated_legacy`，旧 `creation`
+  拼写无 alias 且被拒（B-025）。
+- [ ] registry-covered PR 的 entries 与 loaded manifest lineage 双向 exact-cover；
+  changed artifact_id、missing lineage、duplicate lineage/entry 与 subset coverage
+  fixtures 均拒绝（B-026）。
 - [ ] `python3 -m pytest -q`、`python3 checks/check_workflow.py --repo .
   --all-specs`、`python3 tools/spec_depth_audit.py --spec-dir specs/GH197 --gate`
   全绿。
@@ -199,20 +251,21 @@ artifact 与绑定 source digest 的迁移记录，任何超出白名单的差�
 
 | 类别 | 判定（covered: B-xxx / N/A + 原因） |
 | --- | --- |
-| 空/缺失输入 | covered: B-002 B-003 B-006 B-013 B-014 B-015（source/记录/provider/identity 缺失均 block） |
-| 错误与失败路径 | covered: B-004 B-005 B-008 B-018 B-020（重放不一致、声明不符、未迁移均给出定位错误） |
-| 授权/权限 | covered: B-011 B-013 B-014 B-019（fresh provider exact authorization；本地 JSON/role map 不自证） |
-| 并发/竞态 | covered: B-002 B-004（验证按只读摘要比对，检查中源文件变化即失配 block） |
-| 重试/幂等 | covered: B-012 B-019（重复迁移逐字节确定；ID 从 request + attestation 派生） |
-| 非法状态转换 | covered: B-001 B-010 B-020（creation 与 legacy migration 路由不可混用） |
-| 兼容/迁移 | covered: B-006 B-009 B-012 B-016 B-018 B-020（多轮 head 分离、缺失字段形态与迁移路由保持） |
-| 降级/回退 | covered: B-008 B-012 B-013（无迁移或 provider 证据时保持 fail-closed） |
-| 证据与审计完整性 | covered: B-002 B-003 B-004 B-007 B-015 B-016 B-017 B-019（完整 identity/ancestry/scope 绑定且无循环摘要） |
-| 取消/中断 | covered: B-011 B-012 B-013（dry-run 无副作用；provider 双读与 apply 重试可判定） |
+| 空/缺失输入 | covered: B-002 B-003 B-006 B-013 B-014 B-015 B-022 B-026（source/记录/provider/key/identity/lineage 缺失均 block） |
+| 错误与失败路径 | covered: B-004 B-005 B-008 B-018 B-020 B-021 B-023 B-025 B-026（重放、head delta、comment、origin、lineage 错误均可定位） |
+| 授权/权限 | covered: B-011 B-013 B-014 B-019 B-022 B-023（fresh provider + authenticated terminal envelope；本地自证无效） |
+| 并发/竞态 | covered: B-002 B-004 B-021 B-023（source、PR head/tree 与 comment 双读期间漂移均 block） |
+| 重试/幂等 | covered: B-012 B-019 B-024（重复迁移逐字节确定；authorization/migration IDs 均重算） |
+| 非法状态转换 | covered: B-001 B-010 B-020 B-021 B-025（origin 与 pre/post-migration head 状态不可混用） |
+| 兼容/迁移 | covered: B-006 B-009 B-012 B-016 B-018 B-020 B-021 B-025 B-026（head、origin、lineage 与旧数据兼容） |
+| 降级/回退 | covered: B-008 B-012 B-013 B-022（无迁移/provider/key 证据时保持 fail-closed） |
+| 证据与审计完整性 | covered: B-002 B-003 B-004 B-007 B-015 B-016 B-017 B-019 B-021 B-022 B-023 B-024 B-026（完整 identity/scope/tree/MAC/lineage 绑定） |
+| 取消/中断 | covered: B-011 B-012 B-013 B-021 B-024（dry-run 无副作用；partial apply 与重试可判定） |
 
 ## 发布说明
 
 存量 round-1 review artifact 可通过一次性、fresh-provider 人工授权的确定性迁移进入
 bounded v2 manifest；原始证据由迁移前 Git blob 锚定并永久保留，迁移记录、派生 marker
 与 trusted legacy identity 共同绑定；人工授权与当前 PR identity 来自 fresh GitHub
-provider，未迁移、手工复制、本地自证授权或被篡改的形态继续 fail closed。
+provider，迁移后 head/tree 由 authenticated terminal envelope 证明；未迁移、手工复制、
+本地自证授权、伪造 envelope 或被篡改的形态继续 fail closed。
