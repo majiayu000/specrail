@@ -74,9 +74,9 @@ def test_queue_skill_keeps_single_review_lane_default() -> None:
     assert "One reviewer lane per PR is the default" in text
 
 
-def test_implx_declares_tiered_read_set() -> None:
+def test_implx_declares_profile_read_set() -> None:
     text = (ROOT / "skills/implx/SKILL.md").read_text(encoding="utf-8")
-    assert "## Tiered Read Set" in text
+    assert "## Profile Read Set" in text
     assert "reads exactly" in text
     assert "review loads" in text
     assert "maximum 12 KiB" in text

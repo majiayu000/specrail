@@ -34,6 +34,27 @@ FORBIDDEN_LEGACY_PHRASES = (
     "manifest.version: 2",
     "round_cap_escalation",
 )
+ACTIVE_CONTRACT_FILES = (
+    "AGENTS.md",
+    "AGENT_USAGE.md",
+    "README.md",
+    "SPEC.md",
+    "PLAN.md",
+    "workflow.yaml",
+    "integrations/threads.md",
+    "review/agent_first_review.md",
+)
+FORBIDDEN_RUNTIME_TOKENS = (
+    ".specrail/runtime/rejections",
+    "thread_dispatch_gate",
+    "review_execution",
+    "checkpoint_version",
+    "tranche_mix",
+    "lane_failures",
+    "human_full_review_request",
+    "--review-source",
+    "--review-manifest",
+)
 
 
 def _contract_block(text: str) -> str:
@@ -63,3 +84,13 @@ def test_authoritative_docs_reject_legacy_full_review_escape_hatches() -> None:
         text = (REPO / relative_path).read_text(encoding="utf-8").lower()
         for phrase in FORBIDDEN_LEGACY_PHRASES:
             assert phrase not in text, f"{relative_path}: forbidden legacy phrase: {phrase}"
+
+
+def test_active_contracts_do_not_reintroduce_removed_runtime_artifacts() -> None:
+    paths = [REPO / path for path in ACTIVE_CONTRACT_FILES]
+    paths.extend((REPO / "skills").glob("*/SKILL.md"))
+
+    for path in paths:
+        text = path.read_text(encoding="utf-8").lower()
+        for token in FORBIDDEN_RUNTIME_TOKENS:
+            assert token not in text, f"{path.relative_to(REPO)}: {token}"

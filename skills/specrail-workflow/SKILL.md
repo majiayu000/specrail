@@ -115,27 +115,18 @@ Do not translate stable machine-facing identifiers:
 
 ## Optional Threads Integration
 
-If the task is a GitHub issue or PR queue, needs disjoint parallel lanes, or
-requires review-thread, CI, merge-gate, or closure-audit handling, read
-`integrations/threads.md` after this startup flow and use an available threads
-skill for orchestration.
-
-For GitHub PR review or merge work, native reviewer or merge-reviewer dispatch
-is required when native subagent capability is available. Record
-`thread_dispatch_gate` and native thread evidence before claiming full threads
-execution or merge readiness.
+Read `integrations/threads.md` only when the user requests subagents/threads or
+the selected route explicitly delegates disjoint lanes.
 
 Keep the boundary clear:
 
 - SpecRail owns policy, locale, required artifacts, human gates, and
   deterministic verification.
-- Threads owns lane maps, queue gates, remote truth refresh, review-thread
-  handling, and closure audit.
+- Threads owns temporary lane assignment and returns bounded results.
 - Optional five-field resume cursors are local handoff notes only; they do not
   replace GitHub or SpecRail artifacts as workflow truth or participate in gates.
-- If no threads skill or native subagent capability is available, continue with
-  the single-agent SpecRail flow only after recording the fallback and reporting
-  that no native threads were launched.
+- If threads are unavailable, continue with the single-agent flow without
+  inventing fallback evidence.
 
 ## Agent Boundaries
 

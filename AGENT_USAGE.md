@@ -6,22 +6,15 @@ write specs, prepare PRs, review, and report handoffs without inventing process.
 
 ## What The Agent Should Load
 
-When a repository adopts SpecRail, the agent should read these files before
-creating issues, specs, PRs, or reviews:
-
-1. `AGENTS.md`
-2. `workflow.yaml`
-3. `states.yaml`
-4. `labels.yaml`
-5. the relevant template under `templates/` or `templates/<locale>/`
-6. `skills/specrail-workflow/SKILL.md` when available
-7. `skills-lock.json` when the repository carries repo-distributed skills
+Fastlane startup reads only `AGENTS.md`, `workflow.yaml`, and
+`skills/implx/SKILL.md`. Standard/heavy load the focused route skill and only
+the artifacts that profile requires. Templates, states, labels, and the skill
+lock are loaded on demand instead of on every invocation.
 
 If the consumer repository has no `AGENTS.md`, ask the maintainer to add a short
 entrypoint or proceed from `AGENT_USAGE.md` only for the current task while
 reporting that the repo is missing its agent entrypoint. Do not treat a missing
-`AGENTS.md` as permission to skip `workflow.yaml`, `states.yaml`, `labels.yaml`,
-or the relevant templates.
+`AGENTS.md` as permission to skip repository policy.
 
 The skill is an execution guide. The YAML files and templates are the workflow
 contract. The agent should not treat the skill as final authority when it
@@ -43,11 +36,10 @@ architecture changes, cross-module work, public API changes, workflow-policy
 changes, PR merge-readiness checks, CI diagnosis with unclear ownership, or
 ambiguous requests whose done-when is not yet testable.
 
-SpecRail mode means the work is actually structured as a SpecRail flow: search
-first, select the route, produce or request durable product/tech/task artifacts
-before broad implementation, preserve human gates, and run deterministic
-verification. Do not treat SpecRail as a loose checklist or a note in the final
-answer.
+SpecRail mode means search first, select a route and verification profile,
+preserve human gates, and run deterministic verification. Heavy work requires
+durable product/tech/task artifacts; fastlane and standard do not create
+spec-only work by default.
 
 If a repository has not adopted the pack, use that repository's existing
 specs/plan/docs location to carry the route, spec, task plan, and verification
@@ -79,6 +71,14 @@ python3 tools/install_codex_skills.py --repo . --apply
 The installer validates `skills-lock.json`, writes only the locked skill
 directories, and targets `$CODEX_HOME/skills` or `~/.codex/skills`. A running
 agent session may need to restart before the installed skills are discoverable.
+Check an existing installation without writing:
+
+```sh
+python3 tools/install_codex_skills.py --repo . --check-installed
+```
+
+Any missing or drifted skill is reported in one pass. Reinstall explicitly with
+`--apply`, then restart Codex.
 
 ## Basic Agent Flow
 
@@ -90,12 +90,10 @@ agent session may need to restart before the installed skills are discoverable.
    - `review_pr`
    - `fix_ci`
    - `draft_release_note`
-3. Default to `write_spec` before `implement` for product-facing,
-   architecture, cross-module, public API, workflow-policy, or ambiguous
-   behavior changes.
-4. Choose direct `implement` only when an approved spec already exists, the
-   change is small and mechanical, or the user explicitly asks to skip spec
-   creation.
+3. Select `fastlane`, `standard`, or `heavy`. Auth, payments, secrets,
+   permissions, migrations, and configured sensitive paths are always heavy.
+4. Require a full product/tech/tasks packet for heavy. Fastlane and standard
+   use a linked Issue plus the smallest testable plan.
 5. Confirm the current state from durable repo state when possible.
 6. Create or update the required artifact. For spec artifacts, use the
    configured `artifacts.product_spec`, `artifacts.tech_spec`, and
@@ -116,9 +114,8 @@ python3 checks/route_gate.py --repo . --route implement --issue <issue-number> -
 ```
 
 The duplicate-work adapter is read-only. It collects open PR and remote branch
-evidence; `checks/duplicate_work_gate.py` and `route_gate.py` evaluate that
-evidence offline so duplicate implementation work is blocked before a new PR is
-opened.
+evidence; duplicate results are advisory and should steer the agent to existing
+ownership rather than create replacement work.
 
 8. Run deterministic checks before claiming completion:
 
@@ -139,18 +136,18 @@ packet, run the exact configured command returned by `route_gate.py` in
 python3 checks/github_pr_evidence.py \
   --github-repo OWNER/REPO \
   --pr <pr-number> \
-  --review-source independent_lane \
+  --profile <profile> \
+  --gate-invocation-id <id> \
+  --review <review.json> \
   --json > pr-evidence.json
-python3 checks/pr_gate.py --repo . --evidence <evidence.json> --json
+python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 ```
 
-The primary agent review is an exact-head local review artifact with
-`review_source: independent_lane` and `review_execution: local`, produced by a
-local CLI review such as `codex review --base <base>` or by a native local
-reviewer lane. A GitHub comment such as `@codex review` starts a hosted review.
-Hosted reviews remain useful supplemental evidence, but they do not replace
-the local primary reviewer artifact and must be reported as "hosted/cloud
-review", not ambiguously as "Codex review".
+The review JSON uses compact contract v3. Fastlane may use
+`review_source: self_review`; standard/heavy require `independent_lane`.
+Round 1 is full and round 2 is diff-only after P0/P1 fixes. P2/P3 are
+non-blocking follow-ups, and outdated hosted findings do not block current
+head.
 
 For a partial implementation slice whose body contains a standalone
 `Refs #<issue-number>` directive, bind the intended issue explicitly:
@@ -160,7 +157,9 @@ python3 checks/github_pr_evidence.py \
   --github-repo OWNER/REPO \
   --pr <pr-number> \
   --issue <issue-number> \
-  --review-source independent_lane \
+  --profile <profile> \
+  --gate-invocation-id <id> \
+  --review <review.json> \
   --json > pr-evidence.json
 ```
 
@@ -205,24 +204,11 @@ packet. A missing issue number is not permission to skip spec creation.
 
 ## Optional Threads Integration
 
-If the task is a GitHub issue or PR queue, needs disjoint parallel lanes, or
-requires review-thread, CI, merge-gate, or closure-audit handling, load
-`integrations/threads.md` after SpecRail preflight. SpecRail still owns policy,
-locale, required artifacts, and human gates. Threads owns lane orchestration,
-remote queue truth, and closure audit.
-
-For GitHub PR review or merge work, native reviewer or merge-reviewer dispatch
-is required when native subagent capability is available. Record
-`thread_dispatch_gate` and native thread evidence before claiming full threads
-execution or merge readiness.
-
-For long queues, keep the parent thread thin: write raw logs to artifacts, read
-only short summaries or tails, and checkpoint before continuing in a fresh
-parent thread.
-
-If no threads skill or native subagent capability is available, continue with
-the normal single-agent SpecRail flow only after recording the fallback and
-reporting that no native threads were launched.
+Load `integrations/threads.md` only when the user requests subagents/threads or
+a selected skill explicitly delegates disjoint lanes. Thread state is not
+workflow evidence. SpecRail owns policy and human gates; threads only provide
+temporary lane orchestration. If threads are unavailable, use the normal
+single-agent flow without creating fallback artifacts.
 
 ## Locale Behavior
 

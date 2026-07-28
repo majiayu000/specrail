@@ -18,7 +18,7 @@ GH-208
 - [x] `SP208-T5` 将 checker/schema 收敛到 18/8，并将 duplicate 与 closure 降为 advisory。 Covers: B-004, B-011, B-014, B-016, B-018 | Owner: primary | Dependencies: SP208-T3, SP208-T4 | Done when: 文件计数硬检查通过，无 wrapper/搬家规避，adopted missing 与 not-adopted 路径有相反测试 | Verify: `/usr/bin/python3 -m pytest -q tests/test_check_workflow.py tests/test_pack_asset_validation.py tests/test_duplicate_work_gate.py tests/test_closure_audit.py tests/test_skill_size_gate.py`
 - [x] `SP208-T6` 缩减 skills/docs：queue ≤200 行、implx ≤60 行、fastlane read set ≤3 文件/12 KiB，只对 heavy 默认独立 spec。 Covers: B-001, B-002, B-007, B-012, B-013, B-015, B-016, B-019 | Owner: primary | Dependencies: SP208-T1, SP208-T4, SP208-T5 | Done when: docs/token/hash/size tests 通过，技能不再引用删除的 runtime/tier/review-round artifact | Verify: `/usr/bin/python3 -m pytest -q tests/test_review_contract_docs.py tests/test_skill_size_gate.py tests/test_install_codex_skills.py`
 - [x] `SP208-T7` 在现有 installer 内实现只读 installed-skill hash doctor，不新增 gate 或迁移状态机。 Covers: B-004, B-017, B-018 | Owner: primary | Dependencies: SP208-T5 | Done when: `--check-installed` 一次报告全部 missing/drift，匹配返回 0，dry-run/apply 边界不变 | Verify: `/usr/bin/python3 -m pytest -q tests/test_install_codex_skills.py`
-- [ ] `SP208-T8` 完成三 profile E2E、全量回归、tree/manifest 对账和 release handoff。 Covers: B-001, B-002, B-003, B-005, B-008, B-010, B-014, B-015, B-020 | Owner: primary | Dependencies: SP208-T1, SP208-T2, SP208-T3, SP208-T4, SP208-T5, SP208-T6, SP208-T7 | Done when: E2E、pack/all-specs、全 pytest、size gate、diff-check 全绿且修改路径位于 manifest 闭集 | Verify: `python3 checks/check_workflow.py --repo . --all-specs && /usr/bin/python3 -m pytest -q && python3 checks/skill_size_gate.py --repo . --json && git diff --check origin/main...HEAD`
+- [x] `SP208-T8` 完成三 profile E2E、全量回归、tree/manifest 对账和 release handoff。 Covers: B-001, B-002, B-003, B-005, B-008, B-010, B-014, B-015, B-020 | Owner: primary | Dependencies: SP208-T1, SP208-T2, SP208-T3, SP208-T4, SP208-T5, SP208-T6, SP208-T7 | Done when: E2E、pack/all-specs、全 pytest、size gate、diff-check 全绿且修改路径位于 manifest 闭集 | Verify: `python3 checks/check_workflow.py --repo . --all-specs && /usr/bin/python3 -m pytest -q && python3 checks/skill_size_gate.py --repo . --json && git diff --check origin/main...HEAD`
 
 ## 并行拆分
 
@@ -44,3 +44,5 @@ Product invariant 集为 B-001 至 B-020，任务 Covers 并集必须完整覆�
 - commit policy 为 `per_step`；每个 `SP208-T<n>` focused tests 通过后单独提交。
 - 旧 runtime/checkpoint/tier artifact 是明确 breaking removal，不实现兼容层。
 - 安全敏感路径、人工 merge gate、force-push/权限/安全披露禁令必须保留。
+- 本地完成证据：336 tests passed；三 profile E2E 3/3；18 checker、8 schema；
+  queue 137 行、implx 44 行；fastlane read set 9,274 bytes；manifest 闭集通过。

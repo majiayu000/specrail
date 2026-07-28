@@ -9,20 +9,17 @@ What should a code agent do next, and what evidence proves it may do that?
 
 ## Current Position
 
-SpecRail v0.1 is a portable workflow pack:
+SpecRail v0.4 is a portable, profile-based workflow pack:
 
-- state machine
-- labels
-- templates
-- schemas
-- review guides
-- deterministic pack validation
-- localized presentation assets
-- a Codex-compatible workflow skill
+- `fastlane`, `standard`, and `heavy` verification profiles
+- eight Issue states backed by GitHub truth
+- compact route, review, and PR gates
+- 18 core checkers and 8 durable schemas
+- deterministic validation and localized templates
 
-This is useful, but it is not yet stronger than mature systems such as Warp/Oz.
-Warp has a real queue, readiness labels, spec PRs, CI, automated review, and SME
-handoff. SpecRail is still a reusable contract that needs repeated real use.
+The default flow intentionally avoids a second runtime state machine. Only
+heavy work requires a full durable spec packet. Repeated real use should decide
+whether any advisory check deserves promotion.
 
 ## Design Principles
 
@@ -33,11 +30,9 @@ handoff. SpecRail is still a reusable contract that needs repeated real use.
 5. Human-facing text follows the selected locale.
 6. Deterministic checks come before LLM automation.
 7. Automation starts in dry-run or advisory mode.
-8. Spec-first is the default for ambiguous, architecture, product-facing,
-   public API, cross-module, and workflow-policy changes.
-9. Complex work should move into SpecRail mode, using route/spec/task/gate
-   artifacts as the working structure; adoption, installation, remote writes,
-   approval, and merge still require explicit human authorization.
+8. Verification depth follows risk; only heavy work requires a full spec packet.
+9. Adoption, installation, remote writes, approval, and merge require explicit
+   human authorization.
 
 ## Why The Skill Exists
 
@@ -46,7 +41,7 @@ state transition is allowed, how to choose locale, or which values must not be
 translated.
 
 `skills/specrail-workflow/SKILL.md` exists to make those operating rules explicit
-for Codex-style agents. It is not perfect or final. It is a v0.1 execution guide
+for Codex-style agents. It is not perfect or final. It is a v0.4 execution guide
 that should be tested against real tasks and then tightened.
 
 ## Roadmap
@@ -80,45 +75,32 @@ Add adapters that collect evidence from GitHub:
 - issue labels
 - linked PRs
 - CI status
-- review state
-- review threads
+- compact current-head review
+- changed-file sensitivity
 
 Adapters should produce evidence JSON. They should not own policy.
 
-The first merge-readiness evaluator is `checks/pr_gate.py`. It consumes local
-evidence JSON and checks PR head, CI, review threads, merge state, linked issue,
-and human merge authorization. A later GitHub adapter can collect that evidence,
-but the policy decision should stay in the evaluator.
+The merge-readiness evaluator is `checks/pr_gate.py`. It consumes local evidence
+JSON and checks linked work, current head, CI, compact review, merge state,
+profile, sensitive classification, and heavy authorization.
 
-The post-merge closure evaluator is `checks/closure_audit.py`. It verifies the
-same-head `gate < dispatch <= merged` chain from local evidence and emits a
-schema-valid advisory result. It performs no GitHub writes; consumers own any
-follow-up persistence or issue creation.
+The post-merge closure evaluator is `checks/closure_audit.py`. It emits an
+advisory result only. It performs no GitHub writes and never creates follow-up
+issues.
 
-The first issue evidence adapter is `checks/github_issue_evidence.py`. It uses
-`gh issue view` to collect issue state, labels, title, URL, default artifact
-paths, and state trust metadata, then prints schema-valid JSON that
-`checks/route_gate.py` can evaluate. For trusted implement evidence with a
-configured sensitive registry, it collects the GitHub default-base identity,
-revalidates it against local `origin` and symbolic `origin/HEAD`, and classifies
-the exact-base tech manifest before requesting approval provenance. Plans that
-do not match the registry need no approval timeline or merged-spec PR evidence.
-Sensitive plans additionally require the current approval label, the latest
-matching label event's actor/timestamp, and exactly one merged default-branch PR
-for each approved spec source. Drift or incomplete evidence fails closed. The
-adapter remains read-only and does not write labels, comments, issues, PRs, or
-branches. States inferred from requester-editable body hints remain untrusted
-and cannot replace maintainer readiness labels for human-gated routes.
+The issue evidence adapter is `checks/github_issue_evidence.py`. It uses
+`gh issue view` to collect issue state, labels, title, URL, and state trust
+metadata for `checks/route_gate.py`. Label state is trusted; requester-editable
+body hints never grant readiness. The adapter remains read-only.
 
-The first PR evidence adapter is `checks/github_pr_evidence.py`. It uses `gh pr
-view` and `gh api graphql` to collect PR merge-readiness evidence and prints
-JSON that `checks/pr_gate.py` can evaluate. It does not write labels, comments,
-reviews, thread state, branches, or merges.
+The PR evidence adapter is `checks/github_pr_evidence.py`. It uses `gh pr view`
+to collect current merge-readiness evidence and prints JSON for
+`checks/pr_gate.py`. It does not write labels, comments, reviews, branches, or
+merges.
 
-The first review artifact gate is `checks/review_json_gate.py`. It validates
-advisory review JSON against a unified diff and blocks invalid paths, lines,
-multi-line ranges, suggestion blocks, body contract gaps, severity values, spec
-drift, and final-approval or merge-authority language.
+The review artifact gate is `checks/review_json_gate.py`. It validates advisory
+compact review JSON against a unified diff, enforces at most one full plus one
+diff-only pass, blocks current P0/P1, and keeps P2/P3 as follow-ups.
 
 ### Phase 4: Agent Installation
 
@@ -132,8 +114,9 @@ Make SpecRail easy to give to agents:
 - keep repo-distributed route skills pinned in `skills-lock.json`
 - optionally set `presentation.default_locale: zh-CN`
 - run deterministic checks before and after agent work
-- use optional integration docs, such as `integrations/threads.md`, when the
-  task needs queue orchestration, parallel lanes, or closure audit
+- use `--check-installed` to diagnose local skill drift without writing
+- use optional `integrations/threads.md` only when threads are explicitly
+  requested or delegated
 
 ### Phase 5: Automation
 
@@ -158,7 +141,7 @@ mistakes, not just nicer templates.
 
 ## Optional Integrations
 
-Integrations are advisory execution designs, not required runtime dependencies.
+Integrations are advisory execution designs, not required dependencies.
 They let SpecRail describe how an agent should combine the core contract with a
 separate orchestration skill.
 
@@ -166,7 +149,5 @@ The first integration is `integrations/threads.md`. It keeps the boundary
 explicit:
 
 - SpecRail owns policy, artifacts, locale, human gates, and deterministic checks.
-- Threads owns lane maps, queue gates, review-thread truth, merge gates, and
-  closure audit.
-- The handoff remains a lightweight text/YAML artifact until repeated real runs
-  justify turning it into a schema and validator check.
+- Threads owns temporary disjoint lane assignment and bounded results.
+- Thread state never replaces current GitHub evidence.

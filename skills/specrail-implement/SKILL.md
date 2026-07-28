@@ -9,7 +9,9 @@ Use this skill for the `implement` route.
 
 ## Steps
 
-1. Read the linked issue, product spec, tech spec, and task plan.
+1. Read the linked issue and selected verification profile. Read the complete
+   product/tech/tasks packet when the profile is `heavy`; for `fastlane` and
+   `standard`, use the smallest current plan that makes done-when testable.
 2. Run the implementation route gate when available:
 
 ```sh
@@ -29,11 +31,10 @@ python3 checks/route_gate.py --repo . --route implement --issue <issue-number> -
 python3 checks/check_workflow.py --repo .
 ```
 
-7. For a GitHub PR, compare the diff with the linked packet, produce the
-   exact-head local review JSON and manifest, validate it with
-   `checks/review_json_gate.py`, collect current PR evidence using
-   `--review-manifest`, then run `checks/pr_gate.py` serially. A hosted review or
-   `--review-source` alone is not terminal evidence.
+7. For a GitHub PR, review the exact current-head diff, validate the compact
+   review JSON with `checks/review_json_gate.py`, collect current PR evidence,
+   then run `checks/pr_gate.py` serially. Standard/heavy use an independent
+   review source; fastlane may use self-review. A current P0/P1 blocks.
 8. Record changed files, commands, results, and remaining human gates.
 
 ## Boundaries
@@ -42,19 +43,6 @@ python3 checks/check_workflow.py --repo .
 - Do not merge without explicit human authorization and a passing PR gate.
 - Do not publish secrets or private security details.
 - Do not weaken tests or deterministic checks to make implementation pass.
-
-## Rejection Persistence And Retry
-
-When a gate command in this skill (`checks/route_gate.py`,
-`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
-other than `allowed`, the caller persists the gate's JSON output to
-`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
-missing). This write is orchestrator behavior; the gate itself stays
-read-only. Use the `rejection_items[]` list to fix every defect in a single
-round instead of guessing one item per retry.
-
-On the next retry of the same gate for the same issue or PR, pass
-`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
-the new output contains a `repeat_rejection` section, the same item was
-rejected verbatim twice: stop retrying and report the contract violation to a
-human instead of starting another round.
+- Fix every reported rejection item before one bounded retry. If the same
+  rejection repeats, stop and report it instead of creating persistent retry
+  state.

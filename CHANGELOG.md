@@ -2,12 +2,22 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- SpecRail workflow 0.4 replaces the governance-heavy queue with three
+  verification profiles (`fastlane`, `standard`, `heavy`), eight Issue states,
+  one compact review contract, and one compact PR gate (GH-208).
+- Old runtime checkpoint, Goal, lease, attempt-ledger, telemetry, tier,
+  content-binding, and multi-round review artifacts are unsupported. Resume
+  from current GitHub truth; an optional five-field cursor is non-gating.
+- Core assets are capped at 18 checkers, 8 schemas, a 200-line queue skill, a
+  60-line implx entrypoint, and a three-file/12 KiB fastlane startup set.
+
 ### Added
 
-- Local-primary review provenance (GH-162): terminal review artifacts now
-  distinguish `review_execution: local | hosted`; offline PR and runtime
-  ledger gates reject hosted reviews as primary evidence while keeping GitHub
-  `@codex review` available as explicitly supplemental review.
+- Read-only `--check-installed` skill doctor reports every missing or drifted
+  installed `SKILL.md` in one pass and gives explicit reinstall/restart
+  guidance (GH-208).
 
 - Spec depth audit tool (GH-93): read-only `tools/spec_depth_audit.py` measures
   per-spec invariant count, EARS conditional ratio, boundary-category coverage,
@@ -44,24 +54,6 @@
   coverage union. All six locale templates are updated to match; task lines
   carry `Covers: B-xxx`. No new gate logic (depth gating is a separate
   follow-up).
-- Worktree-safe merge path (GH-63): merges run from a neutral cwd with an
-  API fallback for locally checked-out branches; merge records require
-  `merge_path` and remote confirmation before an outcome may be reported.
-- Spec/impl mix gate (GH-62): checkpoint items record `pr_kind`; more than 3
-  consecutive spec-only PRs block without a quoted `spec_only_declaration`,
-  and `tranche_mix` counters are cross-checked against item records.
-- Reviewer lane resume and re-review cap (GH-61): review results record
-  `review_round`/`review_mode`; full reviews past round 2 require a quoted
-  human request, `diff_only` requires the prior `base_head_sha`, and
-  resumed/diff-only rounds require a `prior_findings` checklist.
-- Bounded tranche hard stop (GH-60): checkpoint_version 2 drain checkpoints
-  must declare a `budget` (compaction and/or item-cap basis); over-budget
-  continuation without a recorded `budget_override` is blocked and
-  `stop_reason: budget_exhausted` with a resume prompt is a passing terminal.
-- Reviewer-lane failure gate (GH-59): checkpoint items record `lane_failures`
-  and must downgrade to blocked/needs_human or retry with a new independent
-  lane; `review_source` is required merge evidence and unauthorized
-  self-review merges are blocked.
 - Read-only GitHub issue evidence adapter for `route_gate.py`.
 - Advisory review JSON gate with diff-line validation.
 - All-spec packet validation via `checks/check_workflow.py --all-specs`.
@@ -79,15 +71,8 @@
 - Agent-facing `specrail-install` skill for setup, install, update, and adoption
   routing.
 - Deterministic gate fixture corpus under `examples/fixtures/`.
-- Runtime checkpoint schema instance validation and a documented contract
-  authority split between schema structure and gate behavior.
 - PR gate evidence now records serial gate-query completion/head SHA fields and
   rejects stale or post-merge gate ordering evidence.
-- PR gate review-thread evidence now requires resolver attribution and rejects
-  implementer/orchestrator-resolved reviewer threads.
-- PR and runtime gates now record review source and reviewer-lane failures,
-  blocking silent self-review substitution unless fresh scoped authorization is
-  present.
 
 ## v0.2.1 - 2026-06-26
 
