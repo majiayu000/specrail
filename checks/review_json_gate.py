@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate advisory review JSON artifacts against a pull request diff."""
+"""Evaluate the compact, advisory SpecRail review contract."""
 
 from __future__ import annotations
 
@@ -20,57 +20,68 @@ from rejection_items import (
     item_from_reason,
     items_from_legacy,
 )
-from github_evidence_common import EvidenceError
-from review_content_binding import load_review_content_binding
-from review_result_semantics import (
-    REVIEW_VERDICTS,
-    validate_review_artifact,
-    validate_degraded_review_provenance,
-)
-from schema_validation import SpecRailError, load_json_schema, validate_instance
 
 
-VERDICTS = REVIEW_VERDICTS
-SIDES = {"RIGHT", "LEFT"}
-SEVERITIES = {"critical", "important", "suggestion", "nit"}
-SPEC_ALIGNMENT_STATUSES = {"matched", "drift", "not_applicable"}
-REVIEW_MODES = {"full", "resumed", "diff_only"}
-PRIOR_FINDING_STATUSES = {"resolved", "unresolved", "obsolete"}
-FULL_REVIEW_ROUND_CAP = 2
+CONTRACT_VERSION = 3
+PROFILES = {"fastlane", "standard", "heavy"}
+REVIEW_SOURCES = {"independent_lane", "self_review"}
+REVIEW_MODES = {"full", "diff_only"}
+VERDICTS = {"clean", "blocking", "non_blocking"}
+SEVERITIES = {"P0", "P1", "P2", "P3"}
+FINDING_STATUSES = {"unresolved", "resolved"}
+FINDING_ORIGINS = {"local", "hosted"}
 REVIEW_TOP_LEVEL_KEYS = {
     "artifact_id",
     "base_head_sha",
     "body",
+    "contract_version",
+    "diff_sha256",
+    "findings",
+    "head_sha",
+    "mode",
+    "pr",
+    "profile",
+    "repository",
+    "review_source",
+    "round",
+    "verdict",
+}
+FINDING_KEYS = {
+    "id",
+    "introduced_by_diff",
+    "line",
+    "origin",
+    "outdated",
+    "path",
+    "severity",
+    "status",
+    "summary",
+}
+LEGACY_REVIEW_FIELDS = {
     "comments",
     "content_binding_evidence",
     "content_binding_version",
     "content_bindings",
     "covered_categories",
     "finding_classifications",
-    "findings",
     "gate_authorization",
     "gate_status",
-    "head_sha",
     "human_final_review_required",
     "human_full_review_request",
-    "pr",
     "prior_findings",
     "producer_identity",
     "review_completed_at",
     "review_execution",
     "review_mode",
-    "round_policy_version",
-    "diff_sha256",
-    "round_cap_escalation",
     "review_round",
-    "review_source",
     "review_started_at",
     "reviewer_lane",
+    "round_cap_escalation",
+    "round_policy_version",
     "spec_alignment",
     "status",
     "tier_attestation",
     "tier_dispute",
-    "verdict",
 }
 FORBIDDEN_FINAL_AUTHORITY = {
     "approved for merge": re.compile(r"\bapproved\s+for\s+merge\b", re.IGNORECASE),
@@ -78,8 +89,12 @@ FORBIDDEN_FINAL_AUTHORITY = {
     "merge now": re.compile(r"\bmerge\s+now\b", re.IGNORECASE),
     "ready to merge": re.compile(r"\bready\s+to\s+merge\b", re.IGNORECASE),
     "you can merge": re.compile(r"\byou\s+can\s+merge\b", re.IGNORECASE),
-    "go ahead and merge": re.compile(r"\bgo\s+ahead\s+and\s+merge\b", re.IGNORECASE),
-    "looks good to merge": re.compile(r"\blooks\s+good\s+to\s+merge\b", re.IGNORECASE),
+    "go ahead and merge": re.compile(
+        r"\bgo\s+ahead\s+and\s+merge\b", re.IGNORECASE
+    ),
+    "looks good to merge": re.compile(
+        r"\blooks\s+good\s+to\s+merge\b", re.IGNORECASE
+    ),
     "safe to merge": re.compile(r"\bsafe\s+to\s+merge\b", re.IGNORECASE),
     "LGTM, merge": re.compile(r"\blgtm\b[^.\\n]{0,40}\bmerge\b", re.IGNORECASE),
     "ship it": re.compile(r"\bship\s+it\b", re.IGNORECASE),
@@ -88,11 +103,6 @@ HUNK_RE = re.compile(
     r"^@@ -(?P<old_start>[0-9]+)(?:,[0-9]+)? "
     r"\+(?P<new_start>[0-9]+)(?:,[0-9]+)? @@"
 )
-SUGGESTION_FENCE_RE = re.compile(
-    r"(?:^|\n)```suggestion[^\n]*\n(?P<content>.*?)\n```",
-    re.DOTALL,
-)
-SUGGESTION_OPEN_RE = re.compile(r"(?:^|\n)```suggestion[^\n]*\n")
 SUMMARY_HEADING_RE = re.compile(r"^## Summary\s*$", re.MULTILINE)
 VERDICT_HEADING_RE = re.compile(r"^## Verdict\s*$", re.MULTILINE)
 
@@ -108,7 +118,7 @@ def _non_empty_string(value: Any) -> bool:
 
 
 def _positive_int(value: Any) -> bool:
-    return isinstance(value, int) and value > 0
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -123,37 +133,22 @@ def _load_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def _load_bytes(path: Path) -> bytes:
-    try:
-        return path.read_bytes()
-    except OSError as exc:
-        raise ValueError(f"cannot read diff file {path}: {exc}") from exc
-
-
-def _resolve_path(repo: Path, raw_path: str) -> Path:
-    path = Path(raw_path)
-    if path.is_absolute():
-        return path
-    return repo / path
-
-
 def _clean_diff_path(raw_path: str) -> str | None:
     path = raw_path.strip().split("\t", 1)[0]
     if path == "/dev/null":
         return None
-    if path.startswith("a/") or path.startswith("b/"):
+    if path.startswith(("a/", "b/")):
         path = path[2:]
     return path or None
 
 
 def _add_line(lines: dict[str, set[int]], path: str | None, line: int) -> None:
-    if path is None or line <= 0:
-        return
-    lines.setdefault(path, set()).add(line)
+    if path is not None and line > 0:
+        lines.setdefault(path, set()).add(line)
 
 
 def parse_unified_diff(diff_text: str) -> DiffIndex:
-    """Index old/new line numbers present in a unified diff."""
+    """Index old and new line numbers in a unified diff."""
 
     left: dict[str, set[int]] = {}
     right: dict[str, set[int]] = {}
@@ -162,22 +157,17 @@ def parse_unified_diff(diff_text: str) -> DiffIndex:
     old_line = 0
     new_line = 0
     in_hunk = False
-
     for raw_line in diff_text.splitlines():
         if raw_line.startswith("diff --git "):
+            old_path = new_path = None
             in_hunk = False
-            old_path = None
-            new_path = None
             continue
         if not in_hunk and raw_line.startswith("--- "):
-            in_hunk = False
             old_path = _clean_diff_path(raw_line[4:])
             continue
         if not in_hunk and raw_line.startswith("+++ "):
-            in_hunk = False
             new_path = _clean_diff_path(raw_line[4:])
             continue
-
         hunk = HUNK_RE.match(raw_line)
         if hunk:
             if old_path is None and new_path is None:
@@ -186,10 +176,8 @@ def parse_unified_diff(diff_text: str) -> DiffIndex:
             new_line = int(hunk.group("new_start"))
             in_hunk = True
             continue
-
         if not in_hunk:
             continue
-
         if raw_line.startswith(" "):
             _add_line(left, old_path, old_line)
             _add_line(right, new_path, new_line)
@@ -201,390 +189,20 @@ def parse_unified_diff(diff_text: str) -> DiffIndex:
         elif raw_line.startswith("+"):
             _add_line(right, new_path, new_line)
             new_line += 1
-        elif raw_line.startswith("\\"):
-            continue
-        else:
+        elif not raw_line.startswith("\\"):
             raise ValueError(f"unsupported diff line inside hunk: {raw_line!r}")
-
     return DiffIndex(left=left, right=right)
 
 
-def _validate_top_level(review: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
-    satisfied: list[str] = []
-    missing: list[str] = []
-    reasons: list[str] = []
-    for key in sorted(set(review) - REVIEW_TOP_LEVEL_KEYS):
-        reasons.append(f"unknown top-level field: {key}")
-
-    degraded_satisfied, degraded_reasons = validate_degraded_review_provenance(review)
-    satisfied.extend(degraded_satisfied)
-    reasons.extend(degraded_reasons)
-
-    verdict = review.get("verdict")
-    if verdict in VERDICTS:
-        satisfied.append(f"verdict: {verdict}")
-    elif "verdict" in review:
-        reasons.append(
-            "verdict must be clean, non_blocking, changes_requested, or blocking; "
-            f"got {verdict!r}"
-        )
-    else:
-        missing.append("verdict")
-
-    body = review.get("body")
-    if _non_empty_string(body):
-        satisfied.append("body present")
-        if SUMMARY_HEADING_RE.search(body):
-            satisfied.append("body includes ## Summary")
-        else:
-            reasons.append("body must include ## Summary heading")
-        if VERDICT_HEADING_RE.search(body):
-            satisfied.append("body includes ## Verdict")
-        else:
-            reasons.append("body must include ## Verdict heading")
-    elif "body" in review:
-        reasons.append("body must be a non-empty string")
-    else:
-        missing.append("body")
-
-    comments = review.get("comments")
-    if isinstance(comments, list):
-        satisfied.append(f"comments: {len(comments)}")
-    elif "comments" in review:
-        reasons.append("comments must be a list")
-    else:
-        missing.append("comments")
-
-    if "spec_alignment" in review:
-        _validate_spec_alignment(review["spec_alignment"], satisfied, reasons)
-
-    _validate_review_round(review, satisfied, reasons)
-
-    return satisfied, missing, reasons
-
-
-def _validate_review_round(
-    review: dict[str, Any], satisfied: list[str], reasons: list[str]
-) -> None:
-    has_round = "review_round" in review
-    has_mode = "review_mode" in review
-    if not has_round and not has_mode:
-        return
-    if has_round != has_mode:
-        reasons.append("review_round and review_mode must be provided together")
-        return
-
-    review_round = review.get("review_round")
-    if not _positive_int(review_round):
-        reasons.append("review_round must be a positive integer")
-        return
-
-    review_mode = review.get("review_mode")
-    if review_mode not in REVIEW_MODES:
-        allowed = ", ".join(sorted(REVIEW_MODES))
-        reasons.append(f"review_mode must be one of: {allowed}")
-        return
-
-    bounded = review.get("round_policy_version") == 1
-    if bounded and review_round >= 2 and review_mode not in {"resumed", "diff_only"}:
-        reasons.append("bounded review_round >= 2 requires resumed or diff_only mode")
-    elif not bounded and review_mode == "full" and review_round > FULL_REVIEW_ROUND_CAP:
-        request = review.get("human_full_review_request")
-        if _non_empty_string(request):
-            satisfied.append(
-                f"round {review_round} full review authorized by human request"
-            )
-        else:
-            reasons.append(
-                f"review_round {review_round} with review_mode full exceeds the "
-                f"cap of {FULL_REVIEW_ROUND_CAP}; use resumed/diff_only or record "
-                "human_full_review_request"
-            )
-
-    if review_mode in {"resumed", "diff_only"}:
-        if review_round < 2:
-            reasons.append(f"review_mode {review_mode} requires review_round >= 2")
-        _validate_prior_findings(review, reasons, bounded=bounded)
-
-    if bounded and review_round >= 2:
-        if not _non_empty_string(review.get("base_head_sha")):
-            reasons.append("bounded scoped review requires base_head_sha of the prior round")
-        if not re.fullmatch(r"[0-9a-fA-F]{64}", str(review.get("diff_sha256", ""))):
-            reasons.append("bounded scoped review requires a 64-character diff_sha256")
-    elif review_mode == "diff_only" and not _non_empty_string(review.get("base_head_sha")):
-        reasons.append("review_mode diff_only requires base_head_sha of the prior round")
-
-    if review_mode in REVIEW_MODES and not reasons:
-        satisfied.append(f"review round {review_round} mode {review_mode}")
-
-
-def _validate_prior_findings(
-    review: dict[str, Any], reasons: list[str], *, bounded: bool = False
-) -> None:
-    prior_findings = review.get("prior_findings")
-    if not isinstance(prior_findings, list):
-        reasons.append(
-            "resumed/diff_only rounds require prior_findings[] with per-finding status"
-        )
-        return
-    for index, finding in enumerate(prior_findings, start=1):
-        if not isinstance(finding, dict):
-            reasons.append(f"prior_findings #{index} must be an object")
-            continue
-        if not bounded and not _non_empty_string(finding.get("summary")):
-            reasons.append(f"prior_findings #{index} requires summary")
-        status = finding.get("status")
-        if status not in PRIOR_FINDING_STATUSES:
-            allowed = ", ".join(sorted(PRIOR_FINDING_STATUSES))
-            reasons.append(f"prior_findings #{index} status must be one of: {allowed}")
-
-
-def _validate_spec_alignment(
-    value: Any, satisfied: list[str], reasons: list[str]
-) -> None:
-    if not isinstance(value, dict):
-        reasons.append("spec_alignment must be an object")
-        return
-
-    allowed_keys = {"status", "spec", "details"}
-    for key in sorted(set(value) - allowed_keys):
-        reasons.append(f"spec_alignment has unknown field: {key}")
-
-    status = value.get("status")
-    if status not in SPEC_ALIGNMENT_STATUSES:
-        reasons.append(f"spec_alignment.status must be matched, drift, or not_applicable; got {status!r}")
-    elif status == "drift":
-        reasons.append("spec_alignment reports drift")
-    else:
-        satisfied.append(f"spec_alignment: {status}")
-
-    spec = value.get("spec")
-    if spec is not None and not _non_empty_string(spec):
-        reasons.append("spec_alignment.spec must be a non-empty string or null")
-
-    details = value.get("details")
-    if details is not None and not _non_empty_string(details):
-        reasons.append("spec_alignment.details must be a non-empty string")
-
-
-def _validate_comment_shape(comment: Any, index: int) -> tuple[dict[str, Any] | None, list[str], list[str]]:
-    missing: list[str] = []
-    reasons: list[str] = []
-    if not isinstance(comment, dict):
-        return None, missing, [f"comment #{index} must be an object"]
-
-    allowed_keys = {
-        "path",
-        "line",
-        "side",
-        "severity",
-        "body",
-        "start_line",
-        "start_side",
-        "suggestion",
-    }
-    for key in sorted(set(comment) - allowed_keys):
-        reasons.append(f"comment #{index} has unknown field: {key}")
-
-    for key in ["path", "line", "side", "severity", "body"]:
-        if key not in comment:
-            missing.append(f"comments[{index - 1}].{key}")
-
-    path = comment.get("path")
-    if "path" in comment and not _non_empty_string(path):
-        reasons.append(f"comment #{index} path must be a non-empty string")
-    if isinstance(path, str) and (Path(path).is_absolute() or ".." in Path(path).parts):
-        reasons.append(f"comment #{index} path must be a relative repository path")
-
-    line = comment.get("line")
-    if "line" in comment and not _positive_int(line):
-        reasons.append(f"comment #{index} line must be a positive integer")
-
-    side = comment.get("side")
-    if "side" in comment and side not in SIDES:
-        reasons.append(f"comment #{index} side must be RIGHT or LEFT; got {side!r}")
-
-    has_start_line = "start_line" in comment
-    has_start_side = "start_side" in comment
-    if has_start_line != has_start_side:
-        reasons.append(f"comment #{index} start_line and start_side must appear together")
-
-    start_line = comment.get("start_line")
-    if has_start_line and not _positive_int(start_line):
-        reasons.append(f"comment #{index} start_line must be a positive integer")
-
-    start_side = comment.get("start_side")
-    if has_start_side and start_side not in SIDES:
-        reasons.append(f"comment #{index} start_side must be RIGHT or LEFT; got {start_side!r}")
-
-    severity = comment.get("severity")
-    if "severity" in comment and severity not in SEVERITIES:
-        reasons.append(
-            f"comment #{index} severity must be critical, important, suggestion, or nit; got {severity!r}"
-        )
-
-    if "body" in comment and not _non_empty_string(comment.get("body")):
-        reasons.append(f"comment #{index} body must be a non-empty string")
-
-    if "suggestion" in comment and not _non_empty_string(comment.get("suggestion")):
-        reasons.append(f"comment #{index} suggestion must be a non-empty string")
-
-    return comment, missing, reasons
-
-
-def _check_diff_location(
-    comment: dict[str, Any], index: int, diff_index: DiffIndex
-) -> str | None:
-    return _check_diff_line(
-        comment.get("path"),
-        comment.get("line"),
-        comment.get("side"),
-        index,
-        diff_index,
-    )
-
-
-def _line_set_for_side(diff_index: DiffIndex, side: str) -> dict[str, set[int]]:
-    return diff_index.right if side == "RIGHT" else diff_index.left
-
-
-def _check_diff_line(
-    path: Any, line: Any, side: Any, index: int, diff_index: DiffIndex, label: str = ""
-) -> str | None:
-    if not (_non_empty_string(path) and _positive_int(line) and side in SIDES):
-        return None
-
-    side_lines = _line_set_for_side(diff_index, side)
-    if str(path) not in side_lines:
-        return f"comment #{index} {side} {path} is not present in the diff"
-    if int(line) in side_lines[str(path)]:
-        return None
-    label_suffix = f" {label}" if label else ""
-    return f"comment #{index} {side} {path}:{line}{label_suffix} is not present in the diff"
-
-
-def _check_diff_range(
-    comment: dict[str, Any], index: int, diff_index: DiffIndex
-) -> list[str]:
-    if "start_line" not in comment and "start_side" not in comment:
-        return []
-    if "start_line" not in comment or "start_side" not in comment:
-        return []
-
-    path = comment.get("path")
-    start_line = comment.get("start_line")
-    start_side = comment.get("start_side")
-    line = comment.get("line")
-    side = comment.get("side")
-    if not (
-        _non_empty_string(path)
-        and _positive_int(start_line)
-        and start_side in SIDES
-        and _positive_int(line)
-        and side in SIDES
-    ):
-        return []
-
-    reasons: list[str] = []
-    start_reason = _check_diff_line(
-        path, start_line, start_side, index, diff_index, "range start"
-    )
-    if start_reason:
-        reasons.append(start_reason)
-
-    if start_side != side:
-        reasons.append(f"comment #{index} start_side must match side for a range")
-        return reasons
-
-    if int(start_line) > int(line):
-        reasons.append(f"comment #{index} start_line must be <= line for a {side} range")
-        return reasons
-
-    side_lines = _line_set_for_side(diff_index, side)
-    path_lines = side_lines.get(str(path), set())
-    missing = [
-        candidate
-        for candidate in range(int(start_line), int(line) + 1)
-        if candidate not in path_lines
-    ]
-    if missing:
-        preview = ", ".join(str(candidate) for candidate in missing[:5])
-        if len(missing) > 5:
-            preview = f"{preview}, ..."
-        reasons.append(
-            f"comment #{index} {side} {path}:{start_line}-{line} includes "
-            f"lines not present in the diff: {preview}"
-        )
-    return reasons
-
-
-def _suggestion_blocks(body: Any) -> list[str]:
-    if not isinstance(body, str):
-        return []
-    return [match.group("content") for match in SUGGESTION_FENCE_RE.finditer(body)]
-
-
-def _unterminated_suggestion_count(body: Any) -> int:
-    if not isinstance(body, str):
-        return 0
-    return len(SUGGESTION_OPEN_RE.findall(body)) - len(SUGGESTION_FENCE_RE.findall(body))
-
-
-def _validate_suggestions(comment: dict[str, Any], index: int) -> list[str]:
-    reasons: list[str] = []
-    has_suggestion = "suggestion" in comment
-    blocks = _suggestion_blocks(comment.get("body"))
-    unterminated_count = _unterminated_suggestion_count(comment.get("body"))
-
-    for block_index, content in enumerate(blocks, start=1):
-        if not content.strip():
-            reasons.append(f"comment #{index} suggestion block #{block_index} must be non-empty")
-    if unterminated_count > 0:
-        reasons.append(f"comment #{index} has unterminated suggestion block")
-
-    if not has_suggestion and not blocks and unterminated_count == 0:
-        return reasons
-
-    if comment.get("side") != "RIGHT" or (
-        "start_side" in comment and comment.get("start_side") != "RIGHT"
-    ):
-        reasons.append(f"comment #{index} suggestions are only allowed on RIGHT-side comments")
-    return reasons
-
-
-def _iter_review_strings(review: dict[str, Any]) -> list[tuple[str, str]]:
-    values: list[tuple[str, str]] = []
-    if isinstance(review.get("body"), str):
-        values.append(("body", review["body"]))
-
-    comments = review.get("comments")
-    if isinstance(comments, list):
-        for index, comment in enumerate(comments, start=1):
-            if isinstance(comment, dict) and isinstance(comment.get("body"), str):
-                values.append((f"comments[{index - 1}].body", comment["body"]))
-
-    spec_alignment = review.get("spec_alignment")
-    if isinstance(spec_alignment, dict):
-        for key, value in spec_alignment.items():
-            if isinstance(value, str):
-                values.append((f"spec_alignment.{key}", value))
-    return values
-
-
-def _find_forbidden_language(review: dict[str, Any]) -> list[str]:
-    reasons: list[str] = []
-    for path, value in _iter_review_strings(review):
-        for label, pattern in FORBIDDEN_FINAL_AUTHORITY.items():
-            if pattern.search(value):
-                reasons.append(f"{path} grants final approval or merge authority: {label!r}")
-    return reasons
-
-
 def validate_exact_git_diff(
-    repo: Path, base: object, head: object, diff_sha256: object, *,
+    repo: Path,
+    base: object,
+    head: object,
+    diff_sha256: object,
+    *,
     supplied_bytes: bytes | None = None,
 ) -> list[str]:
-    """Verify a fixed Git range after rejecting option-like revisions."""
+    """Verify an option-safe exact Git range and its digest."""
 
     if not all(
         isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40}", value)
@@ -598,14 +216,17 @@ def validate_exact_git_diff(
     try:
         process = subprocess.run(
             ["git", "diff", "--no-ext-diff", "--binary", f"{base}..{head}", "--"],
-            cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            cwd=repo,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
         )
     except OSError as exc:
         return [f"cannot execute exact Git diff: {exc}"]
     if process.returncode != 0:
         detail = process.stderr.decode("utf-8", errors="replace").strip()
         return [f"exact Git diff failed for {base}..{head}: {detail}"]
-    reasons = []
+    reasons: list[str] = []
     if supplied_bytes is not None and supplied_bytes != process.stdout:
         reasons.append("provided diff bytes do not equal exact Git base_head_sha..head_sha output")
     if hashlib.sha256(process.stdout).hexdigest() != diff_sha256:
@@ -613,89 +234,28 @@ def validate_exact_git_diff(
     return reasons
 
 
-def _validate_bounded_diff(
-    review: dict[str, Any], diff_bytes: bytes, repo: Path | None
-) -> list[str]:
-    review_round = review.get("review_round")
-    if review.get("round_policy_version") != 1 or not _positive_int(review_round) or review_round < 2:
+def _find_forbidden_language(review: dict[str, Any]) -> list[str]:
+    body = review.get("body")
+    if not isinstance(body, str):
         return []
-    if repo is None:
-        return ["bounded scoped review requires a repository for exact Git diff provenance"]
-    base, head = review.get("base_head_sha"), review.get("head_sha")
-    return validate_exact_git_diff(
-        repo, base, head, review.get("diff_sha256"), supplied_bytes=diff_bytes
-    )
+    return [
+        f"body grants final approval or merge authority: {label!r}"
+        for label, pattern in FORBIDDEN_FINAL_AUTHORITY.items()
+        if pattern.search(body)
+    ]
 
 
-def evaluate_review_gate(
-    review: dict[str, Any], diff_text: str, *, repo: Path | None = None,
-    diff_bytes: bytes | None = None,
+def _result(
+    review: dict[str, Any],
+    *,
+    decision: str,
+    reasons: list[str],
+    missing: list[str],
+    satisfied: list[str],
+    blocking: list[str],
+    follow_ups: list[str],
+    outdated: list[str],
 ) -> dict[str, Any]:
-    """Validate a review artifact and return a stable gate result."""
-
-    reasons: list[str] = []
-    satisfied: list[str] = []
-    missing: list[str] = []
-
-    try:
-        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "review_result.schema.json"
-        validate_instance(load_json_schema(schema_path), review, "review_result")
-    except SpecRailError as exc:
-        reasons.append(f"review_result schema validation failed: {exc}")
-    top_satisfied, top_missing, top_reasons = _validate_top_level(review)
-    satisfied.extend(top_satisfied)
-    missing.extend(top_missing)
-    reasons.extend(top_reasons)
-    original_binding = None
-    if review.get("content_binding_version") == 1:
-        if repo is None:
-            reasons.append("v1 review artifact sidecar validation requires repository root")
-        else:
-            try:
-                original_binding = load_review_content_binding(repo, review)
-            except EvidenceError as exc:
-                reasons.append(f"review artifact sidecar: {exc}")
-    semantic_result = validate_review_artifact(
-        review, original_binding=original_binding
-    )
-    reasons.extend(semantic_result["errors"])
-    reasons.extend(
-        item
-        for item in semantic_result["blocking_reasons"]
-        if item == "clean verdict requires zero findings"
-    )
-    if semantic_result["valid"]:
-        satisfied.append("review artifact v2 semantics valid")
-    reasons.extend(_find_forbidden_language(review))
-    reasons.extend(
-        _validate_bounded_diff(
-            review,
-            diff_bytes if diff_bytes is not None else diff_text.encode("utf-8"),
-            repo,
-        )
-    )
-
-    try:
-        diff_index = parse_unified_diff(diff_text)
-    except ValueError as exc:
-        diff_index = DiffIndex(left={}, right={})
-        reasons.append(str(exc))
-
-    comments = review.get("comments")
-    if isinstance(comments, list):
-        for index, comment in enumerate(comments, start=1):
-            shaped, comment_missing, comment_reasons = _validate_comment_shape(comment, index)
-            missing.extend(comment_missing)
-            reasons.extend(comment_reasons)
-            if shaped is None:
-                continue
-            location_reason = _check_diff_location(shaped, index, diff_index)
-            if location_reason:
-                reasons.append(location_reason)
-            reasons.extend(_check_diff_range(shaped, index, diff_index))
-            reasons.extend(_validate_suggestions(shaped, index))
-
-    decision = "blocked" if reasons or missing else "allowed"
     rejection_items = (
         []
         if decision == "allowed"
@@ -711,12 +271,15 @@ def evaluate_review_gate(
     return {
         "decision": decision,
         "verdict": review.get("verdict"),
-        "comment_count": len(comments) if isinstance(comments, list) else 0,
+        "comment_count": 0,
         "advisory_only": True,
         "reasons": sorted(set(reasons)),
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),
         "rejection_items": rejection_items,
+        "blocking_findings": sorted(set(blocking)),
+        "follow_ups": sorted(set(follow_ups)),
+        "outdated_hosted_findings": sorted(set(outdated)),
         "blocked_actions": ["final_approval", "merge"],
         "verification_commands": [
             "python3 checks/review_json_gate.py --repo . --review <review.json> --diff <patch>",
@@ -725,19 +288,227 @@ def evaluate_review_gate(
     }
 
 
+def evaluate_review_gate(
+    review: dict[str, Any],
+    diff_text: str,
+    *,
+    repo: Path | None = None,
+    diff_bytes: bytes | None = None,
+) -> dict[str, Any]:
+    """Validate a v3 review artifact and return all failures in one result."""
+
+    reasons: list[str] = []
+    missing: list[str] = []
+    satisfied: list[str] = []
+    blocking: list[str] = []
+    follow_ups: list[str] = []
+    outdated: list[str] = []
+    required = {
+        "artifact_id",
+        "body",
+        "contract_version",
+        "findings",
+        "head_sha",
+        "mode",
+        "pr",
+        "profile",
+        "repository",
+        "review_source",
+        "round",
+        "verdict",
+    }
+    missing.extend(key for key in sorted(required) if key not in review)
+    for key in sorted(set(review) - REVIEW_TOP_LEVEL_KEYS):
+        prefix = "unsupported legacy review field" if key in LEGACY_REVIEW_FIELDS else "unknown top-level field"
+        reasons.append(f"{prefix}: {key}")
+
+    for key in ("artifact_id", "repository"):
+        if key in review and not _non_empty_string(review.get(key)):
+            reasons.append(f"{key} must be a non-empty string")
+    if "pr" in review and not _positive_int(review.get("pr")):
+        reasons.append("pr must be a positive integer")
+    if review.get("contract_version") != CONTRACT_VERSION:
+        reasons.append(
+            f"contract_version must be {CONTRACT_VERSION}; rebuild legacy review "
+            "evidence from the current GitHub state"
+        )
+    if not isinstance(review.get("head_sha"), str) or not re.fullmatch(
+        r"[0-9a-fA-F]{40}", str(review.get("head_sha", ""))
+    ):
+        reasons.append("head_sha must be a 40-character Git SHA")
+
+    profile = review.get("profile")
+    source = review.get("review_source")
+    if profile not in PROFILES:
+        reasons.append("profile must be fastlane, standard, or heavy")
+    if source not in REVIEW_SOURCES:
+        reasons.append("review_source must be independent_lane or self_review")
+    if profile in {"standard", "heavy"} and source != "independent_lane":
+        reasons.append(f"{profile} profile requires an independent_lane review")
+
+    review_round = review.get("round")
+    mode = review.get("mode")
+    if not _positive_int(review_round):
+        reasons.append("round must be a positive integer")
+    if mode not in REVIEW_MODES:
+        reasons.append("mode must be full or diff_only")
+    if review_round == 1 and mode != "full":
+        reasons.append("round 1 must use full mode")
+    if review_round == 2 and mode != "diff_only":
+        reasons.append("round 2 must use diff_only mode")
+
+    supplied = diff_bytes if diff_bytes is not None else diff_text.encode("utf-8")
+    if review_round == 2:
+        base = review.get("base_head_sha")
+        digest = review.get("diff_sha256")
+        for field in ("base_head_sha", "diff_sha256"):
+            if field not in review:
+                missing.append(field)
+        if repo is not None and base is not None and digest is not None:
+            reasons.extend(
+                validate_exact_git_diff(
+                    repo,
+                    base,
+                    review.get("head_sha"),
+                    digest,
+                    supplied_bytes=supplied,
+                )
+            )
+        elif digest is not None:
+            if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+                reasons.append("diff_sha256 must be a 64-character SHA-256 digest")
+            elif hashlib.sha256(supplied).hexdigest() != digest:
+                reasons.append("diff_sha256 does not match the supplied diff")
+            if not isinstance(base, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", base):
+                reasons.append("base_head_sha must be a 40-character Git SHA")
+
+    body = review.get("body")
+    if not _non_empty_string(body):
+        reasons.append("body must be a non-empty string")
+    elif isinstance(body, str):
+        for heading, pattern in (
+            ("body includes ## Summary", SUMMARY_HEADING_RE),
+            ("body includes ## Verdict", VERDICT_HEADING_RE),
+        ):
+            (satisfied if pattern.search(body) else missing).append(heading)
+    reasons.extend(_find_forbidden_language(review))
+
+    try:
+        diff_index = parse_unified_diff(diff_text)
+    except ValueError as exc:
+        diff_index = DiffIndex(left={}, right={})
+        reasons.append(str(exc))
+
+    findings = review.get("findings")
+    if not isinstance(findings, list):
+        reasons.append("findings must be an array")
+        findings = []
+    seen_ids: set[str] = set()
+    for index, finding in enumerate(findings, start=1):
+        prefix = f"finding #{index}"
+        if not isinstance(finding, dict):
+            reasons.append(f"{prefix} must be an object")
+            continue
+        for key in sorted(set(finding) - FINDING_KEYS):
+            reasons.append(f"{prefix} has unknown field: {key}")
+        finding_id = finding.get("id")
+        if not _non_empty_string(finding_id):
+            reasons.append(f"{prefix} id must be a non-empty string")
+            finding_id = f"finding-{index}"
+        elif str(finding_id) in seen_ids:
+            reasons.append(f"{prefix} id must be unique: {finding_id}")
+        seen_ids.add(str(finding_id))
+        if not _non_empty_string(finding.get("summary")):
+            reasons.append(f"{prefix} summary must be a non-empty string")
+
+        severity = finding.get("severity")
+        status = finding.get("status")
+        origin = finding.get("origin", "local")
+        is_outdated = finding.get("outdated", False)
+        if severity not in SEVERITIES:
+            reasons.append(f"{prefix} severity must be P0, P1, P2, or P3")
+        if status not in FINDING_STATUSES:
+            reasons.append(f"{prefix} status must be unresolved or resolved")
+        if origin not in FINDING_ORIGINS:
+            reasons.append(f"{prefix} origin must be local or hosted")
+        if not isinstance(is_outdated, bool):
+            reasons.append(f"{prefix} outdated must be a boolean")
+            is_outdated = False
+        if is_outdated and origin != "hosted":
+            reasons.append(f"{prefix} outdated is only valid for hosted findings")
+
+        has_path, has_line = "path" in finding, "line" in finding
+        if has_path != has_line:
+            reasons.append(f"{prefix} path and line must be provided together")
+        elif has_path and not is_outdated:
+            path, line = finding.get("path"), finding.get("line")
+            if not _non_empty_string(path) or not _positive_int(line):
+                reasons.append(f"{prefix} path must be non-empty and line must be positive")
+            elif (
+                int(line) not in diff_index.left.get(str(path), set())
+                and int(line) not in diff_index.right.get(str(path), set())
+            ):
+                reasons.append(f"{prefix} {path}:{line} is not present in the diff")
+
+        if (
+            review_round == 2
+            and status == "unresolved"
+            and severity in {"P0", "P1"}
+            and not is_outdated
+            and not isinstance(finding.get("introduced_by_diff"), bool)
+        ):
+            reasons.append(f"{prefix} round 2 P0/P1 must declare introduced_by_diff")
+        if status != "unresolved":
+            continue
+        if is_outdated and origin == "hosted":
+            outdated.append(str(finding_id))
+        elif severity in {"P0", "P1"}:
+            blocking.append(str(finding_id))
+        elif severity in {"P2", "P3"}:
+            follow_ups.append(str(finding_id))
+
+    verdict = review.get("verdict")
+    if verdict not in VERDICTS:
+        reasons.append(
+            "verdict must be clean, blocking, or non_blocking; "
+            f"got {verdict!r}"
+        )
+    expected = "blocking" if blocking else "non_blocking" if follow_ups else "clean"
+    if verdict in VERDICTS and verdict != expected:
+        reasons.append(f"verdict {verdict!r} does not match current findings; expected {expected!r}")
+
+    decision = "blocked" if reasons or missing or blocking else "allowed"
+    if _positive_int(review_round) and review_round > 2:
+        decision = "needs_human"
+        reasons.append("review round cap exceeded; human review is required")
+    if not reasons and not missing:
+        satisfied.append("compact review contract v3 valid")
+    if follow_ups:
+        satisfied.append("P2/P3 findings recorded as non-blocking follow-ups")
+    if outdated:
+        satisfied.append("outdated hosted findings treated as non-blocking")
+    return _result(
+        review,
+        decision=decision,
+        reasons=reasons,
+        missing=missing,
+        satisfied=satisfied,
+        blocking=blocking,
+        follow_ups=follow_ups,
+        outdated=outdated,
+    )
+
+
 def print_review_gate_human(result: dict[str, Any]) -> None:
     print(f"decision: {result['decision']}")
     if result.get("verdict"):
         print(f"verdict: {result['verdict']}")
     print("advisory_only: true")
-    if result["reasons"]:
-        print("reasons:")
-        for reason in result["reasons"]:
-            print(f"- {reason}")
-    if result["missing"]:
-        print("missing:")
-        for item in result["missing"]:
-            print(f"- {item}")
+    for name in ("reasons", "missing"):
+        if result[name]:
+            print(f"{name}:")
+            for item in result[name]:
+                print(f"- {item}")
 
 
 def main() -> int:
@@ -750,41 +521,47 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Print JSON output")
     add_prior_rejection_argument(parser)
     args = parser.parse_args()
-
     repo = Path(args.repo).resolve()
     try:
-        review = _load_json(_resolve_path(repo, args.review))
-        diff_bytes = _load_bytes(_resolve_path(repo, args.diff))
-        diff_text = diff_bytes.decode("utf-8")
-        result = evaluate_review_gate(review, diff_text, repo=repo, diff_bytes=diff_bytes)
-    except ValueError as exc:
-        result = {
-            "decision": "blocked",
-            "verdict": None,
-            "comment_count": 0,
-            "advisory_only": True,
-            "reasons": [str(exc)],
-            "satisfied": [],
-            "missing": [],
-            "rejection_items": finalize_items(
-                [item_from_reason(str(exc), "config_error")]
-            ),
-            "blocked_actions": ["final_approval", "merge"],
-            "verification_commands": [
-                "python3 checks/review_json_gate.py --repo . --review <review.json> --diff <patch>"
-            ],
-        }
-
+        review_path = Path(args.review)
+        diff_path = Path(args.diff)
+        review = _load_json(review_path if review_path.is_absolute() else repo / review_path)
+        resolved_diff = diff_path if diff_path.is_absolute() else repo / diff_path
+        diff_bytes = resolved_diff.read_bytes()
+        result = evaluate_review_gate(
+            review,
+            diff_bytes.decode("utf-8"),
+            repo=repo,
+            diff_bytes=diff_bytes,
+        )
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        result = _result(
+            {},
+            decision="blocked",
+            reasons=[str(exc)],
+            missing=[],
+            satisfied=[],
+            blocking=[],
+            follow_ups=[],
+            outdated=[],
+        )
+        result["rejection_items"] = finalize_items(
+            [item_from_reason(str(exc), "config_error")]
+        )
     result = apply_prior_rejection(
-        result, args.prior_rejection, blocked_actions=["final_approval", "merge"]
+        result,
+        args.prior_rejection,
+        blocked_actions=["final_approval", "merge"],
     )
-
-    if args.json:
-        print(json.dumps(result, indent=2, sort_keys=True))
-    else:
+    print(
+        json.dumps(result, indent=2, sort_keys=True)
+        if args.json
+        else "",
+        end="\n" if args.json else "",
+    )
+    if not args.json:
         print_review_gate_human(result)
-
-    return 1 if result["decision"] == "blocked" else 0
+    return 0 if result["decision"] == "allowed" else 1
 
 
 if __name__ == "__main__":
