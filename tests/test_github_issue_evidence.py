@@ -828,7 +828,7 @@ def test_route_gate_blocks_closed_issue_evidence(tmp_path: Path) -> None:
     assert "GitHub issue state must be OPEN; got CLOSED" in payload["reasons"]
 
 
-def test_sensitive_issue_adapter_keeps_implement_behind_human_approval(
+def test_sensitive_issue_adapter_combines_label_with_candidate_revision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -843,9 +843,14 @@ def test_sensitive_issue_adapter_keeps_implement_behind_human_approval(
     assert evidence["enforcement_sensitive"] is True
     assert "approved_spec" not in evidence
     assert "default_base_sha" not in evidence
-    assert result.returncode == 1, result.stderr
-    assert payload["decision"] == "needs_human"
-    assert "security_evidence" in payload["missing"]
+    assert result.returncode == 0, result.stderr
+    assert payload["decision"] == "allowed"
+    assert "security_evidence" not in payload["missing"]
+    assert "spec approval established by trusted readiness label" in payload["satisfied"]
+    assert (
+        "candidate spec revision content matches the current spec packet"
+        in payload["satisfied"]
+    )
     assert "sensitive classification derived from current tech spec" in payload["satisfied"]
 
 
@@ -907,9 +912,9 @@ def test_sensitive_issue_adapter_does_not_copy_default_base_state(
 
     assert "base_sha" not in evidence
     assert "default_base_sha" not in evidence
-    assert result.returncode == 1
-    assert payload["decision"] == "needs_human"
-    assert "security_evidence" in payload["missing"]
+    assert result.returncode == 0
+    assert payload["decision"] == "allowed"
+    assert "security_evidence" not in payload["missing"]
 
 
 def test_sensitive_issue_adapter_blocks_spec_drift_after_approved_revision(

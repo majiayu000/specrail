@@ -523,9 +523,9 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         repo=repo,
     )
 
-    assert result.returncode == 1, payload
-    assert payload["decision"] == "needs_human"
-    assert "security_evidence" in payload["missing"]
+    assert result.returncode == 0, payload
+    assert payload["decision"] == "allowed"
+    assert "security_evidence" not in payload["missing"]
     assert "product_spec: specs/GH999/product.md" in payload["satisfied"]
 
     dotted_result, dotted_payload = run_route_gate(
@@ -552,9 +552,9 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         repo=repo,
     )
 
-    assert dotted_result.returncode == 1, dotted_payload
-    assert dotted_payload["decision"] == "needs_human"
-    assert "security_evidence" in dotted_payload["missing"]
+    assert dotted_result.returncode == 0, dotted_payload
+    assert dotted_payload["decision"] == "allowed"
+    assert "security_evidence" not in dotted_payload["missing"]
     assert "product_spec: specs/GH999/product.md" in dotted_payload["satisfied"]
 
     wrong_result, wrong_payload = run_route_gate(

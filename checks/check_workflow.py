@@ -86,6 +86,14 @@ REQUIRED_FILE_GLOBS = [
     "examples/fixtures/*",
     "schemas/*.schema.json",
 ]
+ADOPTION_SENTINEL_PATHS = (
+    "checks/pr_gate.py",
+    "checks/route_gate.py",
+    "labels.yaml",
+    "schemas/issue_evidence.schema.json",
+    "skills-lock.json",
+    "states.yaml",
+)
 
 PLANNED_CHANGES_REQUIRED_MARKER = "specrail-requires-planned-changes-v1"
 
@@ -642,6 +650,28 @@ def validate_task_plan(
     return errors
 
 
+def adoption_sentinels(repo: Path) -> list[str]:
+    """Return unambiguous evidence that a repository adopted SpecRail."""
+    found = [
+        relative
+        for relative in ADOPTION_SENTINEL_PATHS
+        if (repo / relative).exists()
+    ]
+    agents = repo / "AGENTS.md"
+    if agents.is_file() and "specrail" in read_text(agents).casefold():
+        found.append("AGENTS.md:SpecRail")
+    skills = repo / "skills"
+    if skills.is_dir():
+        found.extend(
+            path.relative_to(repo).as_posix()
+            for path in skills.glob("specrail-*/SKILL.md")
+            if path.is_file()
+        )
+        if (skills / "implx" / "SKILL.md").is_file():
+            found.append("skills/implx/SKILL.md")
+    return sorted(set(found))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Validate a SpecRail workflow pack."
@@ -664,6 +694,12 @@ def main() -> int:
     try:
         repo = resolve_path(Path(args.repo), label="repository")
         if not (repo / "workflow.yaml").is_file():
+            sentinels = adoption_sentinels(repo)
+            if sentinels:
+                raise SpecRailError(
+                    "missing workflow.yaml in adopted repository; found "
+                    "SpecRail sentinel(s): " + ", ".join(sentinels)
+                )
             print("SpecRail check skipped: repository is not adopted")
             return 0
         errors.extend(validate_required_files(repo))

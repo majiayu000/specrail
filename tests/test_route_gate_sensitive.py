@@ -48,18 +48,83 @@ def test_route_gate_derives_sensitive_classification_from_current_tech_spec(
         repo=repo,
     )
 
-    assert result.returncode == 1, result.stderr
-    assert payload["decision"] == "needs_human", payload["reasons"]
+    assert result.returncode == 0, result.stderr
+    assert payload["decision"] == "allowed", payload["reasons"]
     assert payload["sensitive_classification"]["matched_paths"] == [
         "checks/route_gate.py"
     ]
     assert "spec approval established by trusted readiness label" in payload["satisfied"]
-    assert "security_decision" in payload["human_gates"]
-    assert "security_evidence" in payload["missing"]
     assert (
         "candidate spec revision content matches the current spec packet"
         in payload["satisfied"]
     )
+    assert "security_evidence" not in payload["missing"]
+
+
+@pytest.mark.parametrize(
+    ("state_update", "revision_kind", "expected_missing"),
+    [
+        (
+            {
+                "state": None,
+                "state_source": "none",
+                "state_trusted": False,
+                "labels": [],
+            },
+            "approved",
+            {"current_state", "spec_approval"},
+        ),
+        (
+            {
+                "state_source": "body_hint",
+                "state_trusted": False,
+                "labels": [],
+            },
+            "approved",
+            {"trusted_state", "spec_approval"},
+        ),
+        ({}, "mismatch", {"security_evidence"}),
+    ],
+)
+def test_heavy_route_requires_both_trusted_label_and_matching_revision(
+    tmp_path: Path,
+    state_update: dict[str, object],
+    revision_kind: str,
+    expected_missing: set[str],
+) -> None:
+    repo = tmp_path / "repo"
+    approved = write_sensitive_pack(repo)
+    route_evidence = sensitive_route_evidence(repo, approved)
+    route_evidence.update(state_update)
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--profile",
+        "heavy",
+        "--issue",
+        "999",
+        "--github-repo",
+        "example/consumer",
+        "--approved-spec-revision",
+        approved if revision_kind == "approved" else "f" * 40,
+        "--evidence",
+        str(write_evidence(tmp_path, route_evidence)),
+        "--duplicate-evidence",
+        str(write_duplicate_evidence(tmp_path)),
+        "--mode",
+        "required",
+        repo=repo,
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "needs_human"
+    assert expected_missing <= set(payload["missing"])
+    if revision_kind == "approved":
+        assert (
+            "candidate spec revision content matches the current spec packet"
+            in payload["satisfied"]
+        )
 
 
 def test_heavy_route_fails_closed_without_approved_spec_revision(

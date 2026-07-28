@@ -9,27 +9,29 @@ Use this skill to create or update the task plan before implementation.
 
 ## Steps
 
-1. Read `specs/GH<issue-number>/product.md` and
-   `specs/GH<issue-number>/tech.md`.
-2. Read `templates/<locale>/tasks.md` or `templates/tasks.md`.
-3. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
+1. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
    checks. Planning must not call the implementation route before `tasks.md`
    exists.
-4. Write `specs/GH<issue-number>/tasks.md`.
-5. Use stable task IDs such as `SP<issue-number>-T1`.
-6. Collect every `B-xxx` invariant from `product.md`, then map each one to at
+2. Resolve the issue's product, tech, task, and packet paths from
+   `workflow.yaml` `artifacts.*` templates; call the rendered packet path
+   `<configured-spec-packet-dir>` and never assume a `specs/` root.
+3. Read the resolved product and tech files.
+4. Read `templates/<locale>/tasks.md` or `templates/tasks.md`.
+5. Write the resolved `artifacts.task_plan` path.
+6. Use stable task IDs such as `SP<issue-number>-T1`.
+7. Collect every `B-xxx` invariant from `product.md`, then map each one to at
    least one implementation or verification task using `Covers: B-xxx`.
-7. For every task, include owner, dependencies, done-when evidence, verify
+8. For every task, include owner, dependencies, done-when evidence, verify
    commands, and its `Covers:` field.
-8. Separate implementation tasks from verification and handoff notes.
-9. Validate the completed packet:
+9. Separate implementation tasks from verification and handoff notes.
+10. Validate the completed packet:
 
 ```sh
 python3 checks/check_workflow.py --repo . \
-  --spec-dir specs/GH<issue-number>
+  --spec-dir=<configured-spec-packet-dir>
 ```
 
-10. Only after `tasks.md` passes validation, collect current issue evidence and
+11. Only after `tasks.md` passes validation, collect current issue evidence and
     run the required implementation preflight for the handoff:
 
 ```sh

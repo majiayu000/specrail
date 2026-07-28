@@ -502,14 +502,15 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             missing.append("spec_approval")
             items.append(item_from_missing("spec_approval"))
         packet = spec_packet_artifact_paths(config, args.issue) if args.issue else {}
-        if state_trusted and valid_security_evidence(
+        if valid_security_evidence(
             repo,
             args.approved_spec_revision,
             [packet[name] for name in ("product_spec", "tech_spec", "task_plan")] if packet else [],
         ):
             satisfied.append("candidate spec revision content matches the current spec packet")
-        missing.append("security_evidence")
-        items.append(item_from_missing("security_evidence"))
+        else:
+            missing.append("security_evidence")
+            items.append(item_from_missing("security_evidence"))
 
     legacy_spec = False
     if route == "implement":
