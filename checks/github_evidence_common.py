@@ -623,24 +623,16 @@ def _trusted_hosted_history(
         )
     except EvidenceError:
         return False
-    authenticated = (
+    # B-008/B-010 authenticate that the finding existed in the prior-head review.
+    # Live resolution/outdated state belongs to the current finding and cannot
+    # rewrite that creation-time history.
+    return (
         finding.get("_original_head_sha") == artifact.get("head_sha")
         and finding.get("_review_head_sha") == artifact.get("head_sha")
         and created_at < boundary
         and submitted_at < boundary
         and (edited_at is None or edited_at < boundary)
     )
-    if not authenticated:
-        return False
-    if finding.get("severity") in {"P0", "P1"} and (
-        finding.get("status") != "unresolved"
-        or finding.get("outdated") is not True
-    ):
-        raise EvidenceError(
-            f"hosted prior blocker {finding.get('id')} has no verifiable historical "
-            "resolution state; start a new current-head full review (round 1)"
-        )
-    return True
 
 
 def combine_review_findings(

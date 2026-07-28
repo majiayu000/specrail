@@ -328,6 +328,8 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
         "hosted:thread-old",
     ]
     assert combined["verdict"] == "blocking"
+    assert combined["findings"][0]["status"] == "unresolved"
+    assert combined["findings"][0]["outdated"] is False
     assert findings[0]["_original_head_sha"] == "a" * 40
     assert "_original_head_sha" not in combined["findings"][0]
     assert findings[0]["path"] == "src/current.py"
@@ -427,7 +429,7 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
         {
             "id": "hosted:thread-1",
             "severity": "P1",
-            "status": "unresolved",
+            "status": "resolved",
             "summary": "Round-one blocker.",
             "origin": "hosted",
             "outdated": True,
@@ -472,7 +474,7 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
         "hosted:thread-1",
         "hosted:thread-2",
     ]
-    assert combined["findings"][0]["status"] == "unresolved"
+    assert combined["findings"][0]["status"] == "resolved"
     assert combined["findings"][0]["outdated"] is True
     prior_findings = combined["prior_review"]["findings"]
     assert [finding["origin"] for finding in prior_findings] == [
@@ -492,6 +494,7 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     assert all("introduced_by_diff" not in finding for finding in prior_findings)
     assert all("subject_type" not in finding for finding in prior_findings)
     assert all(finding["status"] == "unresolved" for finding in prior_findings)
+    assert all(finding["outdated"] is False for finding in prior_findings)
     assert combined["verdict"] == "clean"
     gate = evaluate_review_gate(combined, "", verify_diff=False)
     assert gate["decision"] == "allowed", gate["reasons"]
@@ -547,17 +550,6 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
         assert edited_boundary["prior_review"]["findings"][0] == {
             "id": "hosted:thread-1"
         }
-
-    for status, outdated in (("resolved", True), ("unresolved", False)):
-        invalid_state = [dict(finding) for finding in hosted]
-        invalid_state[0].update({"status": status, "outdated": outdated})
-        with pytest.raises(EvidenceError, match="current-head full review"):
-            combine_review_findings(
-                current,
-                invalid_state,
-                prior_review_boundary="2026-07-28T09:30:00Z",
-            )
-
 
 def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
     monkeypatch: pytest.MonkeyPatch,
