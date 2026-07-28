@@ -44,5 +44,5 @@ Product invariant 集为 B-001 至 B-020，任务 Covers 并集必须完整覆�
 - commit policy 为 `per_step`；每个 `SP208-T<n>` focused tests 通过后单独提交。
 - 旧 runtime/checkpoint/tier artifact 是明确 breaking removal，不实现兼容层。
 - 安全敏感路径、人工 merge gate、force-push/权限/安全披露禁令必须保留。
-- 本地完成证据：336 tests passed；三 profile E2E 3/3；18 checker、8 schema；
+- 本地完成证据：338 tests passed；三 profile E2E 3/3；18 checker、8 schema；
   queue 137 行、implx 44 行；fastlane read set 9,274 bytes；manifest 闭集通过。
