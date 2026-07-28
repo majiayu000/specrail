@@ -17,8 +17,11 @@ python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr> \
   --json > pr-evidence.json
 ```
 
-For heavy work, pass `--authorization <authorization.json>`. It must bind actor,
-timestamp, current head, and the same invocation ID.
+For heavy work, a trusted host or coordinator may inject
+`--authorization <authorization.json>` only from a current real-human
+conversation. An agent must never mint, edit, copy, persist, or reuse it. The
+authorization is ephemeral and binds actor, timestamp, current head, and the
+same invocation ID.
 
 ## Gate
 
@@ -39,3 +42,6 @@ fields are unsupported and require fresh GitHub evidence.
 Collect evidence completely before any merge dispatch. Never place collection,
 gate, and merge in one parallel batch. Report the evidence path, head SHA,
 profile, decision, blockers, and verification commands.
+
+The gate result is `advisory_only`; the merge executor must independently obey
+the authorization in the current human conversation.

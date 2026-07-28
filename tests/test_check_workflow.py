@@ -45,13 +45,16 @@ def test_unadopted_repository_is_explicitly_skipped(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("relative_path", "content"),
     [
-        ("states.yaml", "states: {}\n"),
-        ("labels.yaml", "labels: []\n"),
-        ("skills-lock.json", "{}\n"),
-        ("checks/route_gate.py", "# SpecRail route\n"),
+        (
+            "checks/route_gate.py",
+            '"""Evaluate whether a SpecRail action may proceed."""\n',
+        ),
         ("skills/specrail-workflow/SKILL.md", "# SpecRail\n"),
         ("skills/implx/SKILL.md", "# implx\n"),
-        ("AGENTS.md", "Use SpecRail for repository workflow.\n"),
+        (
+            "AGENTS.md",
+            "Treat SpecRail as an agent-facing workflow contract.\n",
+        ),
     ],
 )
 def test_missing_workflow_fails_when_adoption_sentinel_exists(
@@ -70,9 +73,52 @@ def test_missing_workflow_fails_when_adoption_sentinel_exists(
     assert relative_path.split(":", 1)[0] in result.stdout
 
 
-def test_unrelated_agents_file_does_not_imply_adoption(tmp_path: Path) -> None:
-    (tmp_path / "AGENTS.md").write_text(
-        "Use the repository's native workflow.\n",
+@pytest.mark.parametrize(
+    ("relative_path", "content"),
+    [
+        ("states.yaml", "states: {}\n"),
+        ("labels.yaml", "labels: []\n"),
+        ("skills-lock.json", "{}\n"),
+        ("AGENTS.md", "Use the repository's native workflow.\n"),
+        ("AGENTS.md", "This repository does not use SpecRail.\n"),
+    ],
+)
+def test_unrelated_assets_do_not_imply_adoption(
+    tmp_path: Path,
+    relative_path: str,
+    content: str,
+) -> None:
+    (tmp_path / relative_path).write_text(content, encoding="utf-8")
+
+    result = run_check(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout == "SpecRail check skipped: repository is not adopted\n"
+
+
+def test_specrail_manifest_combination_implies_adoption(tmp_path: Path) -> None:
+    (tmp_path / "states.yaml").write_text("states: {}\n", encoding="utf-8")
+    (tmp_path / "labels.yaml").write_text("labels: []\n", encoding="utf-8")
+    (tmp_path / "skills-lock.json").write_text(
+        '{"skills":[{"name":"specrail-workflow",'
+        '"path":"skills/specrail-workflow/SKILL.md"}]}\n',
+        encoding="utf-8",
+    )
+
+    result = run_check(tmp_path)
+
+    assert result.returncode == 1
+    assert "missing workflow.yaml in adopted repository" in result.stdout
+    assert "states.yaml+labels.yaml+skills-lock.json" in result.stdout
+
+
+def test_unrelated_manifest_combination_does_not_imply_adoption(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "states.yaml").write_text("states: {}\n", encoding="utf-8")
+    (tmp_path / "labels.yaml").write_text("labels: []\n", encoding="utf-8")
+    (tmp_path / "skills-lock.json").write_text(
+        '{"skills":[{"name":"lint","path":"skills/lint/SKILL.md"}]}\n',
         encoding="utf-8",
     )
 

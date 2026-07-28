@@ -40,7 +40,7 @@
     {
       "name": "specrail-pr-gate",
       "path": "skills/specrail-pr-gate/SKILL.md",
-      "computedHash": "sha256:ba9fed21e3d0d99020461df26de828d1bde13605f926af89d508be574b7690eb"
+      "computedHash": "sha256:33584ee40cdc71431978fce7c15000fe9293ae48cbbdf12a16ad38fe6bde544c"
     },
     {
       "name": "specrail-release-note",
@@ -60,17 +60,17 @@
     {
       "name": "specrail-workflow",
       "path": "skills/specrail-workflow/SKILL.md",
-      "computedHash": "sha256:07700d11a0c16d85c2897a72de6783a7586e953a00bc9c89bcbcaf85d6c3a310"
+      "computedHash": "sha256:61d07e89f8b0bd9706a89b6ee9c2469323e81fcbbe69b84a4b2449c53ad9ad7e"
     },
     {
       "name": "specrail-write-product-spec",
       "path": "skills/specrail-write-product-spec/SKILL.md",
-      "computedHash": "sha256:066d78aaf551d00b75c41d1d13a4e34f8797b06c15ca7e8e381d2f1d4f8505fe"
+      "computedHash": "sha256:63aeea5da4afadc97ab03b17c3b883b9be1d2515455f14ae7cab0c03e0deb8a5"
     },
     {
       "name": "specrail-write-tech-spec",
       "path": "skills/specrail-write-tech-spec/SKILL.md",
-      "computedHash": "sha256:098c8c51123a0437316a0778017f3e736fd0fae062f54023e1be5a3ed558357a"
+      "computedHash": "sha256:2d717bb81fd935f77a12e28ccf385d0a9ea9ba54d8605e534e995482d6460083"
     }
   ]
 }

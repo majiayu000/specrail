@@ -15,7 +15,8 @@ focused SpecRail skill after the route is known.
 3. Check adoption first. If `workflow.yaml` is absent, report `not_adopted` and
    use repository-native policy without claiming a SpecRail gate result. If it
    exists, the repository is adopted: required SpecRail assets are mandatory
-   and missing assets block.
+   and missing assets block. Resolve issue artifact paths from its
+   `artifacts.*` templates and never assume a `specs/` root.
 4. Identify the route:
    - `triage_issue`
    - `write_spec`
@@ -39,11 +40,11 @@ python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issu
 - Use `skills/specrail-triage-issue/SKILL.md` for issue classification, duplicate
   searches, label proposals, and triage handoffs.
 - Use `skills/specrail-write-product-spec/SKILL.md` for
-  `specs/GH<issue-number>/product.md`.
+  the resolved `artifacts.product_spec` path.
 - Use `skills/specrail-write-tech-spec/SKILL.md` for
-  `specs/GH<issue-number>/tech.md`.
+  the resolved `artifacts.tech_spec` path.
 - Use `skills/specrail-plan-tasks/SKILL.md` for
-  `specs/GH<issue-number>/tasks.md`.
+  the resolved `artifacts.task_plan` path.
 - Use `skills/specrail-implement/SKILL.md` for code or workflow-asset changes
   after the implementation gate.
 - Use `skills/specrail-implement-queue/SKILL.md` only when the user names
@@ -85,8 +86,9 @@ for that action.
 
 If `write_spec` is selected and no GitHub issue number is available, search for
 an existing issue first. If none exists and GitHub workflow is in scope, create
-or request a linked issue before writing `specs/GH<issue-number>/product.md` and
-`tech.md`. Do not treat a missing issue number as permission to skip the spec.
+or request a linked issue before writing the resolved `artifacts.product_spec`
+and `artifacts.tech_spec` paths. Do not treat a missing issue number as
+permission to skip the spec.
 
 ## Locale
 
@@ -113,7 +115,7 @@ Do not translate stable machine-facing identifiers:
 - state IDs such as `ready_to_spec`
 - decision values such as `needs_human`
 - artifact IDs such as `product_spec`
-- file paths such as `specs/GH1/product.md`
+- default-pack file paths such as `specs/GH1/product.md`
 - command names and CLI flags
 - JSON keys and schema field names
 
