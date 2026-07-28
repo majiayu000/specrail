@@ -67,7 +67,7 @@ Example rows at the expected precision:
 
 > | Behavior invariant | Implementation area | Verification |
 > | --- | --- | --- |
-> | B-006 authorized self_review with empty lane_failures is blocked | `checks/pr_gate.py` merge-claiming branch | negative fixture: `self_review + valid auth + lane_failures: []` → gate exits blocked; test names the fixture |
+> | B-006 stale heavy authorization is blocked | `checks/pr_gate.py` current-invocation authorization branch | `pytest tests/test_pr_gate_sensitive_routes.py` covers mismatched head and invocation |
 > | B-009 negative fixtures are schema-valid | `examples/fixtures/` | `pytest tests/test_specrail_schema.py` passes on the new fixtures |
 
 ## Boundaries
@@ -77,18 +77,5 @@ Example rows at the expected precision:
 - Preserve dry-run and advisory defaults for automation.
 - Keep stable machine-facing IDs in English.
 
-## Rejection Persistence And Retry
-
-When a gate command in this skill (`checks/route_gate.py`,
-`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
-other than `allowed`, the caller persists the gate's JSON output to
-`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
-missing). This write is orchestrator behavior; the gate itself stays
-read-only. Use the `rejection_items[]` list to fix every defect in a single
-round instead of guessing one item per retry.
-
-On the next retry of the same gate for the same issue or PR, pass
-`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
-the new output contains a `repeat_rejection` section, the same item was
-rejected verbatim twice: stop retrying and report the contract violation to a
-human instead of starting another round.
+Fix every reported rejection item before one bounded retry. Do not persist a
+parallel retry ledger.

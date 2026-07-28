@@ -1,115 +1,86 @@
-# SpecRail v0.1 Specification
+# SpecRail v0.4 Specification
 
 ## Problem
 
-AI-assisted coding makes implementation cheaper, but repository workflow often
-stays implicit. Without a shared state machine, agents and humans disagree about
-whether a request needs clarification, a product spec, implementation, review,
-or release notes.
-
-SpecRail standardizes the repository workflow contract before automation.
+AI-assisted implementation is cheap, but a workflow that mirrors GitHub into
+local ledgers, authorization tiers, and repeated review artifacts creates more
+issues and PRs than it resolves. SpecRail provides a small deterministic
+contract whose verification depth follows risk.
 
 ## Scope
 
 This pack defines:
 
-- issue readiness states
-- feature spec packets
-- pull request review gates
-- agent-first review boundaries
-- human-final review boundaries
+- `fastlane`, `standard`, and `heavy` verification profiles
+- eight Issue states and outcome labels
+- optional product/tech/task spec packets
+- compact review and PR gates
 - deterministic workflow checks
+- human-final approval, merge, security, and release boundaries
 
 ## Non-Goals
 
-- Building a hosted Oz-style control plane.
-- Replacing GitHub issues or pull requests.
-- Granting agents final approval or merge authority.
-- Handling private security reports through public issues.
-- Enforcing language-specific build rules.
+- Building a hosted control plane or a durable local runtime.
+- Replacing GitHub Issues, pull requests, reviews, branches, or CI.
+- Granting agents final approval, force-push, merge, permission, or public
+  security-disclosure authority.
+- Migrating old runtime checkpoint, Goal, tier, or review-round artifacts.
+
+## Verification Profiles
+
+- `fastlane`: small mechanical, documentation, or test fixes. Requires a linked
+  Issue, focused diff, project tests, one review, and a human merge boundary.
+- `standard`: ordinary feature/fix work. Requires a linked Issue, a testable
+  plan, project tests, one independent full review, and at most one diff-only
+  review after P0/P1 fixes.
+- `heavy`: architecture, public contracts, migrations, auth, payments, secrets,
+  permissions, or configured sensitive paths. Requires a complete durable spec
+  packet, independent review, security evidence, and explicit current-invocation
+  human merge authorization.
+
+Sensitive classification always selects `heavy`.
 
 ## Workflow Model
 
 ```text
-new_issue
-  -> needs_info | duplicate | security_private | triaged
-
-triaged
-  -> ready_to_spec | ready_to_implement | reserved_internal
-
-ready_to_spec
-  -> spec_pr_open
-  -> spec_review
-  -> spec_approved
-  -> ready_to_implement
-
-ready_to_implement
-  -> impl_pr_open
-  -> agent_review
-  -> human_review
-  -> ci_green
-  -> merge_ready
-  -> merged
-  -> release_note_drafted
+new_issue -> needs_info | ready_to_spec | ready_to_implement | parked
+needs_info -> ready_to_spec | ready_to_implement | parked
+ready_to_spec -> ready_to_implement | parked
+ready_to_implement -> in_progress | parked
+in_progress -> review | parked
+review -> in_progress | done | parked
+parked -> ready_to_spec | ready_to_implement
+done -> terminal
 ```
 
-## Agent Boundary
+`duplicate`, `abandoned`, and `security_private` are outcome labels, not Issue
+states. CI, review, and merge readiness are PR evidence.
 
-Agents may:
+## Review And PR Gates
 
-- propose labels
-- draft product and tech specs
-- draft implementation plans
-- perform first-pass PR review
-- diagnose CI failures
-- draft release notes
+Review contract v3 permits one full round and, only after P0/P1 fixes, one
+diff-only round. Current unresolved P0/P1 blocks; P2/P3 remain follow-ups on the
+current Issue/PR; outdated hosted findings do not block current head.
 
-Agents must not:
+The PR gate evaluates linked work, exact current head, changed files, CI,
+compact review, clean merge state, profile, sensitive classification, and
+current heavy authorization. Its result is advisory and never approves or
+merges.
 
-- approve pull requests as final authority
-- merge
-- close disputed issues
-- publish secrets or security findings
-- change repository permissions
-- bypass maintainer readiness labels
+## Durable Truth And Resume
 
-## Required Artifacts
-
-Feature work that is not clearly small and actionable requires a spec packet:
-
-```text
-specs/GH<issue-number>/
-  product.md
-  tech.md
-```
-
-Bug fixes may skip the spec packet only when the issue has reproduction steps,
-expected behavior, actual behavior, and an accepted `ready_to_implement` label.
+GitHub Issues, labels, pull requests, reviews, branches, and CI are durable
+truth. An optional local handoff cursor may contain only `completed`, `pending`,
+`blocked`, `artifact_refs`, and `resume_action`. It has no schema, does not
+participate in any gate, and must be refreshed from GitHub on resume.
 
 ## Verification
 
-The first validator is intentionally deterministic:
+- `python3 checks/check_workflow.py --repo . --all-specs`
+- `python3 -m pytest -q`
+- `python3 checks/skill_size_gate.py --repo . --json`
+- `python3 tools/install_codex_skills.py --repo . --check-installed` for a
+  read-only local installation integrity check
 
-- required files exist
-- workflow labels are declared
-- templates include required sections
-- JSON schemas parse
-- optional spec packets contain `product.md` and `tech.md`
-- optional GitHub PR merge evidence can be collected read-only with
-  `checks/github_pr_evidence.py`
-- optional PR merge evidence can be checked with `checks/pr_gate.py`
-- optional GitHub issue evidence can be collected read-only with
-  `checks/github_issue_evidence.py`
-- optional advisory review artifacts can be checked against a diff with
-  `checks/review_json_gate.py`
-- repo-distributed skills can be pinned with `skills-lock.json`
-
-LLM-based triage and review should be added only after the deterministic checks
-are stable.
-
-## Optional Resume Cursor
-
-A queue handoff may use a local cursor containing only `completed`, `pending`,
-`blocked`, `artifact_refs`, and `resume_action`. The cursor has no schema and
-does not participate in route, PR, review, authorization, or merge decisions.
-GitHub Issues, PRs, branches, reviews, and CI remain durable truth.
+Core pack limits are 18 `checks/*.py` modules, 8 JSON schemas, 200 lines for the
+queue skill, 60 lines for implx, and three files/12 KiB for fastlane startup.

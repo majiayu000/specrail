@@ -7,7 +7,7 @@ description: Use only for explicit implx requests. Plain implx drains the action
 
 Implx is the one-line router for `skills/specrail-implement-queue/SKILL.md`.
 
-## Tiered Read Set
+## Profile Read Set
 
 Fastlane startup reads exactly `AGENTS.md`, `workflow.yaml`, and this file
 (maximum 12 KiB). Load phase skills only when entering that phase. A full queue

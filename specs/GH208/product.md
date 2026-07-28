@@ -93,15 +93,15 @@ SpecRail 的治理合同已经从辅助代理交付的最小约束，膨胀为�
 
 ## 验收标准
 
-- [ ] `checks/*.py` 文件数不超过 18，schema 文件数不超过 8。
-- [ ] queue skill 不超过 200 行，implx 不超过 60 行。
-- [ ] fastlane 强制阅读集不超过 3 个文件、12 KiB。
-- [ ] 八状态 workflow、mutually exclusive readiness/parked 校验通过。
-- [ ] runtime/Goal/lease/attempt-ledger 模块及其 schema、fixture、测试入口删除。
-- [ ] review contract 对 P0/P1、P2/P3、outdated hosted thread 和两轮上限有正反测试。
-- [ ] `python3 checks/check_workflow.py --repo . --all-specs` 通过。
-- [ ] `python3 -m pytest -q` 通过。
-- [ ] fastlane、standard、heavy 三条 E2E fixture 通过。
+- [x] `checks/*.py` 文件数不超过 18，schema 文件数不超过 8。
+- [x] queue skill 不超过 200 行，implx 不超过 60 行。
+- [x] fastlane 强制阅读集不超过 3 个文件、12 KiB。
+- [x] 八状态 workflow、mutually exclusive readiness/parked 校验通过。
+- [x] runtime/Goal/lease/attempt-ledger 模块及其 schema、fixture、测试入口删除。
+- [x] review contract 对 P0/P1、P2/P3、outdated hosted thread 和两轮上限有正反测试。
+- [x] `python3 checks/check_workflow.py --repo . --all-specs` 通过。
+- [x] `python3 -m pytest -q` 通过。
+- [x] fastlane、standard、heavy 三条 E2E fixture 通过。
 
 ## 边界情况清单
 

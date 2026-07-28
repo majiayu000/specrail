@@ -253,12 +253,12 @@ orchestrator 执行。
 
 ## 测试计划
 
-- [ ] Unit tests：八状态、profile 分类、review policy、legacy rejection、installed
+- [x] Unit tests：八状态、profile 分类、review policy、legacy rejection、installed
   hash doctor。
-- [ ] Integration tests：route gate、PR gate、sensitive heavy path、pack validator。
-- [ ] Manual verification：统计 checker/schema/skill 行数与 read-set bytes；检查
+- [x] Integration tests：route gate、PR gate、sensitive heavy path、pack validator。
+- [x] Manual verification：统计 checker/schema/skill 行数与 read-set bytes；检查
   `git diff --name-only` 未越出 manifest 子树。
-- [ ] Full verification：
+- [x] Full verification：
   - `python3 checks/check_workflow.py --repo .`
   - `python3 checks/check_workflow.py --repo . --all-specs`
   - `/usr/bin/python3 -m pytest -q`

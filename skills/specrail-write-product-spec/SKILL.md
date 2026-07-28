@@ -78,41 +78,35 @@ prerequisite evidence recorded" or "failed + retried + evidence reused".
 
 ## Worked example
 
-The invariants below are the density target. They describe a merge-review
-gate: independent review is required before merge; if the reviewer lane fails,
-the item degrades instead of silently substituting self-review.
+The invariants below are the density target. They describe a bounded
+merge-review gate with risk-based review sources.
 
 > 1. B-001 每个 merge 候选项必须记录 review 来源，取值为闭集
 >    {independent_lane, self_review}；缺失、为空或越界取值时该项判为
 >    blocked。
-> 2. B-002 reviewer lane 失败（usage limit、崩溃、零输出）时，对应项必须
->    降级为 blocked 或 needs_human，并在 checkpoint 中记录失败事件
->    （lane id、失败类别、证据）。
-> 3. B-003 失败事件记录是追加式的：后续成功不得删除或改写已记录的失败。
-> 4. B-004 `lane_failures` 为空列表与字段缺失等价，均视为"无失败记录"。
-> 5. B-005 基于 self_review 的 merge 必须持有专用授权记录，且授权与队列
->    drain 授权分离；复用队列授权视同无授权。
-> 6. B-006 即使授权有效，`review_source: self_review` 且无已记录的 lane
->    失败时仍必须阻断——self-review 只能是失败恢复路径，不能成为跳过
->    独立审查的捷径。
-> 7. B-007 失败的 lane 不得在同一项上署名"审查通过"；重试必须使用新的
->    lane id。
-> 8. B-008 gate 对已发生的 merge（`merged`）与待 merge（`merge_ready`）
->    施加同一规则；"先斩后奏"的历史记录同样被判为违规。
+> 2. B-002 fastlane 可以使用 self-review；standard 和 heavy 必须使用
+>    independent_lane，来源不匹配时一次返回全部问题。
+> 3. B-003 review 最多两轮：第一轮必须 full，第二轮只能 diff-only；第三轮
+>    返回 needs_human。
+> 4. B-004 当前 head 上未解决的 P0/P1 必须阻断，P2/P3 只进入 follow-ups。
+> 5. B-005 outdated hosted finding 不得单独阻断当前 head。
+> 6. B-006 heavy 候选必须持有绑定当前 head 与当前 gate invocation 的人类
+>    merge authorization；旧授权不得复用。
+> 7. B-007 CI、review 和 gate query 必须绑定同一个当前 head。
+> 8. B-008 gate 对缺失和矛盾证据必须聚合报告，不得逐项失败。
 > 9. B-009 负例 fixture 必须 schema 合法但被 gate 拒绝；schema 非法的
 >    负例测不到 gate 逻辑，不算覆盖。
-> 10. B-010 兼容：存量 checkpoint 缺少新字段时按保守值处理（等价于
->     "无独立审查"），不得默认放行。
+> 10. B-010 旧 runtime/tier/review-round artifact 必须返回 unsupported 与
+>     重建指令，不得解释为当前授权。
 >
 > Boundary checklist verdict — Cancellation / interruption: N/A. The gate is
 > an offline check with no long-running session state; rerunning it is
 > idempotent after interruption. This verdict has no `B-xxx` ID because it is
 > not a behavior invariant.
 
-Note how B-006 exists only because B-001 (source recorded) and B-005
-(authorization recorded) were combined with "prerequisite evidence absent".
-That combination was a real post-merge defect in this repo's history; specs
-that stop at B-001/B-005 let it through.
+Note how B-006 combines risk classification, current-head identity, invocation
+identity, and authorization. Specs that mention those fields independently but
+omit the cross-product still permit stale authorization.
 
 ## Density rule
 
@@ -134,19 +128,5 @@ reason you would defend in review.
   either locale.
 - Do not invent invariants to satisfy a length target; the heuristic bounds
   effort, it is not a quota.
-
-## Rejection Persistence And Retry
-
-When a gate command in this skill (`checks/route_gate.py`,
-`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
-other than `allowed`, the caller persists the gate's JSON output to
-`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
-missing). This write is orchestrator behavior; the gate itself stays
-read-only. Use the `rejection_items[]` list to fix every defect in a single
-round instead of guessing one item per retry.
-
-On the next retry of the same gate for the same issue or PR, pass
-`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
-the new output contains a `repeat_rejection` section, the same item was
-rejected verbatim twice: stop retrying and report the contract violation to a
-human instead of starting another round.
+- Fix every reported rejection item before one bounded retry. Do not persist a
+  parallel retry ledger.
