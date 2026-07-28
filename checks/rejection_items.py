@@ -50,29 +50,27 @@ class RejectionItemError(ValueError):
     """Raised when a gate tries to build an invalid rejection item."""
 
 
-def _text_tokens(value: str) -> tuple[str, ...]:
-    normalized = unicodedata.normalize("NFKC", value).casefold()
-    tokens: list[str] = []
-    current: list[str] = []
+def _compact_text(value: str) -> str:
+    # Re-decompose after NFKC so a combining mark cannot hide in a composed
+    # character before the category filter removes M* code points.
+    normalized = unicodedata.normalize(
+        "NFD",
+        unicodedata.normalize("NFKC", value).casefold(),
+    )
+    characters: list[str] = []
     for character in normalized:
         category = unicodedata.category(character)
-        if character.isspace() or category[0] in {"P", "S", "Z"}:
-            if current:
-                tokens.append("".join(current))
-                current = []
-        else:
-            current.append(character)
-    if current:
-        tokens.append("".join(current))
-    return tuple(tokens)
+        if not character.isspace() and category[0] not in {"C", "M", "P", "S", "Z"}:
+            characters.append(character)
+    return "".join(characters)
 
 
-_NON_SUBSTANTIVE_TOKEN_SEQUENCES = tuple(
+_NON_SUBSTANTIVE_STRINGS = tuple(
     sorted(
         {
-            tokens
+            compact
             for value in _NON_SUBSTANTIVE_VALUES
-            if (tokens := _text_tokens(value))
+            if (compact := _compact_text(value))
         }
     )
 )
@@ -82,18 +80,18 @@ def is_substantive_text(value: Any) -> bool:
     """Reject text composed only of declared placeholders and separators."""
     if not isinstance(value, str):
         return False
-    tokens = _text_tokens(value)
-    if not tokens:
+    compact = _compact_text(value)
+    if not compact:
         return False
     reachable = {0}
-    for start in range(len(tokens)):
+    for start in range(len(compact)):
         if start not in reachable:
             continue
-        for placeholder in _NON_SUBSTANTIVE_TOKEN_SEQUENCES:
+        for placeholder in _NON_SUBSTANTIVE_STRINGS:
             end = start + len(placeholder)
-            if tokens[start:end] == placeholder:
+            if compact[start:end] == placeholder:
                 reachable.add(end)
-    return len(tokens) not in reachable
+    return len(compact) not in reachable
 
 
 def _slug(text: str) -> str:

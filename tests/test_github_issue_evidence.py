@@ -281,6 +281,15 @@ def test_issue_done_when_checklist_becomes_bound_testable_plan() -> None:
         '“TBD"',
         "TBD/TODO",
         "**「`TBD/TODO`」**",
+        "\u200b",
+        "\u0301",
+        "TBD\u200bTODO",
+        "TBD\u0301TODO",
+        "TBDTODO",
+        "pendingTBD",
+        "TODOunknownnull",
+        "comingsoon",
+        "tobedeterminedTODO",
     ],
 )
 def test_issue_done_when_placeholder_is_not_a_testable_plan(item: str) -> None:
