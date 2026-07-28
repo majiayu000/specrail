@@ -430,6 +430,12 @@ def evaluate_review_gate(
                             f"round 2 finding {finding_id} must preserve prior "
                             f"{field}"
                         )
+                prior_origin = prior_finding.get("origin", "local")
+                current_origin = current_finding.get("origin", "local")
+                if current_origin != prior_origin:
+                    reasons.append(
+                        f"round 2 finding {finding_id} must preserve prior origin"
+                    )
             if not prior_result["reasons"] and not prior_result["missing"]:
                 satisfied.append("round 1 full-review evidence validated")
 
