@@ -19,7 +19,7 @@ GH-93
 
 ## 验证
 
-- [ ] `SP93-T2` 全量回归。Covers: none(仓库级回归,非本 issue invariant)。Owner: agent. Done when: 两条命令全绿. Verify: `python3 checks/check_workflow.py --repo . --all-specs && python3 -m pytest -q`
+- [ ] `SP93-T2` 全量回归。Covers: none (仓库级回归,非本 issue invariant)。Owner: agent. Done when: 两条命令全绿. Verify: `python3 checks/check_workflow.py --repo . --all-specs && python3 -m pytest -q`
 
 ## Handoff Notes
 

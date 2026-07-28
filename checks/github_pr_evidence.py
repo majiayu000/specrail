@@ -12,7 +12,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from github_evidence_common import EvidenceError, json_object, normalize_checks
+from github_evidence_common import (
+    EvidenceError,
+    collect_head_push_boundary as _collect_head_push_boundary,
+    collect_hosted_findings as _collect_hosted_findings,
+    combine_review_findings,
+    json_object,
+    normalize_checks,
+)
 from github_issue_reference import normalize_issue_reference, relation_snapshot
 from sensitive_enforcement import classify_sensitive_changes, sensitive_registry
 from specrail_lib import (
@@ -31,6 +38,7 @@ PR_VIEW_FIELDS = [
     "state",
     "isDraft",
     "headRefOid",
+    "headRefName",
     "baseRefOid",
     "mergeStateStatus",
     "body",
@@ -40,36 +48,6 @@ PR_VIEW_FIELDS = [
 ]
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 PROFILES = {"fastlane", "standard", "heavy"}
-HOSTED_SEVERITY_RE = re.compile(
-    r"(?i)(?:^|[^A-Z0-9])\[?(P[0-3])\]?(?=$|[^A-Z0-9])"
-)
-HOSTED_REVIEW_QUERY = """
-query SpecRailHostedFindings(
-  $owner: String!, $name: String!, $number: Int!, $cursor: String
-) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      headRefOid
-      reviewThreads(first: 100, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
-        nodes {
-          id
-          isResolved
-          isOutdated
-          comments(first: 1) {
-            nodes {
-              body
-              originalCommit { oid }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-""".strip()
-
-
 def parse_github_repo(raw: str) -> tuple[str, str]:
     value = raw.strip()
     if not REPO_PATTERN.fullmatch(value):
@@ -115,6 +93,34 @@ def run_gh_json(args: list[str]) -> Any:
         return json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise EvidenceError(f"gh command returned invalid JSON: {exc.msg}") from exc
+
+
+def collect_head_push_boundary(
+    github_repo: str,
+    head_ref: str,
+    head_sha: str,
+) -> str:
+    parse_github_repo(github_repo)
+    return _collect_head_push_boundary(
+        run_gh_json,
+        github_repo,
+        head_ref,
+        head_sha,
+    )
+
+
+def collect_hosted_findings(
+    github_repo: str,
+    pr_number: int,
+    expected_head: str,
+) -> list[dict[str, Any]]:
+    parse_github_repo(github_repo)
+    return _collect_hosted_findings(
+        run_gh_json,
+        github_repo,
+        pr_number,
+        expected_head,
+    )
 
 
 def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
@@ -192,240 +198,6 @@ def collect_changed_files(
     if len(set(paths)) != len(paths):
         raise EvidenceError("pull files REST snapshot contains duplicate paths")
     return sorted(paths)
-
-
-def _hosted_review_threads(payload: Any) -> tuple[str, dict[str, Any]]:
-    try:
-        pull_request = payload["data"]["repository"]["pullRequest"]
-        threads = pull_request["reviewThreads"]
-    except (KeyError, TypeError) as exc:
-        raise EvidenceError("hosted review query returned malformed evidence") from exc
-    if not isinstance(pull_request, dict) or not isinstance(threads, dict):
-        raise EvidenceError("hosted review query returned malformed evidence")
-    head_sha = _require_string(pull_request, "headRefOid")
-    return head_sha, threads
-
-
-def collect_hosted_findings(
-    github_repo: str,
-    pr_number: int,
-    expected_head: str,
-) -> list[dict[str, Any]]:
-    """Collect hosted findings for profiles requiring independent review."""
-    owner, name = parse_github_repo(github_repo)
-    cursor: str | None = None
-    seen_cursors: set[str] = set()
-    findings: list[dict[str, Any]] = []
-    for _page in range(1, 1001):
-        args = [
-            "api",
-            "graphql",
-            "-F",
-            f"owner={owner}",
-            "-F",
-            f"name={name}",
-            "-F",
-            f"number={pr_number}",
-            "-f",
-            f"query={HOSTED_REVIEW_QUERY}",
-        ]
-        if cursor is not None:
-            args[2:2] = ["-F", f"cursor={cursor}"]
-        head_sha, threads = _hosted_review_threads(run_gh_json(args))
-        if head_sha != expected_head:
-            raise EvidenceError("PR head changed while collecting hosted findings")
-        nodes = threads.get("nodes")
-        page_info = threads.get("pageInfo")
-        if not isinstance(nodes, list) or not isinstance(page_info, dict):
-            raise EvidenceError("hosted review thread page is malformed")
-        for index, thread in enumerate(nodes, start=1):
-            if not isinstance(thread, dict):
-                raise EvidenceError(f"hosted review thread #{index} must be an object")
-            thread_id = _require_string(thread, "id")
-            resolved = thread.get("isResolved")
-            outdated = thread.get("isOutdated")
-            comments = thread.get("comments")
-            if not isinstance(resolved, bool) or not isinstance(outdated, bool):
-                raise EvidenceError(
-                    f"hosted review thread {thread_id} requires resolution state"
-                )
-            if not isinstance(comments, dict) or not isinstance(comments.get("nodes"), list):
-                raise EvidenceError(
-                    f"hosted review thread {thread_id} requires root comment evidence"
-                )
-            comment_nodes = comments["nodes"]
-            if not comment_nodes:
-                raise EvidenceError(
-                    f"hosted review thread {thread_id} requires a root comment"
-                )
-            root = comment_nodes[0]
-            if not isinstance(root, dict) or not isinstance(root.get("body"), str):
-                raise EvidenceError(
-                    f"hosted review thread {thread_id} root comment requires body"
-                )
-            body = root["body"].strip()
-            severity_match = HOSTED_SEVERITY_RE.search(body)
-            if severity_match is None:
-                continue
-            summary = next((line.strip() for line in body.splitlines() if line.strip()), "")
-            finding: dict[str, Any] = {
-                "id": f"hosted:{thread_id}",
-                "severity": severity_match.group(1).upper(),
-                "status": "resolved" if resolved else "unresolved",
-                "summary": summary[:240],
-                "origin": "hosted",
-                "outdated": outdated,
-            }
-            original_commit = root.get("originalCommit")
-            if original_commit is not None:
-                if (
-                    not isinstance(original_commit, dict)
-                    or not isinstance(original_commit.get("oid"), str)
-                    or re.fullmatch(r"[0-9a-fA-F]{40}", original_commit["oid"]) is None
-                ):
-                    raise EvidenceError(
-                        f"hosted review thread {thread_id} original commit is malformed"
-                    )
-                finding["_original_head_sha"] = original_commit["oid"]
-            findings.append(finding)
-        has_next = page_info.get("hasNextPage")
-        if not isinstance(has_next, bool):
-            raise EvidenceError("hosted review pageInfo.hasNextPage must be boolean")
-        if not has_next:
-            break
-        next_cursor = page_info.get("endCursor")
-        if not isinstance(next_cursor, str) or not next_cursor.strip():
-            raise EvidenceError("hosted review pagination requires endCursor")
-        cursor = next_cursor.strip()
-        if cursor in seen_cursors:
-            raise EvidenceError("hosted review pagination cursor did not advance")
-        seen_cursors.add(cursor)
-    else:
-        raise EvidenceError("hosted review pagination exceeded 1000 pages")
-    identifiers = [finding["id"] for finding in findings]
-    if len(set(identifiers)) != len(identifiers):
-        raise EvidenceError("hosted review findings contain duplicate thread ids")
-    return sorted(findings, key=lambda item: str(item["id"]))
-
-
-def combine_review_findings(
-    review: dict[str, Any],
-    hosted_findings: list[dict[str, Any]],
-) -> dict[str, Any]:
-    hosted_by_id: dict[str, dict[str, Any]] = {}
-    for finding in hosted_findings:
-        finding_id = finding.get("id")
-        if not isinstance(finding_id, str) or not finding_id:
-            raise EvidenceError("hosted review finding id must be a non-empty string")
-        if finding_id in hosted_by_id:
-            raise EvidenceError("hosted review findings contain duplicate thread ids")
-        hosted_by_id[finding_id] = dict(finding)
-
-    def normalize_local_artifact(
-        artifact: dict[str, Any],
-        *,
-        trusted_history: bool = False,
-    ) -> dict[str, Any]:
-        normalized = dict(artifact)
-        local = artifact.get("findings")
-        if not isinstance(local, list):
-            raise EvidenceError("review.findings must be an array")
-        normalized_findings: list[Any] = []
-        for finding in local:
-            if not isinstance(finding, dict):
-                normalized_findings.append(finding)
-                continue
-            sanitized = {
-                key: value
-                for key, value in finding.items()
-                if key not in {"_original_head_sha", "origin", "outdated"}
-            }
-            canonical = hosted_by_id.get(str(sanitized.get("id")))
-            if (
-                trusted_history
-                and canonical is not None
-                and canonical.get("_original_head_sha") == artifact.get("head_sha")
-            ):
-                sanitized.update(
-                    {
-                        "origin": "hosted",
-                        "outdated": False,
-                    }
-                )
-            normalized_findings.append(sanitized)
-        normalized["findings"] = normalized_findings
-        prior = artifact.get("prior_review")
-        if isinstance(prior, dict):
-            normalized["prior_review"] = normalize_local_artifact(
-                prior,
-                trusted_history=True,
-            )
-        return normalized
-
-    combined = normalize_local_artifact(review)
-    local_findings = combined.get("findings")
-    if not isinstance(local_findings, list):
-        raise EvidenceError("review.findings must be an array")
-    merged: list[Any] = []
-    matched_hosted_ids: set[str] = set()
-    for finding in local_findings:
-        if not isinstance(finding, dict):
-            merged.append(finding)
-            continue
-        canonical = hosted_by_id.get(str(finding.get("id")))
-        if canonical is None:
-            merged.append(finding)
-            continue
-        merged.append(
-            {
-                **finding,
-                **{
-                    key: value
-                    for key, value in canonical.items()
-                    if key != "_original_head_sha"
-                },
-            }
-        )
-        matched_hosted_ids.add(str(finding.get("id")))
-    merged.extend(
-        {
-            key: value
-            for key, value in finding.items()
-            if key != "_original_head_sha"
-        }
-        for finding_id, finding in hosted_by_id.items()
-        if finding_id not in matched_hosted_ids
-    )
-    if review.get("round") == 2:
-        merged = [
-            {
-                **finding,
-                **(
-                    {"introduced_by_diff": False}
-                    if finding.get("origin") == "hosted"
-                    and finding.get("severity") in {"P0", "P1"}
-                    and finding.get("status") == "unresolved"
-                    and not finding.get("outdated", False)
-                    else {}
-                ),
-            }
-            for finding in merged
-        ]
-    combined["findings"] = merged
-    unresolved = [
-        finding
-        for finding in merged
-        if isinstance(finding, dict)
-        and finding.get("status") == "unresolved"
-        and not finding.get("outdated", False)
-    ]
-    if any(finding.get("severity") in {"P0", "P1"} for finding in unresolved):
-        combined["verdict"] = "blocking"
-    elif any(finding.get("severity") in {"P2", "P3"} for finding in unresolved):
-        combined["verdict"] = "non_blocking"
-    else:
-        combined["verdict"] = "clean"
-    return combined
 
 
 def _effective_collection_profile(
@@ -648,6 +420,13 @@ def collect_evidence(
         else None
     )
     before_head = _require_string(before, "headRefOid")
+    prior_review_boundary = None
+    if isinstance(review.get("prior_review"), dict):
+        prior_review_boundary = collect_head_push_boundary(
+            github_repo,
+            _require_string(before, "headRefName"),
+            before_head,
+        )
     before_relation = relation_snapshot(before)
     before_paths = _changed_files(before)
     linked_issue = _linked_issue(before, expected_issue, issue_payload)
@@ -691,6 +470,17 @@ def collect_evidence(
             "PR file set changed while collecting gate evidence; rerun collection"
         )
     after_head = _require_string(after, "headRefOid")
+    if prior_review_boundary is not None:
+        after_boundary = collect_head_push_boundary(
+            github_repo,
+            _require_string(after, "headRefName"),
+            after_head,
+        )
+        if after_boundary != prior_review_boundary:
+            raise EvidenceError(
+                "PR head push activity changed while collecting gate evidence; "
+                "rerun collection"
+            )
     after_hosted = (
         []
         if not collect_hosted
@@ -706,7 +496,11 @@ def collect_evidence(
         repository=github_repo,
         profile=profile,
         gate_invocation_id=gate_invocation_id,
-        review=combine_review_findings(review, after_hosted),
+        review=combine_review_findings(
+            review,
+            after_hosted,
+            prior_review_boundary=prior_review_boundary,
+        ),
         expected_issue=expected_issue,
         issue_payload=issue_payload,
         repo=repo,

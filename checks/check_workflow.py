@@ -516,6 +516,28 @@ def _product_behavior_ids(text: str) -> set[str]:
     return _behavior_ids(section.group(1)) if section else set()
 
 
+BEHAVIOR_COVERAGE_ITEM = (
+    r"B-[0-9]{3}(?:\s*(?:\.\.|…|–|—)\s*B-[0-9]{3})?"
+)
+BEHAVIOR_COVERAGE_LIST = re.compile(
+    rf"{BEHAVIOR_COVERAGE_ITEM}"
+    rf"(?:\s*(?:[,，]\s*|\s+){BEHAVIOR_COVERAGE_ITEM})*"
+)
+COVERS_NONE = re.compile(r"none \(\S(?:.*\S)?\)", re.IGNORECASE)
+
+
+def _task_behavior_coverage(text: str) -> set[str] | None:
+    if BEHAVIOR_COVERAGE_LIST.fullmatch(text) is None:
+        return None
+    for start, end in re.findall(
+        r"\bB-([0-9]{3})\s*(?:\.\.|…|–|—)\s*B-([0-9]{3})\b",
+        text,
+    ):
+        if int(start) > int(end):
+            return None
+    return _behavior_ids(text)
+
+
 def validate_task_plan(
     path: Path,
     issue_number: str | None,
@@ -546,7 +568,7 @@ def validate_task_plan(
         if issue_number and not task_id.startswith(prefix):
             errors.append(f"{path}:{line_number}: task ID {task_id} must start with {prefix}")
         covers = re.search(
-            r"\bCovers:\s*(.*?)(?=\s*(?:[|.;。]\s*)?"
+            r"\bCovers:\s*(.*?)(?=\s*\||\s*(?:[.;。；]\s*)?"
             r"(?:Owner|Done when|Verify|Dependencies|Depends on):|$)",
             line,
         )
@@ -554,28 +576,29 @@ def validate_task_plan(
             errors.append(f"{path}:{line_number}: task {task_id} missing Covers:")
         elif product_ids:
             covers_text = covers.group(1).strip()
-            task_coverage = _behavior_ids(covers_text)
-            none_match = re.fullmatch(r"none\s*\((.*?)\)", covers_text, re.IGNORECASE)
-            if none_match and not none_match.group(1).strip():
-                errors.append(
-                    f"{path}:{line_number}: task {task_id} Covers: "
-                    "must use none (<non-empty reason>)"
-                )
-            elif none_match:
+            coverage_value = re.sub(r"[.;。；]\s*$", "", covers_text)
+            task_coverage = _task_behavior_coverage(coverage_value)
+            if COVERS_NONE.fullmatch(coverage_value):
                 pass
-            elif re.search(r"\bnone\b", covers_text, re.IGNORECASE):
+            elif re.search(r"\bnone\b", coverage_value, re.IGNORECASE):
                 expected = (
                     "must use either defined B-IDs or none (<non-empty reason>)"
-                    if task_coverage
+                    if _behavior_ids(coverage_value)
                     else "must use none (<non-empty reason>)"
                 )
                 errors.append(
                     f"{path}:{line_number}: task {task_id} Covers: {expected}"
                 )
-            elif not task_coverage:
+            elif task_coverage is None and not _behavior_ids(coverage_value):
                 errors.append(
                     f"{path}:{line_number}: task {task_id} Covers: "
                     "must name at least one defined B-ID"
+                )
+            elif task_coverage is None:
+                errors.append(
+                    f"{path}:{line_number}: task {task_id} Covers: "
+                    "must contain only B-ID lists/ranges or "
+                    "none (<non-empty reason>)"
                 )
             else:
                 unknown = sorted(task_coverage - product_ids)

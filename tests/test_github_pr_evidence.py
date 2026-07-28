@@ -12,6 +12,7 @@ from github_evidence_common import EvidenceError
 from github_pr_evidence import (
     build_evidence,
     collect_evidence,
+    collect_head_push_boundary,
     collect_hosted_findings,
     collect_pr_view,
     combine_review_findings,
@@ -26,6 +27,7 @@ def pr_payload(head: str = "a" * 40) -> dict[str, object]:
         "state": "OPEN",
         "isDraft": False,
         "headRefOid": head,
+        "headRefName": "feature",
         "baseRefOid": "b" * 40,
         "mergeStateStatus": "CLEAN",
         "body": "Fixes #208",
@@ -179,6 +181,42 @@ def test_collect_pr_view_rejects_incomplete_rest_snapshot(
         collect_pr_view("acme/widgets", 42)
 
 
+def test_collect_head_push_boundary_uses_exact_server_activity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "github_pr_evidence.run_gh_json",
+        lambda _args: [
+            {
+                "activity_type": "push",
+                "ref": "refs/heads/feature",
+                "after": "a" * 40,
+                "timestamp": "2026-07-28T09:30:00Z",
+            },
+            {
+                "activity_type": "push",
+                "ref": "refs/heads/other",
+                "after": "a" * 40,
+                "timestamp": "2026-07-28T09:20:00Z",
+            },
+        ],
+    )
+
+    assert (
+        collect_head_push_boundary("acme/widgets", "feature", "a" * 40)
+        == "2026-07-28T09:30:00Z"
+    )
+
+
+def test_collect_head_push_boundary_fails_closed_without_exact_activity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("github_pr_evidence.run_gh_json", lambda _args: [])
+
+    with pytest.raises(EvidenceError, match="exactly one trusted"):
+        collect_head_push_boundary("acme/widgets", "feature", "a" * 40)
+
+
 def test_hosted_findings_preserve_resolution_and_outdated_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -199,7 +237,13 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                         "nodes": [
                                             {
                                                 "body": "[P1] Current defect",
+                                                "createdAt": "2026-07-28T10:00:00Z",
                                                 "originalCommit": {"oid": "a" * 40},
+                                                "pullRequestReview": {
+                                                    "id": "PRR_current",
+                                                    "submittedAt": "2026-07-28T10:01:00Z",
+                                                    "commit": {"oid": "a" * 40},
+                                                },
                                             }
                                         ]
                                     },
@@ -212,7 +256,13 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                         "nodes": [
                                             {
                                                 "body": "P1 old defect",
+                                                "createdAt": "2026-07-28T09:00:00Z",
                                                 "originalCommit": {"oid": "b" * 40},
+                                                "pullRequestReview": {
+                                                    "id": "PRR_old",
+                                                    "submittedAt": "2026-07-28T09:01:00Z",
+                                                    "commit": {"oid": "b" * 40},
+                                                },
                                             }
                                         ]
                                     },
@@ -270,6 +320,7 @@ def test_local_review_cannot_self_report_hosted_or_outdated_provenance() -> None
 
 def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     prior = review(head="b" * 40)
+    prior["artifact_id"] = "PRR_prior"
     prior["base_head_sha"] = "c" * 40
     prior["diff_sha256"] = "d" * 64
     prior["verdict"] = "blocking"
@@ -314,10 +365,18 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
             "origin": "hosted",
             "outdated": True,
             "_original_head_sha": "b" * 40,
+            "_created_at": "2026-07-28T09:01:01Z",
+            "_review_id": "PRR_prior",
+            "_review_submitted_at": "2026-07-28T09:01:00Z",
+            "_review_head_sha": "b" * 40,
         }
     ]
 
-    combined = combine_review_findings(current, hosted)
+    combined = combine_review_findings(
+        current,
+        hosted,
+        prior_review_boundary="2026-07-28T09:30:00Z",
+    )
 
     assert [finding["id"] for finding in combined["findings"]] == [
         "hosted:thread-1"
@@ -333,10 +392,11 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     assert gate["decision"] == "allowed", gate["reasons"]
 
 
-def test_round_two_cannot_backfill_prior_provenance_from_current_head_thread(
+def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prior = review(head="b" * 40)
+    prior["artifact_id"] = "PRR_late"
     prior.update(
         {
             "base_head_sha": "c" * 40,
@@ -344,10 +404,10 @@ def test_round_two_cannot_backfill_prior_provenance_from_current_head_thread(
             "verdict": "blocking",
             "findings": [
                 {
-                    "id": "hosted:thread-current",
+                    "id": "hosted:thread-late",
                     "severity": "P1",
                     "status": "unresolved",
-                    "summary": "[P1] Current-head-only blocker.",
+                    "summary": "[P1] Late old-head blocker.",
                     "origin": "hosted",
                     "outdated": False,
                     "fix_paths": ["src/app.py"],
@@ -365,10 +425,10 @@ def test_round_two_cannot_backfill_prior_provenance_from_current_head_thread(
             "prior_review": prior,
             "findings": [
                 {
-                    "id": "hosted:thread-current",
+                    "id": "hosted:thread-late",
                     "severity": "P1",
                     "status": "resolved",
-                    "summary": "[P1] Current-head-only blocker.",
+                    "summary": "[P1] Late old-head blocker.",
                     "origin": "hosted",
                     "outdated": False,
                     "introduced_by_diff": False,
@@ -386,14 +446,20 @@ def test_round_two_cannot_backfill_prior_provenance_from_current_head_thread(
                         "reviewThreads": {
                             "nodes": [
                                 {
-                                    "id": "thread-current",
+                                    "id": "thread-late",
                                     "isResolved": True,
-                                    "isOutdated": False,
+                                    "isOutdated": True,
                                     "comments": {
                                         "nodes": [
                                             {
-                                                "body": "[P1] Current-head-only blocker.",
-                                                "originalCommit": {"oid": "a" * 40},
+                                                "body": "[P1] Late old-head blocker.",
+                                                "createdAt": "2026-07-28T10:00:00Z",
+                                                "originalCommit": {"oid": "b" * 40},
+                                                "pullRequestReview": {
+                                                    "id": "PRR_late",
+                                                    "submittedAt": "2026-07-28T10:01:00Z",
+                                                    "commit": {"oid": "b" * 40},
+                                                },
                                             }
                                         ]
                                     },
@@ -411,8 +477,12 @@ def test_round_two_cannot_backfill_prior_provenance_from_current_head_thread(
     )
 
     hosted = collect_hosted_findings("acme/widgets", 42, "a" * 40)
-    assert hosted[0]["_original_head_sha"] == "a" * 40
-    combined = combine_review_findings(current, hosted)
+    assert hosted[0]["_original_head_sha"] == "b" * 40
+    combined = combine_review_findings(
+        current,
+        hosted,
+        prior_review_boundary="2026-07-28T09:30:00Z",
+    )
     gate = evaluate_review_gate(combined, "", verify_diff=False)
 
     assert gate["decision"] == "blocked"
@@ -542,6 +612,39 @@ def test_collect_evidence_rejects_head_drift(monkeypatch: pytest.MonkeyPatch) ->
             profile="standard",
             gate_invocation_id="gate-1",
             review=review(),
+        )
+
+
+def test_collect_evidence_rejects_head_push_activity_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshots = [pr_payload(), pr_payload()]
+    boundaries = [
+        "2026-07-28T09:30:00Z",
+        "2026-07-28T09:31:00Z",
+    ]
+    current_review = review()
+    current_review["prior_review"] = review(head="b" * 40)
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_pr_view",
+        lambda _repo, _pr: snapshots.pop(0),
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_head_push_boundary",
+        lambda *_args: boundaries.pop(0),
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_hosted_findings",
+        lambda *_args: [],
+    )
+
+    with pytest.raises(EvidenceError, match="push activity changed"):
+        collect_evidence(
+            "acme/widgets",
+            42,
+            profile="standard",
+            gate_invocation_id="gate-1",
+            review=current_review,
         )
 
 
