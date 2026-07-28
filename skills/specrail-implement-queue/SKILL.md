@@ -112,7 +112,9 @@ One reviewer lane per PR is the default. The canonical
 - Outdated hosted findings do not block.
 
 Use `checks/review_json_gate.py` for the artifact. The skill is advisory and
-cannot approve or merge.
+cannot approve or merge. Raw current and embedded prior review artifacts never
+contain `review_attestation`; the trusted host supplies one separate current
+attestation, which also binds prior artifact ID and head for round 2.
 
 ## PR Gate
 

@@ -10,6 +10,7 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from _lib.issue_labels import validate_issue_labels
 from github_evidence_common import (
     blocked_route_result as blocked_result,
     issue_route_evidence_errors,
@@ -248,15 +249,13 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             args,
             [*reasons, f"GitHub issue state must be OPEN; got {github_state}"],
         )
-    outcome_labels = {
-        str(label)
-        for label in (evidence.get("outcomes") if isinstance(evidence.get("outcomes"), list) else [])
-        if isinstance(label, str)
-    }
-    outcome_labels.update(
-        label for label in labels if label in TERMINAL_BLOCKING_STATES
-    )
-    blocking_outcomes = sorted(outcome_labels - {"parked"})
+    try:
+        _label_state, outcome_labels = validate_issue_labels(config, labels)
+    except SpecRailError as exc:
+        return blocked_result(
+            route, explicit_state, args, [*reasons, str(exc)]
+        )
+    blocking_outcomes = sorted(set(outcome_labels) - {"parked"})
     if blocking_outcomes:
         return blocked_result(
             route,

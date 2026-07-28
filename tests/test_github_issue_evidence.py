@@ -294,6 +294,60 @@ def test_visible_checklist_is_extracted_around_hidden_examples() -> None:
     assert plan["items"] == ["visible result"]
 
 
+@pytest.mark.parametrize("indent", ["", " ", "  ", "   "])
+def test_commonmark_fence_allows_at_most_three_spaces(indent: str) -> None:
+    body = (
+        f"{indent}```markdown\n"
+        "## Done when\n- [ ] hidden result\n"
+        "```\n"
+    )
+
+    assert extract_testable_plan_from_body(body) is None
+
+
+def test_four_space_indented_backticks_do_not_open_a_fence() -> None:
+    body = "    ```markdown\n## Done when\n- [ ] visible result\n"
+
+    plan = extract_testable_plan_from_body(body)
+
+    assert plan is not None
+    assert plan["items"] == ["visible result"]
+
+
+@pytest.mark.parametrize(
+    "invalid_close",
+    [
+        "```",
+        "~~~~",
+        "```` trailing text",
+        "    ````",
+    ],
+)
+def test_commonmark_fence_rejects_invalid_closing_runs(
+    invalid_close: str,
+) -> None:
+    body = (
+        "````markdown\nexample\n"
+        f"{invalid_close}\n"
+        "## Done when\n- [ ] still hidden\n"
+    )
+
+    assert extract_testable_plan_from_body(body) is None
+
+
+def test_commonmark_fence_accepts_longer_close_with_trailing_whitespace() -> None:
+    body = (
+        "```markdown\nexample\n"
+        "  `````  \t\n"
+        "## Done when\n- [ ] visible result\n"
+    )
+
+    plan = extract_testable_plan_from_body(body)
+
+    assert plan is not None
+    assert plan["items"] == ["visible result"]
+
+
 @pytest.mark.parametrize(
     "item",
     [
@@ -527,6 +581,7 @@ def test_build_evidence_uses_none_source_without_state_evidence() -> None:
         ["ready_to_implement", "parked"],
         ["review", "done"],
         ["review", "duplicate"],
+        ["duplicate", "security_private"],
     ],
 )
 def test_terminal_and_readiness_labels_are_mutually_exclusive(

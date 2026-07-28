@@ -65,13 +65,21 @@ def review(head: str = "a" * 40, profile: str = "standard") -> dict[str, object]
 def review_attestation(
     head: str = "a" * 40,
     invocation_id: str = "gate-1",
+    review_payload: dict[str, object] | None = None,
 ) -> dict[str, str]:
-    return {
+    current = review() if review_payload is None else review_payload
+    result = {
+        "artifact_id": str(current["artifact_id"]),
         "lane_id": "review-lane-1",
         "reviewer_actor": "reviewer-agent-1",
         "head_sha": head,
         "invocation_id": invocation_id,
     }
+    prior = current.get("prior_review")
+    if current.get("round") == 2 and isinstance(prior, dict):
+        result["prior_artifact_id"] = str(prior["artifact_id"])
+        result["prior_head_sha"] = str(prior["head_sha"])
+    return result
 
 
 def config(repo: Path, patterns: list[str] | None = None) -> PackConfig:
@@ -112,6 +120,8 @@ def test_build_evidence_is_compact_and_deterministic(tmp_path: Path) -> None:
     assert result["changed_files_count"] == 2
     assert result["checks"][0]["head_sha"] == "a" * 40
     assert result["profile"] == "standard"
+    assert result["review_attestation"]["artifact_id"] == "review-42"
+    assert "review_attestation" not in result["review"]
     assert not {
         "review_threads",
         "pr_tier",
@@ -123,7 +133,7 @@ def test_build_evidence_is_compact_and_deterministic(tmp_path: Path) -> None:
 def test_independent_review_attestation_must_use_separate_host_input(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(EvidenceError, match="requires host attestation"):
+    with pytest.raises(EvidenceError, match="review_attestation"):
         build_evidence(
             pr_payload(),
             repository="acme/widgets",
@@ -143,6 +153,23 @@ def test_independent_review_attestation_must_use_separate_host_input(
             profile="standard",
             gate_invocation_id="gate-1",
             review=embedded,
+            review_attestation=review_attestation(),
+            expected_issue=208,
+            repo=tmp_path,
+            config=config(tmp_path),
+        )
+    embedded_prior = review()
+    embedded_prior["prior_review"] = {
+        **review(head="b" * 40),
+        "review_attestation": review_attestation(head="b" * 40),
+    }
+    with pytest.raises(EvidenceError, match="injected separately"):
+        build_evidence(
+            pr_payload(),
+            repository="acme/widgets",
+            profile="standard",
+            gate_invocation_id="gate-1",
+            review=embedded_prior,
             review_attestation=review_attestation(),
             expected_issue=208,
             repo=tmp_path,
@@ -593,11 +620,14 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     assert all(finding["status"] == "unresolved" for finding in prior_findings)
     assert all(finding["outdated"] is False for finding in prior_findings)
     assert combined["verdict"] == "clean"
-    combined["review_attestation"] = review_attestation()
-    combined["prior_review"]["review_attestation"] = review_attestation(
-        head="b" * 40
+    attestation = review_attestation(review_payload=combined)
+    gate = evaluate_review_gate(
+        combined,
+        "",
+        verify_diff=False,
+        gate_invocation_id="gate-1",
+        attestation=attestation,
     )
-    gate = evaluate_review_gate(combined, "", verify_diff=False)
     assert gate["decision"] == "allowed", gate["reasons"]
     unrelated_diff = (
         "diff --git a/src/unrelated.py b/src/unrelated.py\n"
@@ -611,6 +641,8 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
         combined,
         unrelated_diff,
         verify_diff=False,
+        gate_invocation_id="gate-1",
+        attestation=attestation,
     )
     assert forged_scope_gate["decision"] == "blocked"
     assert any(

@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _lib.review_attestation import validate_review_attestation
 from github_evidence_common import (
     EvidenceError,
     collect_head_push_boundary as _collect_head_push_boundary,
@@ -355,33 +356,33 @@ def _linked_issue(
     return linked
 
 
-def _inject_review_attestation(
+def _validate_review_attestation_input(
     review: dict[str, Any],
     attestation: dict[str, Any] | None,
     *,
     head_sha: str,
     invocation_id: str,
+    required: bool,
 ) -> dict[str, Any]:
-    if "review_attestation" in review:
+    prior = review.get("prior_review")
+    if "review_attestation" in review or (
+        isinstance(prior, dict) and "review_attestation" in prior
+    ):
         raise EvidenceError(
             "review_attestation must be injected separately by a trusted "
             "host or coordinator"
         )
-    independent = review.get("review_source") == "independent_lane"
-    if independent and attestation is None:
-        raise EvidenceError("independent_lane review requires host attestation")
-    if not independent and attestation is not None:
-        raise EvidenceError("self_review must not receive review attestation")
-    bound = dict(review)
-    if attestation is not None:
-        if attestation.get("head_sha") != head_sha:
-            raise EvidenceError("review attestation head_sha must match PR head")
-        if attestation.get("invocation_id") != invocation_id:
-            raise EvidenceError(
-                "review attestation invocation_id must match gate invocation"
-            )
-        bound["review_attestation"] = dict(attestation)
-    return bound
+    missing, reasons = validate_review_attestation(
+        review,
+        attestation,
+        gate_invocation_id=invocation_id,
+        required=required,
+    )
+    if missing or reasons:
+        raise EvidenceError("; ".join([*missing, *reasons]))
+    if attestation is not None and attestation.get("head_sha") != head_sha:
+        raise EvidenceError("review attestation head_sha must match PR head")
+    return dict(review)
 
 
 def build_evidence(
@@ -407,12 +408,6 @@ def build_evidence(
     if not isinstance(gate_invocation_id, str) or not gate_invocation_id.strip():
         raise EvidenceError("gate_invocation_id must be a non-empty string")
     head_sha = _require_string(pr_payload, "headRefOid")
-    review = _inject_review_attestation(
-        review,
-        review_attestation,
-        head_sha=head_sha,
-        invocation_id=gate_invocation_id.strip(),
-    )
     paths = _changed_files(pr_payload)
     linked_issue = _linked_issue(pr_payload, expected_issue, issue_payload)
     classification = None
@@ -438,6 +433,13 @@ def build_evidence(
         enforcement_sensitive = bool(classification["enforcement_sensitive"])
         if enforcement_sensitive:
             profile = "heavy"
+    review = _validate_review_attestation_input(
+        review,
+        review_attestation,
+        head_sha=head_sha,
+        invocation_id=gate_invocation_id.strip(),
+        required=profile in {"standard", "heavy"},
+    )
     evidence: dict[str, Any] = {
         "contract_version": 3,
         "repository": repository,
@@ -463,6 +465,8 @@ def build_evidence(
         evidence["sensitive_classification"] = classification
     if authorization is not None:
         evidence["human_merge_authorization"] = authorization
+    if review_attestation is not None:
+        evidence["review_attestation"] = dict(review_attestation)
     if checks_unavailable is not None:
         evidence["checks_unavailable"] = checks_unavailable
         default_base_ref = checks_unavailable.get("default_base_ref")

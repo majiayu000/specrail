@@ -73,17 +73,22 @@ def evaluate_checks_unavailable(
 
     base_ref = declaration.get("base_ref")
     default_base_ref = declaration.get("default_base_ref")
+    evidence_base_ref = evidence.get("base_ref")
+    evidence_default_base_ref = evidence.get("default_base_ref")
 
     if not _non_empty_string(base_ref):
         missing.append("checks_unavailable.base_ref")
-    elif _non_empty_string(evidence.get("base_ref")) and base_ref != evidence["base_ref"]:
+    if not _non_empty_string(evidence_base_ref):
+        missing.append("base_ref")
+    elif _non_empty_string(base_ref) and base_ref != evidence_base_ref:
         reasons.append("checks_unavailable.base_ref must match base_ref")
 
     if not _non_empty_string(default_base_ref):
         missing.append("checks_unavailable.default_base_ref")
-    elif (
-        _non_empty_string(evidence.get("default_base_ref"))
-        and default_base_ref != evidence["default_base_ref"]
+    if not _non_empty_string(evidence_default_base_ref):
+        missing.append("default_base_ref")
+    elif _non_empty_string(default_base_ref) and (
+        default_base_ref != evidence_default_base_ref
     ):
         reasons.append("checks_unavailable.default_base_ref must match default_base_ref")
 

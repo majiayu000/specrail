@@ -21,7 +21,9 @@ python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr> \
 For standard/heavy `independent_lane` review, only a trusted host or coordinator
 may inject `--review-attestation`; the implementation or review agent must not
 mint, edit, copy, persist, or reuse it. The resulting `review_attestation`
-binds `lane_id`, `reviewer_actor`, current head, and current gate invocation.
+is top-level PR evidence outside raw current and prior review artifacts. It
+binds `lane_id`, `reviewer_actor`, current artifact ID, current head, and current
+gate invocation; round 2 also binds the prior artifact ID and prior head.
 Fastlane `self_review` omits this input.
 
 For heavy work, a trusted host or coordinator may inject
@@ -35,6 +37,8 @@ the trusted host/coordinator may inject `--checks-unavailable`. The declaration
 is closed to `hosted_ci_not_triggered_for_base`, exact base refs, workflow
 trigger evidence, non-empty local verification, and `verified: true`. Pending,
 failed, or merely absent current-head CI cannot use this degraded path.
+Its declared base refs must exactly match the collector's top-level
+`base_ref` and `default_base_ref`.
 
 ## Gate
 

@@ -12,11 +12,53 @@ CHECKS = ROOT / "checks"
 FIXTURES = ROOT / "examples" / "fixtures"
 sys.path.insert(0, str(CHECKS))
 
-from review_json_gate import evaluate_review_gate  # noqa: E402
+from review_json_gate import evaluate_review_gate as _evaluate_review_gate  # noqa: E402
 
 
 def load_diff() -> str:
     return (FIXTURES / "pr-diff.patch").read_text(encoding="utf-8")
+
+
+def review_attestation_for(review: dict[str, object]) -> dict[str, str] | None:
+    if review.get("profile") == "fastlane":
+        return None
+    attestation = {
+        "artifact_id": str(review["artifact_id"]),
+        "lane_id": "review-lane-1",
+        "reviewer_actor": "reviewer-agent-1",
+        "head_sha": str(review["head_sha"]),
+        "invocation_id": "gate-1",
+    }
+    prior = review.get("prior_review")
+    if review.get("round") == 2 and isinstance(prior, dict):
+        attestation["prior_artifact_id"] = str(prior["artifact_id"])
+        attestation["prior_head_sha"] = str(prior["head_sha"])
+    return attestation
+
+
+_AUTO_ATTESTATION = object()
+
+
+def evaluate_review_gate(
+    review: dict[str, object],
+    diff: str,
+    *,
+    attestation: object = _AUTO_ATTESTATION,
+    gate_invocation_id: str | None = "gate-1",
+    **kwargs: object,
+) -> dict[str, object]:
+    resolved = (
+        review_attestation_for(review)
+        if attestation is _AUTO_ATTESTATION
+        else attestation
+    )
+    return _evaluate_review_gate(
+        review,
+        diff,
+        attestation=resolved,
+        gate_invocation_id=gate_invocation_id,
+        **kwargs,
+    )
 
 
 def review_with(
@@ -37,13 +79,9 @@ def review_with(
         "base_head_sha": "b" * 40,
         "head_sha": "a" * 40,
         "diff_sha256": hashlib.sha256(diff).hexdigest(),
-        "review_source": "independent_lane",
-        "review_attestation": {
-            "lane_id": "review-lane-1",
-            "reviewer_actor": "reviewer-agent-1",
-            "head_sha": "a" * 40,
-            "invocation_id": "gate-1",
-        },
+        "review_source": (
+            "self_review" if profile == "fastlane" else "independent_lane"
+        ),
         "round": review_round,
         "mode": mode,
         "verdict": verdict,
@@ -71,13 +109,9 @@ def review_with(
             "base_head_sha": "c" * 40,
             "head_sha": "b" * 40,
             "diff_sha256": hashlib.sha256(diff).hexdigest(),
-            "review_source": "independent_lane",
-            "review_attestation": {
-                "lane_id": "review-lane-1",
-                "reviewer_actor": "reviewer-agent-1",
-                "head_sha": "b" * 40,
-                "invocation_id": "gate-1",
-            },
+            "review_source": (
+                "self_review" if profile == "fastlane" else "independent_lane"
+            ),
             "round": 1,
             "mode": "full",
             "verdict": "blocking",
@@ -97,7 +131,6 @@ def review_with(
 def test_standard_and_heavy_require_independent_review(profile: str) -> None:
     review = review_with(profile=profile)
     review["review_source"] = "self_review"
-    review.pop("review_attestation")
 
     result = evaluate_review_gate(review, load_diff())
 
@@ -107,9 +140,8 @@ def test_standard_and_heavy_require_independent_review(profile: str) -> None:
 
 def test_independent_review_requires_current_host_attestation() -> None:
     review = review_with()
-    review.pop("review_attestation")
 
-    result = evaluate_review_gate(review, load_diff(), gate_invocation_id="gate-1")
+    result = evaluate_review_gate(review, load_diff(), attestation=None)
 
     assert result["decision"] == "blocked"
     assert "review_attestation" in result["missing"]
@@ -117,10 +149,12 @@ def test_independent_review_requires_current_host_attestation() -> None:
 
 def test_independent_review_attestation_binds_head_and_invocation() -> None:
     review = review_with()
-    review["review_attestation"]["invocation_id"] = "old-gate"
-    review["review_attestation"]["head_sha"] = "b" * 40
+    attestation = review_attestation_for(review)
+    assert attestation is not None
+    attestation["invocation_id"] = "old-gate"
+    attestation["head_sha"] = "b" * 40
 
-    result = evaluate_review_gate(review, load_diff(), gate_invocation_id="gate-1")
+    result = evaluate_review_gate(review, load_diff(), attestation=attestation)
 
     assert result["decision"] == "blocked"
     assert "review_attestation.head_sha must match review head_sha" in result["reasons"]
@@ -130,10 +164,27 @@ def test_independent_review_attestation_binds_head_and_invocation() -> None:
     )
 
 
+def test_independent_review_attestation_binds_artifact_and_current_invocation() -> None:
+    review = review_with()
+    attestation = review_attestation_for(review)
+    assert attestation is not None
+    attestation["artifact_id"] = "copied-old-review"
+
+    result = evaluate_review_gate(
+        review,
+        load_diff(),
+        attestation=attestation,
+        gate_invocation_id=None,
+    )
+
+    assert result["decision"] == "blocked"
+    assert "gate_invocation_id" in result["missing"]
+    assert "review_attestation.artifact_id must match review" in result["reasons"]
+
+
 def test_fastlane_allows_self_review() -> None:
     review = review_with(profile="fastlane")
     review["review_source"] = "self_review"
-    review.pop("review_attestation")
 
     result = evaluate_review_gate(review, load_diff())
 
@@ -143,7 +194,6 @@ def test_fastlane_allows_self_review() -> None:
 def test_configured_fastlane_can_require_independent_review() -> None:
     review = review_with(profile="fastlane")
     review["review_source"] = "self_review"
-    review.pop("review_attestation")
 
     result = evaluate_review_gate(
         review,

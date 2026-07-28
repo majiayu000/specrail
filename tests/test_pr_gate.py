@@ -106,18 +106,6 @@ def evidence(
         "head_sha": head,
         "diff_sha256": hashlib.sha256(b"").hexdigest(),
         "review_source": review_source,
-        **(
-            {}
-            if profile == "fastlane"
-            else {
-                "review_attestation": {
-                    "lane_id": "review-lane-1",
-                    "reviewer_actor": "reviewer-agent-1",
-                    "head_sha": head,
-                    "invocation_id": "gate-1",
-                }
-            }
-        ),
         "round": 1,
         "mode": "full",
         "verdict": "clean",
@@ -154,6 +142,14 @@ def evidence(
         "review": review,
         "gate_invocation_id": "gate-1",
     }
+    if profile != "fastlane":
+        payload["review_attestation"] = {
+            "artifact_id": review["artifact_id"],
+            "lane_id": "review-lane-1",
+            "reviewer_actor": "reviewer-agent-1",
+            "head_sha": head,
+            "invocation_id": "gate-1",
+        }
     return payload, pack
 
 
@@ -236,6 +232,32 @@ def test_empty_checks_without_declaration_remains_missing() -> None:
 
     assert result["decision"] == "blocked"
     assert "checks" in result["missing"]
+
+
+def test_checks_unavailable_binds_closed_top_level_base_refs() -> None:
+    mutations = [
+        ("base_ref", None, "base_ref"),
+        ("default_base_ref", None, "default_base_ref"),
+        ("base_ref", " ", "base_ref"),
+        ("default_base_ref", " ", "default_base_ref"),
+        ("base_ref", "other", "must match base_ref"),
+        ("default_base_ref", "trunk", "must match default_base_ref"),
+    ]
+    for field, value, expected in mutations:
+        payload, pack = evidence()
+        payload["checks"] = []
+        payload["base_ref"] = "feature-base"
+        payload["default_base_ref"] = "main"
+        payload["checks_unavailable"] = checks_unavailable()
+        if value is None:
+            payload.pop(field)
+        else:
+            payload[field] = value
+
+        result = evaluate_pr_gate(payload, ROOT, pack)
+
+        assert result["decision"] == "blocked"
+        assert expected in " ".join([*result["missing"], *result["reasons"]])
 
 
 def test_available_checks_conflict_with_unavailable_declaration() -> None:
@@ -549,6 +571,10 @@ def test_gate_rejects_noncanonical_profile_round_cap(tmp_path: Path) -> None:
     }
     for field in ["prior_review"]:
         payload["review"]["prior_review"].pop(field, None)
+    payload["review_attestation"].update({
+        "prior_artifact_id": "review-42-round1",
+        "prior_head_sha": base,
+    })
 
     result = evaluate_pr_gate(payload, repo, pack)
 
@@ -612,6 +638,10 @@ def test_round_two_prior_review_must_start_at_pr_base() -> None:
             "prior_review": prior_review,
         }
     )
+    payload["review_attestation"].update({
+        "prior_artifact_id": "review-42-round1",
+        "prior_head_sha": prior_head,
+    })
 
     result = evaluate_pr_gate(payload, ROOT, pack)
 

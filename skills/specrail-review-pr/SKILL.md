@@ -20,8 +20,11 @@ Use the selected profile's canonical `requires_independent_review` policy:
 fastlane uses self-review; standard and heavy use an independent reviewer lane.
 For `independent_lane`, a trusted host or coordinator injects the closed
 `review_attestation` after review, binding `lane_id`, `reviewer_actor`, current
-head, and current gate invocation. The implementation or review agent must not
-mint, edit, copy, persist, or reuse this attestation. `self_review` omits it.
+artifact ID, current head, and current gate invocation. For round 2 that same
+current attestation also binds the embedded prior artifact ID and prior head.
+Raw current and embedded prior review artifacts never contain an attestation.
+The implementation or review agent must not mint, edit, copy, persist, or reuse
+it. `self_review` omits it.
 
 ## Contract
 
@@ -58,7 +61,9 @@ triggers; only a trusted collector declaration for
 
 ```sh
 python3 checks/review_json_gate.py --repo . \
-  --review artifacts/review.json --diff artifacts/review.patch --json
+  --review artifacts/review.json --diff artifacts/review.patch \
+  --review-attestation <host-attestation.json> \
+  --gate-invocation-id <current-id> --json
 ```
 
 Report every rejection in one response. If the gate returns `blocked`, correct

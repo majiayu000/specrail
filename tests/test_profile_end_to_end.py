@@ -20,7 +20,11 @@ from route_gate_test_support import (  # noqa: E402
 )
 from test_pr_gate import evidence  # noqa: E402
 from test_pr_gate_sensitive_routes import authorization  # noqa: E402
-from test_review_json_gate import load_diff, valid_review  # noqa: E402
+from test_review_json_gate import (  # noqa: E402
+    load_diff,
+    review_attestation_for,
+    valid_review,
+)
 
 
 @pytest.mark.parametrize("profile", ["fastlane", "standard", "heavy"])
@@ -73,9 +77,12 @@ def test_profile_route_review_and_pr_gate_end_to_end(
     review["review_source"] = (
         "self_review" if profile == "fastlane" else "independent_lane"
     )
-    if profile == "fastlane":
-        review.pop("review_attestation")
-    review_result = evaluate_review_gate(review, load_diff())
+    review_result = evaluate_review_gate(
+        review,
+        load_diff(),
+        gate_invocation_id="gate-1",
+        attestation=review_attestation_for(review),
+    )
     assert review_result["decision"] == "allowed", review_result["reasons"]
 
     pr_payload, pack = evidence(profile=profile)
