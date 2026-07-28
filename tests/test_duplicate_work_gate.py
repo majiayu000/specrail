@@ -79,3 +79,19 @@ def test_invalid_evidence_is_reported_once_as_advisory() -> None:
     assert result["decision"] == "warn"
     assert len(result["warnings"]) == 1
     assert "invalid" in result["warnings"][0]
+
+
+def test_branch_ownership_uses_configured_template() -> None:
+    pack = load_pack(ROOT)
+    pack.workflow["artifacts"]["impl_branch"] = (
+        "{agent}/issue-{issue_number}-{slug}"
+    )
+
+    result = evaluate_duplicate_work_gate(
+        pack,
+        208,
+        evidence(branches=["origin/codex/issue-208-existing"]),
+    )
+
+    assert result["decision"] == "warn"
+    assert any("issue-208-existing" in item for item in result["warnings"])

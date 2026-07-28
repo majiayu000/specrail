@@ -12,6 +12,7 @@ python3 checks/review_json_gate.py --repo . \
 
 The canonical compact contract lives in
 `skills/specrail-review-pr/SKILL.md`; do not copy it here. Current P0/P1 blocks,
-P2/P3 is follow-up, and outdated hosted findings do not block.
+P2/P3 is follow-up, and outdated hosted findings do not block. Round 2 embeds
+the bound round-1 artifact as `prior_review`.
 
 Do not approve, merge, close Issues, or publish security findings.

@@ -7,7 +7,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +20,19 @@ def _timestamp(value: Any, label: str, warnings: list[dict[str, str]]) -> dateti
         warnings.append({"code": "invalid_timestamp", "message": f"{label} must be a timestamp"})
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         warnings.append({"code": "invalid_timestamp", "message": f"{label} is invalid"})
         return None
+    if parsed.tzinfo is None:
+        warnings.append(
+            {
+                "code": "invalid_timestamp",
+                "message": f"{label} must include a timezone",
+            }
+        )
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def audit_closure(

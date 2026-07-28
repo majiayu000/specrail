@@ -24,6 +24,7 @@ from rejection_items import (
 
 CONTRACT_VERSION = 3
 PROFILES = {"fastlane", "standard", "heavy"}
+DEFAULT_PROFILE_ROUND_CAPS = {"fastlane": 1, "standard": 2, "heavy": 2}
 REVIEW_SOURCES = {"independent_lane", "self_review"}
 REVIEW_MODES = {"full", "diff_only"}
 VERDICTS = {"clean", "blocking", "non_blocking"}
@@ -40,6 +41,7 @@ REVIEW_TOP_LEVEL_KEYS = {
     "head_sha",
     "mode",
     "pr",
+    "prior_review",
     "profile",
     "repository",
     "review_source",
@@ -295,6 +297,7 @@ def evaluate_review_gate(
     repo: Path | None = None,
     diff_bytes: bytes | None = None,
     verify_diff: bool = True,
+    max_review_rounds: int | None = None,
 ) -> dict[str, Any]:
     """Validate a v3 review artifact and return all failures in one result."""
 
@@ -357,6 +360,63 @@ def evaluate_review_gate(
         reasons.append("round 1 must use full mode")
     if review_round == 2 and mode != "diff_only":
         reasons.append("round 2 must use diff_only mode")
+    prior_review = review.get("prior_review")
+    if review_round == 1 and prior_review is not None:
+        reasons.append("round 1 must not include prior_review")
+    if review_round == 2:
+        if prior_review is None:
+            missing.append("prior_review")
+        elif not isinstance(prior_review, dict):
+            reasons.append("prior_review must be an object")
+        elif "prior_review" in prior_review:
+            reasons.append("prior_review must not contain another prior_review")
+        else:
+            expected_prior = {
+                "repository": review.get("repository"),
+                "pr": review.get("pr"),
+                "profile": review.get("profile"),
+                "review_source": review.get("review_source"),
+                "head_sha": review.get("base_head_sha"),
+                "round": 1,
+                "mode": "full",
+            }
+            for field, expected_value in expected_prior.items():
+                if prior_review.get(field) != expected_value:
+                    reasons.append(
+                        f"prior_review.{field} must equal {expected_value!r}"
+                    )
+            prior_result = evaluate_review_gate(
+                prior_review,
+                "",
+                verify_diff=False,
+            )
+            reasons.extend(
+                f"prior_review: {reason}"
+                for reason in prior_result["reasons"]
+            )
+            missing.extend(
+                f"prior_review.{field}"
+                for field in prior_result["missing"]
+            )
+            current_findings = review.get("findings")
+            current_ids = (
+                {
+                    str(finding.get("id"))
+                    for finding in current_findings
+                    if isinstance(finding, dict)
+                    and _non_empty_string(finding.get("id"))
+                }
+                if isinstance(current_findings, list)
+                else set()
+            )
+            for finding_id in prior_result["blocking_findings"]:
+                if finding_id not in current_ids:
+                    reasons.append(
+                        "prior unresolved P0/P1 finding must be carried into "
+                        f"round 2: {finding_id}"
+                    )
+            if not prior_result["reasons"] and not prior_result["missing"]:
+                satisfied.append("round 1 full-review evidence validated")
 
     supplied = diff_bytes if diff_bytes is not None else diff_text.encode("utf-8")
     if review_round == 2:
@@ -483,10 +543,25 @@ def evaluate_review_gate(
     if verdict in VERDICTS and verdict != expected:
         reasons.append(f"verdict {verdict!r} does not match current findings; expected {expected!r}")
 
-    decision = "blocked" if reasons or missing or blocking else "allowed"
-    if _positive_int(review_round) and review_round > 2:
+    configured_round_cap = (
+        max_review_rounds
+        if _positive_int(max_review_rounds)
+        else DEFAULT_PROFILE_ROUND_CAPS.get(str(profile), 2)
+    )
+    round_cap_exceeded = (
+        _positive_int(review_round)
+        and review_round > configured_round_cap
+    )
+    if reasons or missing or blocking:
+        decision = "blocked"
+    elif round_cap_exceeded:
         decision = "needs_human"
-        reasons.append("review round cap exceeded; human review is required")
+    else:
+        decision = "allowed"
+    if round_cap_exceeded:
+        satisfied.append(
+            f"review round cap {configured_round_cap} reached; human review required"
+        )
     if not reasons and not missing:
         satisfied.append("compact review contract v3 valid")
     if follow_ups:
@@ -532,6 +607,10 @@ def main() -> int:
         review_path = Path(args.review)
         diff_path = Path(args.diff)
         review = _load_json(review_path if review_path.is_absolute() else repo / review_path)
+        from specrail_lib import load_pack, verification_profiles
+
+        _default_profile, profiles = verification_profiles(load_pack(repo))
+        profile_policy = profiles.get(str(review.get("profile")), {})
         resolved_diff = diff_path if diff_path.is_absolute() else repo / diff_path
         diff_bytes = resolved_diff.read_bytes()
         result = evaluate_review_gate(
@@ -539,6 +618,7 @@ def main() -> int:
             diff_bytes.decode("utf-8"),
             repo=repo,
             diff_bytes=diff_bytes,
+            max_review_rounds=profile_policy.get("max_review_rounds"),
         )
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         result = _result(

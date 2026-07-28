@@ -222,6 +222,25 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             args,
             [f"GitHub issue state must be OPEN; got {github_state}"],
         )
+    outcome_labels = {
+        str(label)
+        for label in evidence.get("outcomes", [])
+        if isinstance(label, str)
+    }
+    outcome_labels.update(
+        label for label in labels if label in TERMINAL_BLOCKING_STATES
+    )
+    blocking_outcomes = sorted(outcome_labels - {"parked"})
+    if blocking_outcomes:
+        return blocked_result(
+            route,
+            explicit_state,
+            args,
+            [
+                "issue outcome is terminal or maintainer-reserved: "
+                + ", ".join(blocking_outcomes)
+            ],
+        )
 
     current_state, state_evidence = infer_state(config, explicit_state, labels)
     if state_from_evidence and current_state == evidence_state:
@@ -252,11 +271,12 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     creates = [str(artifact) for artifact in policy.get("creates_artifacts", [])]
     human_gates = [str(gate) for gate in policy.get("human_gates", [])]
     if route == "implement":
-        required = ["linked_issue"]
         profile_policy = profiles.get(effective_profile, {})
         if profile_policy.get("requires_spec_packet") is True:
             required.extend(["product_spec", "tech_spec", "task_plan"])
             human_gates.extend(["spec_approval", "security_decision"])
+        required = list(dict.fromkeys(required))
+        human_gates = list(dict.fromkeys(human_gates))
 
     if current_state is None:
         missing.append("current_state")

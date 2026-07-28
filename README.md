@@ -85,18 +85,13 @@ python3 checks/check_workflow.py --repo . --all-specs
 The all-specs scan uses `workflow.yaml`'s `artifacts.spec_packet` template, so
 adopted repositories may keep packets under paths such as `docs/specs/GH1`.
 
-Evaluate whether an agent may take the next workflow action from local evidence:
-
-```sh
-python3 checks/route_gate.py --repo . --route write_spec --issue 123 --state ready_to_spec --json
-python3 checks/route_gate.py --repo . --route implement --issue 123 --state ready_to_implement --json
-```
-
 Collect read-only GitHub issue evidence before running the route gate:
 
 ```sh
 python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO --issue 123 --json > issue-evidence.json
 python3 checks/route_gate.py --repo . --route write_spec --issue 123 --evidence issue-evidence.json --json
+python3 checks/route_gate.py --repo . --route implement --issue 123 \
+  --profile <fastlane|standard|heavy> --evidence issue-evidence.json --json
 ```
 
 `checks/github_issue_evidence.py` is read-only. It uses `gh issue view` for issue
@@ -125,6 +120,9 @@ python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 ```
 
 `checks/github_pr_evidence.py` is a read-only collector for GitHub CLI output.
+It verifies the complete REST-paginated changed-file set against GitHub's
+reported count and includes current hosted review-thread state for
+standard/heavy reviews.
 `checks/pr_gate.py` owns the offline merge-readiness decision.
 
 After a merge, audit that the allowed gate query, merge dispatch, and confirmed
@@ -145,8 +143,10 @@ python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-123.jso
 ```
 
 Review artifacts are advisory evidence only. They do not grant final approval or
-merge authority. Round 1 is full, round 2 is diff-only, current P0/P1 blocks,
-and P2/P3 remains follow-up.
+merge authority. Round 1 is full. Round 2 is diff-only, embeds the bound round-1
+artifact as `prior_review`, and carries every prior unresolved P0/P1 finding
+forward as resolved or unresolved. Current P0/P1 blocks, and P2/P3 remains
+follow-up.
 
 Evaluate a spec packet and adoption smoke evidence:
 

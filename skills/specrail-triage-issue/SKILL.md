@@ -13,8 +13,9 @@ Use this skill for the `triage_issue` route.
    `workflow.yaml`, `states.yaml`, and `labels.yaml`.
 2. Search existing issues, PRs, specs, and templates before creating or
    recommending new workflow artifacts.
-3. Identify the current state: `new_issue`, `needs_info`, `triaged`,
-   `duplicate`, `security_private`, or another configured state.
+3. Identify one current state from `new_issue`, `needs_info`, `ready_to_spec`,
+   `ready_to_implement`, `in_progress`, `review`, `done`, or `parked`.
+   `duplicate`, `abandoned`, and `security_private` are outcome labels.
 4. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
    checks. If it exists, the route gate is mandatory; a missing checker blocks:
 

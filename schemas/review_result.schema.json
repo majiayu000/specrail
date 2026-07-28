@@ -33,6 +33,44 @@
     "mode": {"enum": ["full", "diff_only"]},
     "base_head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
     "diff_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+    "prior_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "contract_version",
+        "repository",
+        "pr",
+        "profile",
+        "head_sha",
+        "review_source",
+        "round",
+        "mode",
+        "verdict",
+        "body",
+        "findings"
+      ],
+      "properties": {
+        "artifact_id": {"type": "string", "minLength": 1},
+        "contract_version": {"const": 3},
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "pr": {"type": "integer", "minimum": 1},
+        "profile": {"enum": ["fastlane", "standard", "heavy"]},
+        "head_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+        "review_source": {"enum": ["independent_lane", "self_review"]},
+        "round": {"const": 1},
+        "mode": {"const": "full"},
+        "verdict": {"enum": ["clean", "blocking", "non_blocking"]},
+        "body": {"type": "string", "minLength": 1},
+        "findings": {
+          "type": "array",
+          "items": {"type": "object"}
+        }
+      }
+    },
     "verdict": {"enum": ["clean", "blocking", "non_blocking"]},
     "body": {"type": "string", "minLength": 1},
     "findings": {
@@ -62,7 +100,10 @@
     },
     {
       "if": {"properties": {"round": {"const": 2}}, "required": ["round"]},
-      "then": {"required": ["base_head_sha", "diff_sha256"], "properties": {"mode": {"const": "diff_only"}}}
+      "then": {
+        "required": ["base_head_sha", "diff_sha256", "prior_review"],
+        "properties": {"mode": {"const": "diff_only"}}
+      }
     }
   ]
 }

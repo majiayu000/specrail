@@ -15,7 +15,7 @@ Use this skill for the `fix_ci` route.
    checks. If it exists, the CI route gate is mandatory; a missing checker blocks:
 
 ```sh
-python3 checks/route_gate.py --repo . --route fix_ci --issue <issue-number> --pr <pr-number> --state human_review --json
+python3 checks/route_gate.py --repo . --route fix_ci --issue <issue-number> --pr <pr-number> --state review --json
 ```
 
 3. Reproduce the failure locally when the command is available.

@@ -68,8 +68,10 @@ heavier profile.
 Run the route gate with the selected profile:
 
 ```sh
+python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO \
+  --issue <n> --json > issue-evidence.json
 python3 checks/route_gate.py --repo . --route implement --profile <profile> \
-  --issue <n> --state ready_to_implement --json
+  --issue <n> --evidence issue-evidence.json --json
 ```
 
 Load `skills/specrail-workflow/SKILL.md` only if routing is ambiguous. Load

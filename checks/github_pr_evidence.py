@@ -28,10 +28,35 @@ PR_VIEW_FIELDS = [
     "body",
     "closingIssuesReferences",
     "statusCheckRollup",
-    "files",
+    "changedFiles",
 ]
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 PROFILES = {"fastlane", "standard", "heavy"}
+HOSTED_SEVERITY_RE = re.compile(
+    r"(?i)(?:^|[^A-Z0-9])\[?(P[0-3])\]?(?=$|[^A-Z0-9])"
+)
+HOSTED_REVIEW_QUERY = """
+query SpecRailHostedFindings(
+  $owner: String!, $name: String!, $number: Int!, $cursor: String
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          isResolved
+          isOutdated
+          comments(first: 1) {
+            nodes { body }
+          }
+        }
+      }
+    }
+  }
+}
+""".strip()
 
 
 def parse_github_repo(raw: str) -> tuple[str, str]:
@@ -82,7 +107,7 @@ def run_gh_json(args: list[str]) -> Any:
 
 
 def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
-    return json_object(
+    payload = json_object(
         run_gh_json(
             [
                 "pr",
@@ -96,6 +121,232 @@ def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
         ),
         "gh pr view response",
     )
+    count = payload.get("changedFiles")
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        raise EvidenceError("changedFiles must be a non-negative integer")
+    payload["files"] = [
+        {"path": path}
+        for path in collect_changed_files(github_repo, pr_number, count)
+    ]
+    return payload
+
+
+def collect_changed_files(
+    github_repo: str,
+    pr_number: int,
+    expected_count: int,
+) -> list[str]:
+    """Collect the complete REST-paginated current changed-file set."""
+    owner, name = parse_github_repo(github_repo)
+    paths: list[str] = []
+    if expected_count == 0:
+        return paths
+    for page in range(1, 1001):
+        raw = run_gh_json(
+            [
+                "api",
+                "--method",
+                "GET",
+                f"repos/{owner}/{name}/pulls/{pr_number}/files",
+                "-F",
+                "per_page=100",
+                "-F",
+                f"page={page}",
+            ]
+        )
+        if not isinstance(raw, list):
+            raise EvidenceError("pull files REST response must be an array")
+        for index, item in enumerate(raw, start=1):
+            if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
+                raise EvidenceError(
+                    f"pull files page {page} item #{index} requires filename"
+                )
+            filename = item["filename"].strip()
+            if not filename:
+                raise EvidenceError(
+                    f"pull files page {page} item #{index} filename must be non-empty"
+                )
+            paths.append(filename)
+        if len(paths) >= expected_count:
+            break
+        if len(raw) < 100:
+            break
+    else:
+        raise EvidenceError("pull files REST pagination exceeded 1000 pages")
+    if len(paths) != expected_count:
+        raise EvidenceError(
+            f"pull files REST snapshot incomplete: collected {len(paths)} "
+            f"of {expected_count}"
+        )
+    if len(set(paths)) != len(paths):
+        raise EvidenceError("pull files REST snapshot contains duplicate paths")
+    return sorted(paths)
+
+
+def _hosted_review_threads(payload: Any) -> tuple[str, dict[str, Any]]:
+    try:
+        pull_request = payload["data"]["repository"]["pullRequest"]
+        threads = pull_request["reviewThreads"]
+    except (KeyError, TypeError) as exc:
+        raise EvidenceError("hosted review query returned malformed evidence") from exc
+    if not isinstance(pull_request, dict) or not isinstance(threads, dict):
+        raise EvidenceError("hosted review query returned malformed evidence")
+    head_sha = _require_string(pull_request, "headRefOid")
+    return head_sha, threads
+
+
+def collect_hosted_findings(
+    github_repo: str,
+    pr_number: int,
+    expected_head: str,
+) -> list[dict[str, Any]]:
+    """Collect severity-tagged hosted findings for standard/heavy profiles."""
+    owner, name = parse_github_repo(github_repo)
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    findings: list[dict[str, Any]] = []
+    for _page in range(1, 1001):
+        args = [
+            "api",
+            "graphql",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-F",
+            f"number={pr_number}",
+            "-f",
+            f"query={HOSTED_REVIEW_QUERY}",
+        ]
+        if cursor is not None:
+            args[2:2] = ["-F", f"cursor={cursor}"]
+        head_sha, threads = _hosted_review_threads(run_gh_json(args))
+        if head_sha != expected_head:
+            raise EvidenceError("PR head changed while collecting hosted findings")
+        nodes = threads.get("nodes")
+        page_info = threads.get("pageInfo")
+        if not isinstance(nodes, list) or not isinstance(page_info, dict):
+            raise EvidenceError("hosted review thread page is malformed")
+        for index, thread in enumerate(nodes, start=1):
+            if not isinstance(thread, dict):
+                raise EvidenceError(f"hosted review thread #{index} must be an object")
+            thread_id = _require_string(thread, "id")
+            resolved = thread.get("isResolved")
+            outdated = thread.get("isOutdated")
+            comments = thread.get("comments")
+            if not isinstance(resolved, bool) or not isinstance(outdated, bool):
+                raise EvidenceError(
+                    f"hosted review thread {thread_id} requires resolution state"
+                )
+            if not isinstance(comments, dict) or not isinstance(comments.get("nodes"), list):
+                raise EvidenceError(
+                    f"hosted review thread {thread_id} requires root comment evidence"
+                )
+            comment_nodes = comments["nodes"]
+            if not comment_nodes:
+                raise EvidenceError(
+                    f"hosted review thread {thread_id} requires a root comment"
+                )
+            root = comment_nodes[0]
+            if not isinstance(root, dict) or not isinstance(root.get("body"), str):
+                raise EvidenceError(
+                    f"hosted review thread {thread_id} root comment requires body"
+                )
+            body = root["body"].strip()
+            severity_match = HOSTED_SEVERITY_RE.search(body)
+            if severity_match is None:
+                continue
+            summary = next((line.strip() for line in body.splitlines() if line.strip()), "")
+            finding: dict[str, Any] = {
+                "id": f"hosted:{thread_id}",
+                "severity": severity_match.group(1).upper(),
+                "status": "resolved" if resolved else "unresolved",
+                "summary": summary[:240],
+                "origin": "hosted",
+                "outdated": outdated,
+            }
+            findings.append(finding)
+        has_next = page_info.get("hasNextPage")
+        if not isinstance(has_next, bool):
+            raise EvidenceError("hosted review pageInfo.hasNextPage must be boolean")
+        if not has_next:
+            break
+        next_cursor = page_info.get("endCursor")
+        if not isinstance(next_cursor, str) or not next_cursor.strip():
+            raise EvidenceError("hosted review pagination requires endCursor")
+        cursor = next_cursor.strip()
+        if cursor in seen_cursors:
+            raise EvidenceError("hosted review pagination cursor did not advance")
+        seen_cursors.add(cursor)
+    else:
+        raise EvidenceError("hosted review pagination exceeded 1000 pages")
+    identifiers = [finding["id"] for finding in findings]
+    if len(set(identifiers)) != len(identifiers):
+        raise EvidenceError("hosted review findings contain duplicate thread ids")
+    return sorted(findings, key=lambda item: str(item["id"]))
+
+
+def combine_review_findings(
+    review: dict[str, Any],
+    hosted_findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    combined = dict(review)
+    local_findings = review.get("findings")
+    if not isinstance(local_findings, list):
+        raise EvidenceError("review.findings must be an array")
+    merged = [*local_findings, *hosted_findings]
+    if review.get("round") == 2:
+        merged = [
+            {
+                **finding,
+                **(
+                    {"introduced_by_diff": False}
+                    if finding.get("origin") == "hosted"
+                    and finding.get("severity") in {"P0", "P1"}
+                    and finding.get("status") == "unresolved"
+                    and not finding.get("outdated", False)
+                    else {}
+                ),
+            }
+            for finding in merged
+        ]
+    combined["findings"] = merged
+    unresolved = [
+        finding
+        for finding in merged
+        if isinstance(finding, dict)
+        and finding.get("status") == "unresolved"
+        and not finding.get("outdated", False)
+    ]
+    if any(finding.get("severity") in {"P0", "P1"} for finding in unresolved):
+        combined["verdict"] = "blocking"
+    elif any(finding.get("severity") in {"P2", "P3"} for finding in unresolved):
+        combined["verdict"] = "non_blocking"
+    else:
+        combined["verdict"] = "clean"
+    return combined
+
+
+def _effective_collection_profile(
+    profile: str,
+    paths: list[str],
+    *,
+    repo: Path | None,
+    config: PackConfig | None,
+) -> str:
+    if repo is None or config is None:
+        return profile
+    try:
+        classification = classify_sensitive_changes(
+            config,
+            repo,
+            paths,
+            paths,
+            source="github_changed_files",
+        )
+    except SpecRailError as exc:
+        raise EvidenceError(str(exc)) from exc
+    return "heavy" if classification["enforcement_sensitive"] else profile
 
 
 def collect_issue_view(github_repo: str, issue_number: int) -> dict[str, Any]:
@@ -283,6 +534,17 @@ def collect_evidence(
     before_head = _require_string(before, "headRefOid")
     before_relation = relation_snapshot(before)
     before_paths = _changed_files(before)
+    collection_profile = _effective_collection_profile(
+        profile,
+        before_paths,
+        repo=repo,
+        config=config,
+    )
+    before_hosted = (
+        []
+        if collection_profile == "fastlane"
+        else collect_hosted_findings(github_repo, pr_number, before_head)
+    )
 
     after = collect_pr_view(github_repo, pr_number)
     if _require_string(after, "headRefOid") != before_head:
@@ -297,12 +559,23 @@ def collect_evidence(
         raise EvidenceError(
             "PR file set changed while collecting gate evidence; rerun collection"
         )
+    after_head = _require_string(after, "headRefOid")
+    after_hosted = (
+        []
+        if collection_profile == "fastlane"
+        else collect_hosted_findings(github_repo, pr_number, after_head)
+    )
+    if after_hosted != before_hosted:
+        raise EvidenceError(
+            "hosted review findings changed while collecting gate evidence; "
+            "rerun collection"
+        )
     return build_evidence(
         after,
         repository=github_repo,
         profile=profile,
         gate_invocation_id=gate_invocation_id,
-        review=review,
+        review=combine_review_findings(review, after_hosted),
         expected_issue=expected_issue,
         issue_payload=issue_payload,
         repo=repo,
