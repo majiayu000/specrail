@@ -101,6 +101,32 @@ def install_skills(repo: Path, target_dir: Path, apply: bool) -> list[str]:
     return messages
 
 
+def check_installed_skills(repo: Path, target_dir: Path) -> tuple[list[str], bool]:
+    """Compare every installed SKILL.md with its locked source hash."""
+    skills = load_locked_skills(repo.resolve())
+    messages: list[str] = []
+    matches = True
+
+    for skill in skills:
+        installed_file = target_dir.expanduser() / skill.name / "SKILL.md"
+        if not installed_file.is_file():
+            matches = False
+            messages.append(f"{skill.name}: missing ({installed_file})")
+            continue
+
+        digest = "sha256:" + hashlib.sha256(installed_file.read_bytes()).hexdigest()
+        if digest != skill.expected_hash:
+            matches = False
+            messages.append(
+                f"{skill.name}: drift "
+                f"(expected {skill.expected_hash}, got {digest})"
+            )
+            continue
+        messages.append(f"{skill.name}: match")
+
+    return messages, matches
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Install SpecRail repo-distributed skills into local Codex skills.",
@@ -115,10 +141,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(default_codex_skills_dir()),
         help="Codex skills directory. Defaults to $CODEX_HOME/skills or ~/.codex/skills.",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--apply",
         action="store_true",
         help="Write files. Without this flag the command is a dry-run.",
+    )
+    mode.add_argument(
+        "--check-installed",
+        action="store_true",
+        help="Read only: report missing or drifted installed SKILL.md files.",
     )
     return parser
 
@@ -130,10 +162,28 @@ def main(argv: list[str] | None = None) -> int:
     target_dir = Path(args.target_dir).expanduser()
 
     try:
-        messages = install_skills(repo, target_dir, args.apply)
+        if args.check_installed:
+            messages, matches = check_installed_skills(repo, target_dir)
+        else:
+            messages = install_skills(repo, target_dir, args.apply)
     except InstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    if args.check_installed:
+        print("mode: check-installed (read-only)")
+        print(f"target: {target_dir}")
+        for message in messages:
+            print(message)
+        if not matches:
+            print(
+                "repair: rerun this installer with --apply, then restart Codex "
+                "to load the reinstalled skills",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"all {len(messages)} installed skills match skills-lock.json")
+        return 0
 
     mode = "apply" if args.apply else "dry-run"
     print(f"mode: {mode}")
