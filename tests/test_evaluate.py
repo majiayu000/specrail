@@ -129,6 +129,27 @@ def test_task_plan_accepts_range_coverage_and_covers_none(tmp_path: Path) -> Non
             "Covers: none (housekeeping), B-001",
             "must use either defined B-IDs or none (<non-empty reason>)",
         ),
+        (
+            "Covers: rationale B-001",
+            "must contain only B-ID lists/ranges or none (<non-empty reason>)",
+        ),
+        (
+            "Covers: B-001 ???",
+            "must contain only B-ID lists/ranges or none (<non-empty reason>)",
+        ),
+        (
+            "Covers: B-001 trailing prose",
+            "must contain only B-ID lists/ranges or none (<non-empty reason>)",
+        ),
+        (
+            "Covers: B-001. ???",
+            "must contain only B-ID lists/ranges or none (<non-empty reason>)",
+        ),
+        (
+            "Covers: B-001。尾随说明",
+            "must contain only B-ID lists/ranges or none (<non-empty reason>)",
+        ),
+        ("Covers: none(reason)", "must use none (<non-empty reason>)"),
     ],
 )
 def test_task_plan_rejects_invalid_per_task_covers(
