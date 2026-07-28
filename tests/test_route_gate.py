@@ -137,6 +137,36 @@ def test_route_gate_blocks_terminal_outcome_evidence(tmp_path: Path) -> None:
     assert any("security_private" in reason for reason in payload["reasons"])
 
 
+def test_release_note_allows_done_lifecycle_state(tmp_path: Path) -> None:
+    evidence_path = tmp_path / "issue-evidence.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "github_state": "OPEN",
+                "state": "done",
+                "state_source": "label",
+                "state_trusted": True,
+                "labels": ["done"],
+                "outcomes": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _result, payload = run_route_gate(
+        "--route",
+        "draft_release_note",
+        "--issue",
+        "999",
+        "--pr",
+        "123",
+        "--evidence",
+        str(evidence_path),
+    )
+
+    assert payload["decision"] == "allowed"
+
+
 def test_implement_preserves_configured_required_evidence(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     write_custom_pack(repo)

@@ -472,6 +472,9 @@ def test_outcomes_do_not_replace_lifecycle_state() -> None:
     parked = build_issue_evidence(issue_payload(labels=[{"name": "parked"}]))
     assert parked["state"] == "parked"
     assert parked["outcomes"] == []
+    done = build_issue_evidence(issue_payload(labels=[{"name": "done"}]))
+    assert done["state"] == "done"
+    assert done["outcomes"] == []
 
 
 def test_closed_issue_state_is_preserved_for_route_gate() -> None:

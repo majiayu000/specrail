@@ -529,7 +529,7 @@ def validate_labels(config: PackConfig) -> list[str]:
     for state in ["needs_info", "ready_to_spec", "ready_to_implement", "parked"]:
         if state not in groups.get("readiness", []):
             errors.append(f"labels.yaml: readiness labels missing {state}")
-    allowed_outcomes = {"duplicate", "abandoned", "security_private", "done"}
+    allowed_outcomes = {"duplicate", "abandoned", "security_private"}
     for label in groups.get("readiness", []):
         if label not in states:
             errors.append(f"labels.yaml: label {label} is not a known state or allowed outcome")

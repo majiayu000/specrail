@@ -37,6 +37,32 @@ def config(repo: Path, patterns: list[str] | None = None) -> PackConfig:
     )
 
 
+def verification_profile_config() -> dict[str, object]:
+    return {
+        "default": "standard",
+        "profiles": {
+            "fastlane": {
+                "requires_spec_packet": False,
+                "requires_independent_review": False,
+                "max_review_rounds": 1,
+                "merge_authorization": "invocation",
+            },
+            "standard": {
+                "requires_spec_packet": False,
+                "requires_independent_review": True,
+                "max_review_rounds": 2,
+                "merge_authorization": "invocation",
+            },
+            "heavy": {
+                "requires_spec_packet": True,
+                "requires_independent_review": True,
+                "max_review_rounds": 2,
+                "merge_authorization": "explicit_human",
+            },
+        },
+    }
+
+
 def evidence(
     *,
     repo: Path = ROOT,
@@ -188,15 +214,10 @@ def test_gate_reports_all_missing_contract_fields() -> None:
 
 def test_gate_honors_configured_explicit_human_authorization() -> None:
     payload, pack = evidence(profile="standard")
-    pack.workflow["verification_profiles"] = {
-        "default": "standard",
-        "profiles": {
-            "standard": {
-                "max_review_rounds": 2,
-                "merge_authorization": "explicit_human",
-            }
-        },
-    }
+    pack.workflow["verification_profiles"] = verification_profile_config()
+    pack.workflow["verification_profiles"]["profiles"]["standard"][
+        "merge_authorization"
+    ] = "explicit_human"
 
     result = evaluate_pr_gate(payload, ROOT, pack)
 
@@ -242,15 +263,10 @@ def test_gate_honors_configured_profile_round_cap(tmp_path: Path) -> None:
         check=True,
     )
     payload, pack = evidence(repo=repo, profile="standard")
-    pack.workflow["verification_profiles"] = {
-        "default": "standard",
-        "profiles": {
-            "standard": {
-                "max_review_rounds": 1,
-                "merge_authorization": "invocation",
-            }
-        },
-    }
+    pack.workflow["verification_profiles"] = verification_profile_config()
+    pack.workflow["verification_profiles"]["profiles"]["standard"][
+        "max_review_rounds"
+    ] = 1
     payload["review"]["round"] = 2
     payload["review"]["mode"] = "diff_only"
     payload["review"]["base_head_sha"] = base
