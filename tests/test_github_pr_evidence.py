@@ -8,7 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "checks"))
 
-from github_evidence_common import EvidenceError
+from github_evidence_common import EvidenceError, _hosted_thread_finding
 from github_pr_evidence import (
     build_evidence,
     collect_evidence,
@@ -237,6 +237,7 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                 {
                                     "id": "thread-current",
                                     "path": "src/current.py",
+                                    "subjectType": "LINE",
                                     "isResolved": False,
                                     "isOutdated": False,
                                     "comments": {
@@ -244,6 +245,7 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                             {
                                                 "body": "[P1] Current defect",
                                                 "createdAt": "2026-07-28T10:00:00Z",
+                                                "lastEditedAt": None,
                                                 "path": "src/current.py",
                                                 "originalLine": 12,
                                                 "originalCommit": {"oid": "a" * 40},
@@ -259,6 +261,7 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                 {
                                     "id": "thread-old",
                                     "path": "src/old.py",
+                                    "subjectType": "LINE",
                                     "isResolved": False,
                                     "isOutdated": True,
                                     "comments": {
@@ -266,12 +269,38 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                             {
                                                 "body": "P1 old defect",
                                                 "createdAt": "2026-07-28T09:00:00Z",
+                                                "lastEditedAt": None,
                                                 "path": "src/old.py",
                                                 "originalLine": 7,
                                                 "originalCommit": {"oid": "b" * 40},
                                                 "pullRequestReview": {
                                                     "id": "PRR_old",
                                                     "submittedAt": "2026-07-28T09:01:00Z",
+                                                    "commit": {"oid": "b" * 40},
+                                                },
+                                            }
+                                        ]
+                                    },
+                                },
+                                {
+                                    "id": "thread-file",
+                                    "path": "docs/config.md",
+                                    "subjectType": "FILE",
+                                    "isResolved": True,
+                                    "isOutdated": True,
+                                    "comments": {
+                                        "nodes": [
+                                            {
+                                                "body": "[P2] File-level defect",
+                                                "createdAt": "2026-07-28T08:00:00Z",
+                                                "lastEditedAt": None,
+                                                "path": "docs/config.md",
+                                                "line": None,
+                                                "originalLine": None,
+                                                "originalCommit": {"oid": "b" * 40},
+                                                "pullRequestReview": {
+                                                    "id": "PRR_file",
+                                                    "submittedAt": "2026-07-28T08:01:00Z",
                                                     "commit": {"oid": "b" * 40},
                                                 },
                                             }
@@ -295,12 +324,18 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
 
     assert [finding["id"] for finding in findings] == [
         "hosted:thread-current",
+        "hosted:thread-file",
         "hosted:thread-old",
     ]
     assert combined["verdict"] == "blocking"
     assert findings[0]["_original_head_sha"] == "a" * 40
     assert "_original_head_sha" not in combined["findings"][0]
-    assert findings[1]["outdated"] is True
+    assert findings[0]["path"] == "src/current.py"
+    assert findings[0]["line"] == 12
+    assert findings[1]["fix_paths"] == ["docs/config.md"]
+    assert "path" not in findings[1]
+    assert "line" not in findings[1]
+    assert findings[2]["outdated"] is True
 
 
 def test_local_review_cannot_self_report_hosted_or_outdated_provenance() -> None:
@@ -346,6 +381,7 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
             "fix_paths": ["src/unrelated.py"],
             "path": "src/unrelated.py",
             "line": 999,
+            "subject_type": "FILE",
             "introduced_by_diff": True,
         },
         {
@@ -391,12 +427,14 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
         {
             "id": "hosted:thread-1",
             "severity": "P1",
-            "status": "resolved",
+            "status": "unresolved",
             "summary": "Round-one blocker.",
             "origin": "hosted",
             "outdated": True,
+            "_subject_type": "LINE",
             "_original_head_sha": "b" * 40,
             "_created_at": "2026-07-28T09:01:01Z",
+            "_last_edited_at": "2026-07-28T09:10:00Z",
             "_review_id": "PRR_prior",
             "_review_submitted_at": "2026-07-28T09:01:00Z",
             "_review_head_sha": "b" * 40,
@@ -407,12 +445,14 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
         {
             "id": "hosted:thread-2",
             "severity": "P1",
-            "status": "resolved",
+            "status": "unresolved",
             "summary": "Second hosted blocker.",
             "origin": "hosted",
             "outdated": True,
+            "_subject_type": "LINE",
             "_original_head_sha": "b" * 40,
             "_created_at": "2026-07-28T09:02:01Z",
+            "_last_edited_at": None,
             "_review_id": "PRR_second",
             "_review_submitted_at": "2026-07-28T09:02:00Z",
             "_review_head_sha": "b" * 40,
@@ -432,7 +472,7 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
         "hosted:thread-1",
         "hosted:thread-2",
     ]
-    assert combined["findings"][0]["status"] == "resolved"
+    assert combined["findings"][0]["status"] == "unresolved"
     assert combined["findings"][0]["outdated"] is True
     prior_findings = combined["prior_review"]["findings"]
     assert [finding["origin"] for finding in prior_findings] == [
@@ -450,6 +490,7 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     assert [finding["severity"] for finding in prior_findings] == ["P1", "P1"]
     assert [finding["line"] for finding in prior_findings] == [11, 21]
     assert all("introduced_by_diff" not in finding for finding in prior_findings)
+    assert all("subject_type" not in finding for finding in prior_findings)
     assert all(finding["status"] == "unresolved" for finding in prior_findings)
     assert combined["verdict"] == "clean"
     gate = evaluate_review_gate(combined, "", verify_diff=False)
@@ -473,9 +514,11 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
         for reason in forged_scope_gate["reasons"]
     )
 
+    created_equal_hosted = [dict(finding) for finding in hosted]
+    created_equal_hosted[0]["_last_edited_at"] = None
     equal_boundary = combine_review_findings(
         current,
-        hosted,
+        created_equal_hosted,
         prior_review_boundary="2026-07-28T09:01:01Z",
     )
     assert equal_boundary["prior_review"]["findings"][0] == {
@@ -483,6 +526,7 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     }
     submitted_equal_hosted = [dict(finding) for finding in hosted]
     submitted_equal_hosted[0]["_created_at"] = "2026-07-28T09:00:59Z"
+    submitted_equal_hosted[0]["_last_edited_at"] = None
     submitted_equal_boundary = combine_review_findings(
         current,
         submitted_equal_hosted,
@@ -491,6 +535,28 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     assert submitted_equal_boundary["prior_review"]["findings"][0] == {
         "id": "hosted:thread-1"
     }
+
+    for edited_at in ("2026-07-28T09:30:00Z", "2026-07-28T09:31:00Z"):
+        edited_hosted = [dict(finding) for finding in hosted]
+        edited_hosted[0]["_last_edited_at"] = edited_at
+        edited_boundary = combine_review_findings(
+            current,
+            edited_hosted,
+            prior_review_boundary="2026-07-28T09:30:00Z",
+        )
+        assert edited_boundary["prior_review"]["findings"][0] == {
+            "id": "hosted:thread-1"
+        }
+
+    for status, outdated in (("resolved", True), ("unresolved", False)):
+        invalid_state = [dict(finding) for finding in hosted]
+        invalid_state[0].update({"status": status, "outdated": outdated})
+        with pytest.raises(EvidenceError, match="current-head full review"):
+            combine_review_findings(
+                current,
+                invalid_state,
+                prior_review_boundary="2026-07-28T09:30:00Z",
+            )
 
 
 def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
@@ -549,6 +615,7 @@ def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
                                 {
                                     "id": "thread-late",
                                     "path": "src/app.py",
+                                    "subjectType": "LINE",
                                     "isResolved": True,
                                     "isOutdated": True,
                                     "comments": {
@@ -556,6 +623,7 @@ def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
                                             {
                                                 "body": "[P1] Late old-head blocker.",
                                                 "createdAt": "2026-07-28T10:00:00Z",
+                                                "lastEditedAt": None,
                                                 "path": "src/app.py",
                                                 "originalLine": 10,
                                                 "originalCommit": {"oid": "b" * 40},
@@ -594,6 +662,34 @@ def test_round_two_cannot_backfill_late_old_head_review_from_forged_prior(
         {"id": "hosted:thread-late"}
     ]
     assert any(reason.startswith("prior_review:") for reason in gate["reasons"])
+
+
+def test_hosted_thread_fails_closed_on_malformed_edit_or_line() -> None:
+    thread = {
+        "id": "thread-invalid",
+        "path": "src/app.py",
+        "subjectType": "LINE",
+        "isResolved": False,
+        "isOutdated": False,
+        "comments": {
+            "nodes": [
+                {
+                    "body": "[P1] Invalid evidence.",
+                    "createdAt": "2026-07-28T09:00:00Z",
+                    "lastEditedAt": "malformed",
+                    "path": "src/app.py",
+                    "originalLine": 10,
+                }
+            ]
+        },
+    }
+    with pytest.raises(EvidenceError, match="lastEditedAt"):
+        _hosted_thread_finding(thread)
+
+    thread["comments"]["nodes"][0]["lastEditedAt"] = None
+    thread["comments"]["nodes"][0]["originalLine"] = 0
+    with pytest.raises(EvidenceError, match="positive line"):
+        _hosted_thread_finding(thread)
 
 
 def test_spec_registry_uses_linked_issue_artifact_references(tmp_path: Path) -> None:

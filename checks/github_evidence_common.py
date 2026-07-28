@@ -321,12 +321,14 @@ query SpecRailHostedFindings(
         nodes {
           id
           path
+          subjectType
           isResolved
           isOutdated
           comments(first: 1) {
             nodes {
               body
               createdAt
+              lastEditedAt
               line
               originalLine
               path
@@ -410,6 +412,11 @@ def collect_head_push_boundary(
 
 def _hosted_thread_finding(thread: dict[str, Any]) -> dict[str, Any] | None:
     thread_id = _review_string(thread, "id")
+    subject_type = _review_string(thread, "subjectType")
+    if subject_type not in {"FILE", "LINE"}:
+        raise EvidenceError(
+            f"hosted review thread {thread_id} subjectType is malformed"
+        )
     path = _review_string(thread, "path")
     if (
         path.startswith("/")
@@ -440,6 +447,16 @@ def _hosted_thread_finding(thread: dict[str, Any]) -> dict[str, Any] | None:
         return None
     created_at = _review_string(root, "createdAt")
     _review_timestamp(created_at, f"hosted review thread {thread_id} createdAt")
+    if "lastEditedAt" not in root:
+        raise EvidenceError(
+            f"hosted review thread {thread_id} lastEditedAt is required"
+        )
+    last_edited_at = root.get("lastEditedAt")
+    if last_edited_at is not None:
+        _review_timestamp(
+            last_edited_at,
+            f"hosted review thread {thread_id} lastEditedAt",
+        )
     summary = next((line.strip() for line in body.splitlines() if line.strip()), "")
     finding: dict[str, Any] = {
         "id": f"hosted:{thread_id}",
@@ -448,20 +465,25 @@ def _hosted_thread_finding(thread: dict[str, Any]) -> dict[str, Any] | None:
         "summary": summary[:240],
         "origin": "hosted",
         "outdated": outdated,
-        "path": path,
         "fix_paths": [path],
         "_created_at": created_at,
+        "_last_edited_at": last_edited_at,
+        "_subject_type": subject_type,
     }
     root_path = root.get("path")
     if root_path is not None and root_path != path:
         raise EvidenceError(
             f"hosted review thread {thread_id} root path does not match thread path"
         )
-    line = root.get("originalLine")
-    if not isinstance(line, int) or isinstance(line, bool) or line <= 0:
-        line = root.get("line")
-    if isinstance(line, int) and not isinstance(line, bool) and line > 0:
-        finding["line"] = line
+    if subject_type == "LINE":
+        line = root.get("originalLine")
+        if not isinstance(line, int) or isinstance(line, bool) or line <= 0:
+            line = root.get("line")
+        if not isinstance(line, int) or isinstance(line, bool) or line <= 0:
+            raise EvidenceError(
+                f"hosted line review thread {thread_id} requires a positive line"
+            )
+        finding.update({"path": path, "line": line})
     original = root.get("originalCommit")
     if original is not None:
         oid = original.get("oid") if isinstance(original, dict) else None
@@ -561,12 +583,27 @@ def _trusted_hosted_history(
     if finding is None or boundary_raw is None:
         return False
     path = finding.get("path")
+    subject_type = finding.get("_subject_type")
+    scope_valid = (
+        subject_type == "FILE"
+        and "path" not in finding
+        and "line" not in finding
+        and isinstance(finding.get("fix_paths"), list)
+        and len(finding["fix_paths"]) == 1
+        and isinstance(finding["fix_paths"][0], str)
+    ) or (
+        subject_type == "LINE"
+        and isinstance(path, str)
+        and finding.get("fix_paths") == [path]
+        and isinstance(finding.get("line"), int)
+        and not isinstance(finding["line"], bool)
+        and finding["line"] > 0
+    )
     if (
         finding.get("severity") not in {"P0", "P1", "P2", "P3"}
         or not isinstance(finding.get("summary"), str)
         or not finding["summary"].strip()
-        or not isinstance(path, str)
-        or finding.get("fix_paths") != [path]
+        or not scope_valid
         or not isinstance(finding.get("_review_id"), str)
         or not finding["_review_id"].strip()
     ):
@@ -578,14 +615,32 @@ def _trusted_hosted_history(
             "submittedAt",
         )
         boundary = _review_timestamp(boundary_raw, "prior review boundary")
+        last_edited_at = finding.get("_last_edited_at")
+        edited_at = (
+            None
+            if last_edited_at is None
+            else _review_timestamp(last_edited_at, "lastEditedAt")
+        )
     except EvidenceError:
         return False
-    return (
+    authenticated = (
         finding.get("_original_head_sha") == artifact.get("head_sha")
         and finding.get("_review_head_sha") == artifact.get("head_sha")
         and created_at < boundary
         and submitted_at < boundary
+        and (edited_at is None or edited_at < boundary)
     )
+    if not authenticated:
+        return False
+    if finding.get("severity") in {"P0", "P1"} and (
+        finding.get("status") != "unresolved"
+        or finding.get("outdated") is not True
+    ):
+        raise EvidenceError(
+            f"hosted prior blocker {finding.get('id')} has no verifiable historical "
+            "resolution state; start a new current-head full review (round 1)"
+        )
+    return True
 
 
 def combine_review_findings(
@@ -618,7 +673,7 @@ def combine_review_findings(
             if not isinstance(finding, dict):
                 normalized["findings"].append(finding)
                 continue
-            excluded = {"origin", "outdated"}
+            excluded = {"origin", "outdated", "subject_type"}
             if trusted_history:
                 excluded.update(
                     {
