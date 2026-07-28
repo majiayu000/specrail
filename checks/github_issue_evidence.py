@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -47,6 +48,9 @@ STATE_HINT_PATTERN = re.compile(
 )
 KNOWN_STATES = set(ISSUE_STATES)
 OUTCOME_LABELS = {"duplicate", "abandoned", "security_private"}
+PLAN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+PLAN_ITEM_RE = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+(.+?)\s*$")
+PLAN_HEADINGS = ("done-when", "done when", "acceptance criteria", "完成标准", "验收标准")
 
 
 def parse_issue_number(raw: str) -> int:
@@ -136,6 +140,31 @@ def infer_state_with_source(labels: list[str], body: str) -> tuple[str | None, s
     return None, "none", False
 
 
+def extract_testable_plan_from_body(body: str) -> dict[str, object] | None:
+    section_level: int | None = None
+    items: list[str] = []
+    for line in body.splitlines():
+        heading = PLAN_HEADING_RE.match(line)
+        if heading is not None:
+            level = len(heading.group(1))
+            title = heading.group(2).strip().lower()
+            if section_level is not None and level <= section_level:
+                section_level = None
+            if any(title.startswith(name) for name in PLAN_HEADINGS):
+                section_level = level
+            continue
+        item = PLAN_ITEM_RE.match(line)
+        if section_level is not None and item is not None:
+            items.append(item.group(1).strip())
+    if not items:
+        return None
+    return {
+        "source": "issue_body_checklist",
+        "items": items,
+        "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    }
+
+
 def default_artifacts(issue_number: int) -> dict[str, str]:
     return {
         "product_spec": f"specs/GH{issue_number}/product.md",
@@ -166,7 +195,7 @@ def build_issue_evidence(
     state, state_source, state_trusted = infer_state_with_source(labels, body)
     outcomes = sorted(set(labels) & OUTCOME_LABELS)
 
-    return {
+    evidence: dict[str, Any] = {
         "issue": issue_number,
         "github_state": github_state,
         "state": state,
@@ -176,8 +205,13 @@ def build_issue_evidence(
         "outcomes": outcomes,
         "url": url,
         "title": title,
+        "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
         "artifacts": default_artifacts(issue_number) if artifacts is None else artifacts,
     }
+    plan = extract_testable_plan_from_body(body)
+    if plan is not None:
+        evidence["testable_plan"] = plan
+    return evidence
 
 
 def collect_issue_evidence(
@@ -203,16 +237,17 @@ def collect_issue_evidence(
         artifacts,
     )
     evidence["repository"] = github_repo
+    tech_spec = resolve_repo_path(
+        repo,
+        artifacts["tech_spec"],
+        label="configured tech spec",
+    )
     if (
         evidence["state"] == "ready_to_implement"
         and evidence["state_source"] == "label"
         and evidence["state_trusted"] is True
         and any(sensitive_registry(config).values())
-        and resolve_repo_path(
-            repo,
-            artifacts["tech_spec"],
-            label="configured tech spec",
-        ).is_file()
+        and tech_spec.is_file()
     ):
         evidence.update(
             collect_sensitive_route_evidence(

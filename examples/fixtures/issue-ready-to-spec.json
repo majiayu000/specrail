@@ -4,12 +4,15 @@
     "task_plan": "specs/GH16/tasks.md",
     "tech_spec": "specs/GH16/tech.md"
   },
+  "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "issue": 16,
   "github_state": "OPEN",
   "labels": [
     "area_runtime",
     "ready_to_spec"
   ],
+  "outcomes": [],
+  "repository": "majiayu000/specrail",
   "state": "ready_to_spec",
   "state_source": "label",
   "state_trusted": true,

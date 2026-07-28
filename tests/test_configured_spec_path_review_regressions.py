@@ -16,6 +16,10 @@ from check_workflow import (  # noqa: E402
     discover_spec_packet_dirs,
     select_spec_packet_dirs,
 )
+from route_gate_test_support import (  # noqa: E402
+    complete_issue_evidence,
+    write_issue_evidence,
+)
 from specrail_lib import SpecRailError  # noqa: E402
 
 
@@ -163,8 +167,10 @@ def test_route_gate_ignores_unrelated_broken_gh1(tmp_path: Path) -> None:
         "write_spec",
         "--issue",
         "999",
-        "--state",
-        "ready_to_spec",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(tmp_path, state="ready_to_spec")),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -179,15 +185,18 @@ def test_route_gate_without_issue_reports_missing_evidence() -> None:
         "implement",
         "--profile",
         "heavy",
-        "--state",
-        "ready_to_implement",
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert payload["decision"] == "warn"
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert payload["decision"] == "blocked"
     assert "linked_issue" in payload["missing"]
     assert "product_spec" in payload["missing"]
     assert "tech_spec" in payload["missing"]
+    assert "issue evidence.issue: missing required field" in payload["reasons"]
+    assert (
+        "collector Issue evidence requires --github-repo OWNER/REPO"
+        in payload["reasons"]
+    )
     assert any("positive issue number" in item for item in payload["warnings"])
     assert not any("unsupported placeholder" in reason for reason in payload["reasons"])
 
@@ -323,6 +332,14 @@ def test_route_gate_rejects_provided_spec_outside_configured_path(
         ),
         encoding="utf-8",
     )
+    evidence = complete_issue_evidence(issue=91)
+    evidence["artifacts"] = {
+        "product_spec": "docs/specs/GH91/product.md",
+        "tech_spec": "docs/specs/GH91/tech.md",
+        "task_plan": "docs/specs/GH91/tasks.md",
+    }
+    evidence_path = tmp_path / "issue-evidence.json"
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 
     result, payload = run_route_gate(
         repo,
@@ -332,8 +349,10 @@ def test_route_gate_rejects_provided_spec_outside_configured_path(
         "heavy",
         "--issue",
         "91",
-        "--state",
-        "ready_to_implement",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(evidence_path),
         "--artifact",
         "product_spec=specs/GH91/product.md",
     )

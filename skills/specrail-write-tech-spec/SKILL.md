@@ -16,8 +16,15 @@ Use this skill for the technical half of the `write_spec` route.
    checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
-python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
+python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO \
+  --issue <issue-number> --json > issue-evidence.json
+python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> \
+  --github-repo OWNER/REPO --evidence issue-evidence.json --mode required --json
 ```
+
+Continue only when the route decision is `allowed`; stop and report every
+other decision and its missing evidence. Do not substitute `--state` or
+`--label` for current collector evidence.
 
 4. Explore the codebase first, then write `specs/GH<issue-number>/tech.md`.
    Replace the template's `specrail-planned-changes` placeholder with exactly

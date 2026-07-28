@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import sys
 from pathlib import Path
 
@@ -12,7 +13,11 @@ sys.path.insert(0, str(ROOT / "checks"))
 
 from pr_gate import evaluate_pr_gate  # noqa: E402
 from review_json_gate import evaluate_review_gate  # noqa: E402
-from route_gate_test_support import run_route_gate, write_duplicate_evidence  # noqa: E402
+from route_gate_test_support import (  # noqa: E402
+    complete_issue_evidence,
+    run_route_gate,
+    write_duplicate_evidence,
+)
 from test_pr_gate import evidence  # noqa: E402
 from test_pr_gate_sensitive_routes import authorization  # noqa: E402
 from test_review_json_gate import load_diff, valid_review  # noqa: E402
@@ -23,15 +28,32 @@ def test_profile_route_review_and_pr_gate_end_to_end(
     tmp_path: Path,
     profile: str,
 ) -> None:
-    route_process, route = run_route_gate(
+    route_args = [
         "--route",
         "implement",
         "--issue",
         "208",
-        "--state",
-        "ready_to_implement",
         "--profile",
         profile,
+    ]
+    evidence_path = tmp_path / f"{profile}-issue-evidence.json"
+    evidence_path.write_text(
+        json.dumps(complete_issue_evidence(
+            issue=208, repository="majiayu000/specrail"
+        )),
+        encoding="utf-8",
+    )
+    route_args.extend([
+        "--github-repo", "majiayu000/specrail",
+        "--evidence", str(evidence_path),
+    ])
+    if profile == "heavy":
+        route_args.extend([
+            "--approved-spec-revision",
+            "a0df47662112057cfb5cf3382d951beefd433788",
+        ])
+    route_process, route = run_route_gate(
+        *route_args,
         "--duplicate-evidence",
         str(write_duplicate_evidence(tmp_path, issue=208)),
         "--mode",

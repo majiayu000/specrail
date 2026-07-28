@@ -90,30 +90,23 @@ Collect read-only GitHub issue evidence before running the route gate:
 ```sh
 python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO --issue 123 --json > issue-evidence.json
 python3 checks/route_gate.py --repo . --route write_spec --issue 123 \
-  --evidence issue-evidence.json --mode required --json
+  --github-repo OWNER/REPO --evidence issue-evidence.json --mode required --json
 python3 checks/route_gate.py --repo . --route implement --issue 123 \
-  --profile <fastlane|standard|heavy> --evidence issue-evidence.json \
+  --github-repo OWNER/REPO --profile <fastlane|standard|heavy> \
+  --evidence issue-evidence.json \
   --mode required --json
 ```
 
 Continue only when the route decision is `allowed`.
-`checks/github_issue_evidence.py` is read-only. It uses `gh issue view` for issue
-state and labels. For a trusted `ready_to_implement` issue in a repository with
-a sensitive registry, it first queries the GitHub default-base identity, checks
-that identity against the local `origin` ref and symbolic `origin/HEAD`, and
-classifies the approved tech manifest from that exact base. A non-sensitive
-plan stops there. A sensitive plan additionally queries the current approval
-label and latest matching label event through GraphQL, then uses the REST
-associated-PR endpoint to prove each approved spec source came from exactly one
-merged default-branch PR.
-
-The adapter does not write labels, comments, issues, or PRs. Body hints remain
-untrusted. Missing or non-symbolic `origin/HEAD`, default-base drift, an empty
-completed planned-path list, incomplete latest approval actor/timestamp, missing
-merged-spec provenance, or approved-spec content drift fails closed. Ordinary,
-classified non-sensitive, and classified sensitive outputs conform to
-`schemas/issue_evidence.schema.json`. Artifact paths are rendered from the
-selected repo's `workflow.yaml`.
+For `heavy`, append `--approved-spec-revision <40-char-sha>` using the exact
+revision explicitly supplied by the maintainer.
+`checks/github_issue_evidence.py` is read-only and uses `gh issue view` for the
+current Issue body, state, and labels. Readiness routes require its complete
+schema-bound output; `--state` cannot replace or override collector evidence.
+For heavy implementation, the route additionally requires
+`--approved-spec-revision` with the exact immutable revision explicitly supplied
+by the maintainer. The current product, tech, and task specs must byte-match that
+ancestor revision. The collector never infers or mints this approval revision.
 
 Evaluate whether PR merge evidence is complete before a maintainer merges:
 
@@ -125,7 +118,8 @@ python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 `checks/github_pr_evidence.py` is a read-only collector for GitHub CLI output.
 It verifies the complete REST-paginated changed-file set against GitHub's
 reported count and includes current hosted review-thread state for
-profiles whose configured `requires_independent_review` policy is true.
+the canonical standard/heavy profiles. Fastlane never requires hosted/GraphQL
+review evidence.
 `checks/pr_gate.py` owns the offline merge-readiness decision.
 
 After a merge, audit that the allowed gate query, merge dispatch, and confirmed
@@ -146,12 +140,14 @@ Validate an advisory review artifact against a unified diff:
 python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-123.json --diff pr.diff --json
 ```
 
-Review artifacts are advisory evidence only. They do not grant final approval or
-merge authority. Round 1 is full and binds the exact PR base-to-head diff.
-Round 2 is diff-only, embeds the bound round-1
+Review artifacts are advisory evidence only. They do not grant final approval
+or merge authority. Round 1 is full and binds the exact PR base-to-head diff.
+Round 2 exists only after an unresolved round-1 P0/P1, is diff-only, and embeds
+the bound round-1
 artifact as `prior_review`, and carries every prior unresolved P0/P1 finding
-forward as resolved or unresolved. Current P0/P1 blocks, and P2/P3 remains
-follow-up.
+forward as resolved or unresolved. The fix diff may touch only the blocker
+finding's predeclared `path` or `fix_paths`; any extra path starts a new full
+review. Current P0/P1 blocks, and P2/P3 remains follow-up.
 
 Evaluate a spec packet and adoption smoke evidence:
 

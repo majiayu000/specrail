@@ -58,6 +58,25 @@ def test_heavy_change_with_current_invocation_authorization_is_allowed() -> None
     assert result["decision"] == "allowed", result["reasons"]
 
 
+def test_heavy_independent_review_requirement_cannot_be_disabled() -> None:
+    payload, pack = evidence(
+        profile="heavy",
+        paths=["checks/pr_gate.py"],
+        patterns=["checks/**"],
+    )
+    payload["human_merge_authorization"] = authorization(payload)
+    pack.workflow["verification_profiles"] = verification_profile_config()
+    pack.workflow["verification_profiles"]["profiles"]["heavy"][
+        "requires_independent_review"
+    ] = False
+    payload["review"]["review_source"] = "self_review"
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert "workflow.yaml: heavy profile must match canonical safety policy" in result["reasons"]
+
+
 def test_heavy_authorization_is_bound_to_head_and_invocation() -> None:
     payload, pack = evidence(
         profile="heavy",

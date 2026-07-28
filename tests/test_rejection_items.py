@@ -274,7 +274,29 @@ def test_allowed_result_has_empty_rejection_items() -> None:
 
 def test_early_exit_paths_emit_structured_items(tmp_path: Path) -> None:
     evidence_path = tmp_path / "issue-evidence.json"
-    evidence_path.write_text(json.dumps({"github_state": "CLOSED"}), encoding="utf-8")
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "issue": 999,
+                "repository": "example/consumer",
+                "body_sha256": "a" * 64,
+                "github_state": "CLOSED",
+                "state": "ready_to_implement",
+                "state_source": "label",
+                "state_trusted": True,
+                "labels": ["ready_to_implement"],
+                "outcomes": [],
+                "url": "https://github.com/example/consumer/issues/999",
+                "title": "Closed fixture",
+                "artifacts": {
+                    "product_spec": "specs/GH999/product.md",
+                    "tech_spec": "specs/GH999/tech.md",
+                    "task_plan": "specs/GH999/tasks.md",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -285,6 +307,8 @@ def test_early_exit_paths_emit_structured_items(tmp_path: Path) -> None:
             "implement",
             "--issue",
             "999",
+            "--github-repo",
+            "example/consumer",
             "--evidence",
             str(evidence_path),
             "--json",

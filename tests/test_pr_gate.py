@@ -148,7 +148,7 @@ def test_fastlane_self_review_is_allowed() -> None:
     assert result["decision"] == "allowed", result["reasons"]
 
 
-def test_gate_honors_configured_fastlane_independent_review() -> None:
+def test_gate_rejects_noncanonical_fastlane_independent_review() -> None:
     payload, pack = evidence(profile="fastlane")
     pack.workflow["verification_profiles"] = verification_profile_config()
     pack.workflow["verification_profiles"]["profiles"]["fastlane"][
@@ -158,7 +158,7 @@ def test_gate_honors_configured_fastlane_independent_review() -> None:
     result = evaluate_pr_gate(payload, ROOT, pack)
 
     assert result["decision"] == "blocked"
-    assert any("requires an independent_lane review" in item for item in result["reasons"])
+    assert "workflow.yaml: fastlane profile must match canonical safety policy" in result["reasons"]
 
 
 def test_gate_requires_every_configured_ci_check() -> None:
@@ -242,7 +242,7 @@ def test_gate_reports_all_missing_contract_fields() -> None:
     assert result["rejection_items"]
 
 
-def test_gate_honors_configured_explicit_human_authorization() -> None:
+def test_gate_rejects_noncanonical_standard_merge_authorization() -> None:
     payload, pack = evidence(profile="standard")
     pack.workflow["verification_profiles"] = verification_profile_config()
     pack.workflow["verification_profiles"]["profiles"]["standard"][
@@ -251,11 +251,11 @@ def test_gate_honors_configured_explicit_human_authorization() -> None:
 
     result = evaluate_pr_gate(payload, ROOT, pack)
 
-    assert result["decision"] == "needs_human"
-    assert "human_merge_authorization" in result["missing"]
+    assert result["decision"] == "blocked"
+    assert "workflow.yaml: standard profile must match canonical safety policy" in result["reasons"]
 
 
-def test_gate_honors_configured_profile_round_cap(tmp_path: Path) -> None:
+def test_gate_rejects_noncanonical_profile_round_cap(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
@@ -322,9 +322,8 @@ def test_gate_honors_configured_profile_round_cap(tmp_path: Path) -> None:
 
     result = evaluate_pr_gate(payload, repo, pack)
 
-    assert result["decision"] == "needs_human", result["reasons"]
-    assert result["review_decision"] == "needs_human"
-    assert "human_review" in result["missing"]
+    assert result["decision"] == "blocked", result["reasons"]
+    assert "workflow.yaml: standard profile must match canonical safety policy" in result["reasons"]
 
 
 def test_round_two_prior_review_must_start_at_pr_base() -> None:

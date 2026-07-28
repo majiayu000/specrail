@@ -35,12 +35,15 @@ This pack defines:
   P0/P1 fixes.
 - `heavy`: architecture, public contracts, migrations, auth, payments, secrets,
   permissions, or configured sensitive paths. Requires a complete durable spec
-  packet, security evidence, and explicit current-invocation human merge
-  authorization.
+  packet, independent review, security evidence bound to an exact
+  maintainer-supplied approved revision, and explicit current-invocation human
+  merge authorization. The collector cannot mint the approved revision; any
+  product/tech/tasks drift fails closed.
 
 Sensitive classification always selects `heavy`.
-For every profile, the configured `requires_independent_review` value decides
-whether the review source and hosted-thread collection must be independent.
+The canonical profile configuration fixes `requires_independent_review`:
+fastlane is false; standard and heavy are true. Noncanonical overrides fail
+workflow validation.
 
 ## Workflow Model
 

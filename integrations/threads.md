@@ -16,10 +16,11 @@ skill explicitly delegates disjoint lanes.
 One reviewer lane per PR is the default. The canonical compact review contract
 lives in `skills/specrail-review-pr/SKILL.md`; do not copy it here.
 
-- Select an independent reviewer lane when the chosen profile's configured
-  `requires_independent_review` policy is true; otherwise self-review is
-  allowed. Hosted-thread collection follows the same policy.
-- Round 1 is full; round 2 is diff-only after P0/P1 fixes.
+- Follow the canonical profile policy: fastlane self-review; standard/heavy
+  independent review with hosted-thread collection. Noncanonical overrides
+  block.
+- Round 1 is full; round 2 exists only after an unresolved round-1 P0/P1 and is
+  diff-only after its fix.
 - A third round needs a human decision.
 
 Wait once for the lane's bounded result. On failure, report it and decide

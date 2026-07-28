@@ -260,7 +260,7 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
     assert result["review"]["verdict"] == "non_blocking"
 
 
-def test_configured_fastlane_independent_review_collects_hosted_findings(
+def test_noncanonical_fastlane_independent_review_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -286,17 +286,17 @@ def test_configured_fastlane_independent_review_collects_hosted_findings(
         lambda _repo, _pr, head: hosted_calls.append(head) or [],
     )
 
-    collect_evidence(
-        "acme/widgets",
-        42,
-        profile="fastlane",
-        gate_invocation_id="gate-1",
-        review=review(profile="fastlane"),
-        repo=tmp_path,
-        config=pack,
-    )
-
-    assert hosted_calls == ["a" * 40, "a" * 40]
+    with pytest.raises(EvidenceError, match="canonical safety policy"):
+        collect_evidence(
+            "acme/widgets",
+            42,
+            profile="fastlane",
+            gate_invocation_id="gate-1",
+            review=review(profile="fastlane"),
+            repo=tmp_path,
+            config=pack,
+        )
+    assert hosted_calls == []
 
 
 def test_collect_evidence_rejects_head_drift(monkeypatch: pytest.MonkeyPatch) -> None:

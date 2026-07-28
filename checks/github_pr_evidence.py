@@ -20,6 +20,7 @@ from specrail_lib import (
     SpecRailError,
     load_pack,
     resolve_path,
+    validate_verification_profiles,
     verification_profiles,
 )
 
@@ -546,6 +547,10 @@ def collect_evidence(
         repo=repo,
         config=config,
     )
+    if config is not None and "verification_profiles" in config.workflow:
+        profile_errors = validate_verification_profiles(config)
+        if profile_errors:
+            raise EvidenceError("; ".join(profile_errors))
     collect_hosted = collection_profile != "fastlane"
     if config is not None and "verification_profiles" in config.workflow:
         _default_profile, profiles = verification_profiles(config)

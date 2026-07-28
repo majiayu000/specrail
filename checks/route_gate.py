@@ -10,6 +10,12 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from github_evidence_common import (
+    blocked_route_result as blocked_result,
+    issue_route_evidence_errors,
+    valid_security_evidence,
+    valid_testable_plan,
+)
 from specrail_lib import (
     TERMINAL_BLOCKING_STATES,
     SpecRailError,
@@ -69,12 +75,12 @@ ARTIFACT_FILES = {
     "task_plan",
 }
 READINESS_GATED_ROUTES = {"write_spec", "implement"}
-DECISION_RANK = {
-    "allowed": 0,
-    "warn": 1,
-    "needs_human": 2,
-    "blocked": 3,
-}
+LEGACY_ROUTE_EVIDENCE_FIELDS = set(
+    "content_binding_evidence content_binding_version content_bindings "
+    "pr_tier pr_tier_evidence review_execution review_manifest review_round "
+    "runtime_checkpoint runtime_ledger runtime_tier tier_attestation "
+    "tier_authorization tier_dispute".split()
+)
 
 
 def normalize_route(raw: str) -> str:
@@ -111,12 +117,6 @@ def artifact_exists(repo: Path, artifact_path: str | None) -> bool:
         artifact_path,
         label="artifact path",
     ).is_file()
-
-
-def stricter_decision(current: str, candidate: str) -> str:
-    if DECISION_RANK[candidate] > DECISION_RANK[current]:
-        return candidate
-    return current
 
 
 def required_artifact_path(config: Any, artifact: str, issue: int | None) -> str | None:
@@ -156,6 +156,9 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         config_errors.append(f"unknown route: {route}")
 
     evidence = load_evidence(Path(args.evidence) if args.evidence else None)
+    legacy_evidence = sorted(set(evidence) & LEGACY_ROUTE_EVIDENCE_FIELDS)
+    collector_required = route in READINESS_GATED_ROUTES
+    collector_authoritative = collector_required and not legacy_evidence
     default_profile = "standard"
     profiles: dict[str, dict[str, Any]] = {}
     try:
@@ -172,13 +175,13 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         effective_profile = declared_profile
     if evidence.get("enforcement_sensitive") is True:
         effective_profile = "heavy"
-    labels = list(args.label or [])
+    labels = [] if collector_authoritative else list(args.label or [])
     labels.extend(str(label) for label in evidence.get("labels", []) if str(label).strip())
     evidence_state = evidence.get("state")
-    explicit_state = args.state or evidence_state
+    explicit_state = evidence_state if collector_authoritative else args.state or evidence_state
     github_state = str(evidence.get("github_state") or "").upper()
-    state_from_cli = args.state is not None
-    state_from_evidence = not state_from_cli and evidence_state is not None
+    state_from_cli = args.state is not None and not collector_authoritative
+    state_from_evidence = collector_authoritative and evidence_state is not None
     state_source = str(evidence.get("state_source") or "none")
     state_trusted = state_source == "label" and evidence.get("state_trusted") is True
 
@@ -193,8 +196,30 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     duplicate_work_result: dict[str, Any] | None = None
     sensitive_classification: dict[str, Any] | None = None
     sensitive_errors: list[str] = []
+    if legacy_evidence:
+        reasons.append(
+            "unsupported legacy route evidence fields: "
+            + ", ".join(legacy_evidence)
+            + "; rebuild evidence from current GitHub issue state"
+        )
+        items.append(item_from_reason(reasons[-1], "contract_violation"))
+    evidence_errors = issue_route_evidence_errors(
+        repo,
+        evidence,
+        args.issue,
+        args.github_repo,
+        require_collector=collector_required and not legacy_evidence,
+        cli_state=args.state if collector_authoritative else None,
+    )
+    if collector_authoritative and args.label:
+        evidence_errors.append(
+            "readiness collector evidence cannot be augmented with --label"
+        )
+    reasons.extend(evidence_errors)
+    items.extend(item_from_reason(error, "invalid_evidence_value") for error in evidence_errors)
 
     if config_errors:
+        all_errors = [*reasons, *config_errors]
         return {
             "decision": "blocked",
             "route": route,
@@ -202,11 +227,11 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             "current_state": explicit_state,
             "issue": args.issue,
             "pr": args.pr,
-            "reasons": config_errors,
+            "reasons": all_errors,
             "satisfied": [],
             "missing": [],
             "rejection_items": finalize_items(
-                item_from_reason(error, "config_error") for error in config_errors
+                [*items, *(item_from_reason(error, "config_error") for error in config_errors)]
             ),
             "required_artifacts": [],
             "human_gates": [],
@@ -220,7 +245,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             route,
             explicit_state,
             args,
-            [f"GitHub issue state must be OPEN; got {github_state}"],
+            [*reasons, f"GitHub issue state must be OPEN; got {github_state}"],
         )
     outcome_labels = {
         str(label)
@@ -236,7 +261,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             route,
             explicit_state,
             args,
-            [
+            [*reasons,
                 "issue outcome is terminal or maintainer-reserved: "
                 + ", ".join(blocking_outcomes)
             ],
@@ -254,7 +279,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             route,
             current_state,
             args,
-            [f"unknown current state: {current_state}"],
+            [*reasons, f"unknown current state: {current_state}"],
         )
 
     if current_state in TERMINAL_BLOCKING_STATES:
@@ -262,7 +287,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             route,
             current_state,
             args,
-            [f"state {current_state} is terminal or maintainer-reserved"],
+            [*reasons, f"state {current_state} is terminal or maintainer-reserved"],
         )
 
     assert policy is not None
@@ -446,6 +471,37 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         elif path:
             required_artifacts.append(path)
 
+    if route == "implement" and effective_profile == "standard":
+        task_plan = (
+            spec_packet_artifact_paths(config, args.issue)["task_plan"]
+            if args.issue is not None
+            else None
+        )
+        if artifact_exists(repo, task_plan) or valid_testable_plan(
+            evidence.get("testable_plan")
+        ):
+            satisfied.append("standard testable plan evidence validated")
+        else:
+            missing.append("testable_plan")
+            items.append(item_from_missing("testable_plan"))
+
+    if route == "implement" and effective_profile == "heavy":
+        if state_from_evidence and state_trusted and current_state == "ready_to_implement":
+            satisfied.append("spec approval established by trusted readiness label")
+        else:
+            missing.append("spec_approval")
+            items.append(item_from_missing("spec_approval"))
+        packet = spec_packet_artifact_paths(config, args.issue) if args.issue else {}
+        if state_trusted and valid_security_evidence(
+            repo,
+            args.approved_spec_revision,
+            [packet[name] for name in ("product_spec", "tech_spec", "task_plan")] if packet else [],
+        ):
+            satisfied.append("security evidence bound to explicit approved spec revision")
+        else:
+            missing.append("security_evidence")
+            items.append(item_from_missing("security_evidence"))
+
     legacy_spec = False
     if route == "implement":
         # GH142 B-005/B-007: a legacy spec packet is never a basis for
@@ -556,11 +612,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     else:
         blocked_actions.extend(["final_approval", "merge", "force_push"])
 
-    if missing:
-        if (
-            current_state is None
-            or any(item.startswith("allowed_state:") for item in missing)
-            or "trusted_state" in missing
+    if legacy_evidence or evidence_errors:
+        decision = "blocked"
+    elif missing:
+        if all(
+            item in {
+                "current_state", "trusted_state", "spec_approval", "security_evidence"
+            }
+            or item.startswith("allowed_state:") for item in missing
         ):
             decision = "needs_human" if human_gates else "blocked"
         else:
@@ -622,35 +681,6 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def blocked_result(
-    route: str,
-    current_state: str | None,
-    args: argparse.Namespace,
-    reasons: list[str],
-    item_category: str = "invalid_state",
-) -> dict[str, Any]:
-    return {
-        "decision": "blocked",
-        "route": route,
-        "profile": getattr(args, "profile", None) or "standard",
-        "mode": args.mode,
-        "current_state": current_state,
-        "issue": args.issue,
-        "pr": args.pr,
-        "reasons": reasons,
-        "satisfied": [],
-        "missing": [],
-        "rejection_items": finalize_items(
-            item_from_reason(reason, item_category) for reason in reasons
-        ),
-        "required_artifacts": [],
-        "human_gates": [],
-        "allowed_actions": [],
-        "blocked_actions": [route],
-        "verification_commands": ["python3 checks/check_workflow.py --repo ."],
-    }
-
-
 def print_human(result: dict[str, Any]) -> None:
     print(f"decision: {result['decision']}")
     print(f"route: {result['route']}")
@@ -685,6 +715,11 @@ def main() -> int:
     parser.add_argument("--repo", default=".", help="SpecRail pack or adopted repo root")
     parser.add_argument("--route", "--action", required=True, help="Route/action to evaluate")
     parser.add_argument("--issue", type=int, help="Linked GitHub issue number")
+    parser.add_argument("--github-repo", help="GitHub repository as OWNER/REPO")
+    parser.add_argument(
+        "--approved-spec-revision",
+        help="Exact maintainer-approved revision containing the heavy tech spec",
+    )
     parser.add_argument("--pr", type=int, help="Linked pull request number")
     parser.add_argument("--state", help="Canonical SpecRail state")
     parser.add_argument(
