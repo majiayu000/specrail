@@ -37,6 +37,7 @@ from specrail_lib import (
     verification_profiles,
 )
 from duplicate_work_gate import evaluate_duplicate_work_gate_path
+from check_workflow import validate_task_plan
 from rejection_items import (
     add_prior_rejection_argument,
     apply_prior_rejection,
@@ -477,9 +478,18 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             if args.issue is not None
             else None
         )
-        if artifact_exists(repo, task_plan) or valid_testable_plan(
-            evidence.get("testable_plan")
-        ):
+        task_plan_valid = False
+        if task_plan and artifact_exists(repo, task_plan):
+            task_plan_path = resolve_repo_path(
+                repo,
+                task_plan,
+                label="configured task plan",
+            )
+            task_plan_valid = not validate_task_plan(
+                task_plan_path,
+                str(args.issue) if args.issue is not None else None,
+            )
+        if task_plan_valid or valid_testable_plan(evidence.get("testable_plan")):
             satisfied.append("standard testable plan evidence validated")
         else:
             missing.append("testable_plan")

@@ -198,11 +198,12 @@ permission.
 python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-number>.json --diff <patch> --json
 ```
 
-The review gate validates advisory review JSON and inline diff locations. It
-does not approve, merge, or publish GitHub reviews. Review artifact bodies must
-include `## Summary` and `## Verdict`; inline comments may use paired
-`start_line` / `start_side` ranges, and suggestions must be non-empty RIGHT-side
-comments.
+The review gate validates advisory review JSON and optional finding locations.
+It does not approve, merge, or publish GitHub reviews. Review artifact bodies
+must include `## Summary` and `## Verdict`. Each v3 finding uses `id`,
+`severity`, `status`, and `summary`; optional `path` and `line` must be supplied
+together, and optional `fix_paths` scopes a round-2 fix. The live GitHub
+collector alone adds hosted `origin` and `outdated` provenance.
 
 If `write_spec` is selected and no GitHub issue number is available, the agent
 should search for an existing issue first. If none exists and GitHub workflow is

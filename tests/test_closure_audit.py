@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "checks"))
@@ -93,6 +95,23 @@ def test_unconfirmed_remote_merge_warns() -> None:
     assert {item["code"] for item in result["warnings"]} >= {
         "closure_remote_not_confirmed",
         "closure_head_mismatch",
+    }
+
+
+@pytest.mark.parametrize(
+    "repository",
+    ["bad", "owner/", "/repo", "../repo", "owner/..", "owner/repo/extra"],
+)
+def test_invalid_repository_never_clears(repository: str) -> None:
+    evidence = clean_evidence()
+    evidence["repository"] = repository
+
+    result = audit_closure(evidence)
+
+    assert result["status"] == "warning"
+    assert result["repository"] is None
+    assert "invalid_repository" in {
+        warning["code"] for warning in result["warnings"]
     }
 
 

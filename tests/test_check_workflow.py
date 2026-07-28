@@ -113,6 +113,35 @@ def test_required_file_cap_ignores_consumer_owned_schema(tmp_path: Path) -> None
     )
 
 
+def test_required_file_cap_ignores_consumer_owned_checker(tmp_path: Path) -> None:
+    shutil.copytree(ROOT, tmp_path / "repo", ignore=shutil.ignore_patterns(".git"))
+    repo = tmp_path / "repo"
+    (repo / "checks" / "consumer_checker.py").write_text(
+        "raise SystemExit('consumer-owned')\n",
+        encoding="utf-8",
+    )
+
+    assert not any(
+        "checks:" in error and "hard limit" in error
+        for error in validate_required_files(repo)
+    )
+
+
+def test_required_file_cap_counts_only_declared_pack_checkers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shutil.copytree(ROOT, tmp_path / "repo", ignore=shutil.ignore_patterns(".git"))
+    repo = tmp_path / "repo"
+    extra = "checks/pack_owned_nineteenth.py"
+    (repo / extra).write_text("# pack-owned\n", encoding="utf-8")
+    monkeypatch.setattr(check_workflow, "REQUIRED_FILES", [*REQUIRED_FILES, extra])
+
+    assert "checks: 19 Python files exceeds 18-file hard limit" in (
+        validate_required_files(repo)
+    )
+
+
 def test_required_files_exclude_removed_runtime_dependencies() -> None:
     assert not any("runtime" in path for path in REQUIRED_FILES)
     assert "checks/review_json_gate.py" in REQUIRED_FILES

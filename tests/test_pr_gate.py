@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "checks"))
 
 from pr_gate import LEGACY_EVIDENCE_FIELDS, evaluate_pr_gate
 from sensitive_enforcement import classify_sensitive_changes
-from specrail_lib import PackConfig
+from specrail_lib import PackConfig, spec_packet_artifact_paths
 
 
 def head_sha(repo: Path = ROOT) -> str:
@@ -28,6 +28,12 @@ def config(repo: Path, patterns: list[str] | None = None) -> PackConfig:
     return PackConfig(
         repo=repo,
         workflow={
+            "artifacts": {
+                "spec_packet": "specs/GH{issue_number}/",
+                "product_spec": "specs/GH{issue_number}/product.md",
+                "tech_spec": "specs/GH{issue_number}/tech.md",
+                "task_plan": "specs/GH{issue_number}/tasks.md",
+            },
             "enforcement": {
                 "sensitive_registry": {"paths": patterns or [], "specs": []}
             }
@@ -73,11 +79,20 @@ def evidence(
     head = head_sha(repo)
     changed = sorted(paths or ["src/app.py"])
     pack = config(repo, patterns)
+    packet = spec_packet_artifact_paths(pack, 208)
+    spec_refs = (
+        [
+            packet[name]
+            for name in ("product_spec", "tech_spec", "task_plan")
+        ]
+        if pack.workflow["enforcement"]["sensitive_registry"]["specs"]
+        else []
+    )
     classification = classify_sensitive_changes(
         pack,
         repo,
         changed,
-        changed,
+        spec_refs,
         source="github_changed_files",
     )
     review_source = "self_review" if profile == "fastlane" else "independent_lane"
@@ -146,6 +161,118 @@ def test_fastlane_self_review_is_allowed() -> None:
     result = evaluate_pr_gate(payload, ROOT, pack)
 
     assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_round_one_uses_pr_merge_base_diff_when_base_has_diverged(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "shared.py").write_text("base = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git", "-c", "user.name=SpecRail Test",
+            "-c", "user.email=specrail@example.invalid",
+            "commit", "-qm", "base",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    base = head_sha(repo)
+    base_branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(["git", "checkout", "-qb", "feature"], cwd=repo, check=True)
+    (repo / "feature.py").write_text("feature = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git", "-c", "user.name=SpecRail Test",
+            "-c", "user.email=specrail@example.invalid",
+            "commit", "-qm", "feature",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    feature_head = head_sha(repo)
+    subprocess.run(["git", "checkout", "-q", base_branch], cwd=repo, check=True)
+    (repo / "base-only.py").write_text("base_only = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git", "-c", "user.name=SpecRail Test",
+            "-c", "user.email=specrail@example.invalid",
+            "commit", "-qm", "advance base",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    base_tip = head_sha(repo)
+    subprocess.run(["git", "checkout", "-q", "feature"], cwd=repo, check=True)
+
+    payload, pack = evidence(repo=repo, paths=["feature.py"])
+    payload["base_sha"] = base_tip
+    payload["review"]["base_head_sha"] = base_tip
+    payload["review"]["head_sha"] = feature_head
+    exact_pr_diff = subprocess.run(
+        [
+            "git", "diff", "--no-ext-diff", "--binary",
+            f"{base_tip}...{feature_head}", "--",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    two_dot_diff = subprocess.run(
+        [
+            "git", "diff", "--no-ext-diff", "--binary",
+            f"{base_tip}..{feature_head}", "--",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert exact_pr_diff != two_dot_diff
+    payload["review"]["diff_sha256"] = hashlib.sha256(exact_pr_diff).hexdigest()
+
+    result = evaluate_pr_gate(payload, repo, pack)
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_sensitive_spec_registry_uses_linked_issue_packet_refs() -> None:
+    payload, pack = evidence(profile="heavy")
+    pack.workflow["enforcement"]["sensitive_registry"]["specs"] = [
+        "specs/GH208/**"
+    ]
+    packet = spec_packet_artifact_paths(pack, 208)
+    classification = classify_sensitive_changes(
+        pack,
+        ROOT,
+        payload["changed_files"],
+        [
+            packet[name]
+            for name in ("product_spec", "tech_spec", "task_plan")
+        ],
+        source="github_changed_files",
+    )
+    payload["enforcement_sensitive"] = True
+    payload["sensitive_classification"] = classification
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "needs_human", result["reasons"]
+    assert result["sensitive_classification"]["matched_specs"] == [
+        "specs/GH208/product.md",
+        "specs/GH208/tasks.md",
+        "specs/GH208/tech.md",
+    ]
 
 
 def test_gate_rejects_noncanonical_fastlane_independent_review() -> None:

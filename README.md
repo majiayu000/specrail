@@ -111,7 +111,12 @@ ancestor revision. The collector never infers or mints this approval revision.
 Evaluate whether PR merge evidence is complete before a maintainer merges:
 
 ```sh
-python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr 123 --json > pr-evidence.json
+python3 checks/github_pr_evidence.py \
+  --github-repo OWNER/REPO \
+  --pr 123 \
+  --gate-invocation-id <id> \
+  --review <review.json> \
+  --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 ```
 

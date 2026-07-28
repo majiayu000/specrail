@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import re
-import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -173,6 +172,32 @@ def _add_line(lines: dict[str, set[int]], path: str | None, line: int) -> None:
         lines.setdefault(path, set()).add(line)
 
 
+def _diff_header_paths(raw_line: str) -> tuple[str | None, str | None]:
+    payload = raw_line.removeprefix("diff --git ")
+    separators = [
+        index
+        for index in range(len(payload))
+        if payload.startswith(" b/", index)
+    ]
+    candidates = [
+        (
+            _clean_diff_path(payload[:index]),
+            _clean_diff_path(payload[index + 1 :]),
+        )
+        for index in separators
+        if payload.startswith("a/")
+    ]
+    if not candidates:
+        raise ValueError("invalid diff --git file header")
+    for old_path, new_path in candidates:
+        if old_path == new_path:
+            return old_path, new_path
+    if len(candidates) == 1:
+        return candidates[0]
+    # Rename/copy records carry unambiguous paths on following metadata lines.
+    return None, None
+
+
 def parse_unified_diff(diff_text: str) -> DiffIndex:
     """Index old and new line numbers in a unified diff."""
 
@@ -186,18 +211,22 @@ def parse_unified_diff(diff_text: str) -> DiffIndex:
     in_hunk = False
     for raw_line in diff_text.splitlines():
         if raw_line.startswith("diff --git "):
-            try:
-                header = shlex.split(raw_line)
-            except ValueError as exc:
-                raise ValueError(f"invalid diff file header: {exc}") from exc
-            if len(header) != 4:
-                raise ValueError("invalid diff --git file header")
-            for raw_path in header[2:]:
-                path = _clean_diff_path(raw_path)
+            header_paths = _diff_header_paths(raw_line)
+            for path in header_paths:
                 if path is not None:
                     paths.add(path)
             old_path = new_path = None
             in_hunk = False
+            continue
+        if not in_hunk and raw_line.startswith(("rename from ", "copy from ")):
+            old_path = _clean_diff_path(raw_line.split(" ", 2)[2])
+            if old_path is not None:
+                paths.add(old_path)
+            continue
+        if not in_hunk and raw_line.startswith(("rename to ", "copy to ")):
+            new_path = _clean_diff_path(raw_line.split(" ", 2)[2])
+            if new_path is not None:
+                paths.add(new_path)
             continue
         if not in_hunk and raw_line.startswith("--- "):
             old_path = _clean_diff_path(raw_line[4:])
@@ -242,6 +271,7 @@ def validate_exact_git_diff(
     diff_sha256: object,
     *,
     supplied_bytes: bytes | None = None,
+    full_review: bool = False,
 ) -> list[str]:
     """Verify an option-safe exact Git range and its digest."""
 
@@ -254,9 +284,10 @@ def validate_exact_git_diff(
         r"[0-9a-fA-F]{64}", diff_sha256
     ):
         return ["exact Git diff requires a 64-character diff_sha256 before execution"]
+    diff_range = f"{base}...{head}" if full_review else f"{base}..{head}"
     try:
         process = subprocess.run(
-            ["git", "diff", "--no-ext-diff", "--binary", f"{base}..{head}", "--"],
+            ["git", "diff", "--no-ext-diff", "--binary", diff_range, "--"],
             cwd=repo,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -266,12 +297,14 @@ def validate_exact_git_diff(
         return [f"cannot execute exact Git diff: {exc}"]
     if process.returncode != 0:
         detail = process.stderr.decode("utf-8", errors="replace").strip()
-        return [f"exact Git diff failed for {base}..{head}: {detail}"]
+        return [f"exact Git diff failed for {diff_range}: {detail}"]
     reasons: list[str] = []
     if supplied_bytes is not None and supplied_bytes != process.stdout:
-        reasons.append("provided diff bytes do not equal exact Git base_head_sha..head_sha output")
+        reasons.append(
+            "provided diff bytes do not equal the exact Git review range output"
+        )
     if hashlib.sha256(process.stdout).hexdigest() != diff_sha256:
-        reasons.append("diff_sha256 does not match exact Git base_head_sha..head_sha output")
+        reasons.append("diff_sha256 does not match the exact Git review range output")
     return reasons
 
 
@@ -451,6 +484,7 @@ def evaluate_review_gate(
                         prior_review.get("base_head_sha"),
                         prior_review.get("head_sha"),
                         prior_review.get("diff_sha256"),
+                        full_review=True,
                     )
                 )
             reasons.extend(
@@ -525,6 +559,7 @@ def evaluate_review_gate(
                     review.get("head_sha"),
                     digest,
                     supplied_bytes=supplied,
+                    full_review=review_round == 1,
                 )
             )
         elif digest is not None:

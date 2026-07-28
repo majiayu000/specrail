@@ -20,13 +20,14 @@ from rejection_items import (
     items_from_legacy,
 )
 from review_json_gate import evaluate_review_gate
-from sensitive_enforcement import classify_sensitive_changes
+from sensitive_enforcement import classify_sensitive_changes, sensitive_registry
 from specrail_lib import (
     PackConfig,
     SpecRailError,
     ci_component_coverage,
     load_pack,
     resolve_path,
+    spec_packet_artifact_paths,
     validate_verification_profiles,
     verification_profiles,
 )
@@ -224,12 +225,20 @@ def _validate_sensitive(
     if not isinstance(paths, list):
         reasons.append("changed_files must be an array")
         return False, None, satisfied, reasons
+    linked_issue = evidence.get("linked_issue")
+    spec_refs: list[str] = []
+    if _positive_int(linked_issue) and sensitive_registry(config)["specs"]:
+        packet = spec_packet_artifact_paths(config, int(linked_issue))
+        spec_refs = [
+            packet[name]
+            for name in ("product_spec", "tech_spec", "task_plan")
+        ]
     try:
         classification = classify_sensitive_changes(
             config,
             repo,
             paths,
-            paths,
+            spec_refs,
             source="github_changed_files",
         )
     except SpecRailError as exc:
@@ -285,8 +294,11 @@ def _validate_authorization(
         reasons.append(
             "human_merge_authorization.invocation_id must match the current gate invocation"
         )
-    if not reasons and not missing:
-        satisfied.append("current-invocation human merge authorization validated")
+    if required and not reasons and not missing:
+        # A caller-authored offline JSON document cannot authenticate that its
+        # actor is human. Keep the final merge authorization outside this
+        # advisory evaluator and fail closed without inventing actor heuristics.
+        missing.append("human_merge_authorization")
     return satisfied, missing, reasons
 
 
@@ -320,8 +332,9 @@ def _review_diff(
             "round 2 prior_review.base_head_sha must match PR evidence base_sha"
         ]
     try:
+        diff_range = f"{base}...{head}" if review_round == 1 else f"{base}..{head}"
         completed = subprocess.run(
-            ["git", "diff", "--no-ext-diff", "--binary", f"{base}..{head}", "--"],
+            ["git", "diff", "--no-ext-diff", "--binary", diff_range, "--"],
             cwd=repo,
             check=False,
             stdout=subprocess.PIPE,

@@ -13,7 +13,24 @@ Use this skill to create or update the task plan before implementation.
    `specs/GH<issue-number>/tech.md`.
 2. Read `templates/<locale>/tasks.md` or `templates/tasks.md`.
 3. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
-   checks. If it exists, the route gate is mandatory; a missing checker blocks:
+   checks. Planning must not call the implementation route before `tasks.md`
+   exists.
+4. Write `specs/GH<issue-number>/tasks.md`.
+5. Use stable task IDs such as `SP<issue-number>-T1`.
+6. Collect every `B-xxx` invariant from `product.md`, then map each one to at
+   least one implementation or verification task using `Covers: B-xxx`.
+7. For every task, include owner, dependencies, done-when evidence, verify
+   commands, and its `Covers:` field.
+8. Separate implementation tasks from verification and handoff notes.
+9. Validate the completed packet:
+
+```sh
+python3 checks/check_workflow.py --repo . \
+  --spec-dir specs/GH<issue-number>
+```
+
+10. Only after `tasks.md` passes validation, collect current issue evidence and
+    run the required implementation preflight for the handoff:
 
 ```sh
 python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO \
@@ -24,16 +41,8 @@ python3 checks/route_gate.py --repo . --route implement --issue <issue-number> \
   --mode required --json
 ```
 
-Continue only when the route decision is `allowed`; stop and report every
-other decision and its missing evidence.
-
-4. Write `specs/GH<issue-number>/tasks.md`.
-5. Use stable task IDs such as `SP<issue-number>-T1`.
-6. Collect every `B-xxx` invariant from `product.md`, then map each one to at
-   least one implementation or verification task using `Covers: B-xxx`.
-7. For every task, include owner, dependencies, done-when evidence, verify
-   commands, and its `Covers:` field.
-8. Separate implementation tasks from verification and handoff notes.
+Continue to implementation only when the route decision is `allowed`; otherwise
+report every missing item in the planning handoff.
 
 ## Invariant coverage
 
