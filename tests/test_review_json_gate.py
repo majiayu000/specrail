@@ -197,16 +197,65 @@ def test_parse_unified_diff_handles_git_paths_with_spaces_and_quotes() -> None:
     }
 
 
-def test_parse_unified_diff_decodes_git_c_style_quoted_headers() -> None:
-    index = parse_unified_diff(
-        'diff --git "a/quote\\\"file.txt" "b/quote\\\"file.txt"\n'
-        "old mode 100644\n"
-        "new mode 100755\n"
-        'diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251.txt"\n'
-        "Binary files differ\n"
+@pytest.mark.parametrize(
+    ("encoded", "canonical"),
+    [
+        (r"caf\303\251.py", "café.py"),
+        ("中文é.py", "中文é.py"),
+        (r'quote\"file.py', 'quote"file.py'),
+        (r"backslash\\file.py", r"backslash\file.py"),
+        (r"control\tfile.py", "control\tfile.py"),
+    ],
+)
+def test_quoted_paths_are_canonical_across_header_markers_and_findings(
+    encoded: str,
+    canonical: str,
+) -> None:
+    diff = (
+        f'diff --git "a/{encoded}" "b/{encoded}"\n'
+        f'--- "a/{encoded}"\n'
+        f'+++ "b/{encoded}"\n'
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
     )
 
-    assert index.paths == {'quote"file.txt', "café.txt"}
+    index = parse_unified_diff(diff)
+
+    assert index.paths == {canonical}
+    assert index.left[canonical] == {1}
+    assert index.right[canonical] == {1}
+
+    review = valid_review()
+    review["diff_sha256"] = hashlib.sha256(diff.encode()).hexdigest()
+    review["verdict"] = "blocking"
+    review["findings"] = [
+        {
+            "id": "P1-quoted-path",
+            "severity": "P1",
+            "status": "unresolved",
+            "summary": "Quoted path location remains canonical.",
+            "path": canonical,
+            "line": 1,
+        }
+    ]
+    result = evaluate_review_gate(review, diff)
+
+    assert "P1-quoted-path" in result["blocking_findings"]
+    assert not any("is not present in the diff" in reason for reason in result["reasons"])
+
+
+@pytest.mark.parametrize(
+    "diff",
+    [
+        'diff --git "a/bad\\q.py" "b/bad\\q.py"\n',
+        'diff --git "a/bad.py" "b/bad.py"\n--- "a/bad\\q.py"\n',
+        'diff --git "a/unterminated.py "b/unterminated.py"\n',
+    ],
+)
+def test_malformed_git_quoted_paths_fail_closed(diff: str) -> None:
+    with pytest.raises(ValueError):
+        parse_unified_diff(diff)
 
 
 def test_rename_and_copy_metadata_preserve_top_level_a_directory() -> None:
