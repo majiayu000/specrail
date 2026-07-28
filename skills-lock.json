@@ -15,17 +15,17 @@
     {
       "name": "specrail-diagnose-ci",
       "path": "skills/specrail-diagnose-ci/SKILL.md",
-      "computedHash": "sha256:6b1304bbaf31b56e67bf0f82d2c2840bd35b1e58affa6e7cbbf8c7ee664f49a1"
+      "computedHash": "sha256:f13bd409e1086b4e4629bca4d404a2e22d2380c19c9f35164e93f7cf3a0a5ead"
     },
     {
       "name": "specrail-implement-queue",
       "path": "skills/specrail-implement-queue/SKILL.md",
-      "computedHash": "sha256:d50b7028601fd34d0bffc882f4513811731926608d4955f3417573026e3d1701"
+      "computedHash": "sha256:2153a8b6c7b22ba27c70b70d54a66eace519bcf8f23cd5d413c628239813ab1f"
     },
     {
       "name": "specrail-implement",
       "path": "skills/specrail-implement/SKILL.md",
-      "computedHash": "sha256:9b14f30850019660fb1a2614e3fe8f33c0141bded78077b4d39318034515a4e3"
+      "computedHash": "sha256:04461b7fa15067cf98251665c6113dcfbb967d683378891d622e5ef53599ec5f"
     },
     {
       "name": "specrail-install",
@@ -35,7 +35,7 @@
     {
       "name": "specrail-plan-tasks",
       "path": "skills/specrail-plan-tasks/SKILL.md",
-      "computedHash": "sha256:53bb76255454b6bd026d6e783ea783c92309b6c6c856aa008d1f29b5b4a37b8e"
+      "computedHash": "sha256:6ccbe108344cc51aa97a6717901a5655bf2a031f3132b5fe5867d9f52923fcfa"
     },
     {
       "name": "specrail-pr-gate",
@@ -45,17 +45,17 @@
     {
       "name": "specrail-release-note",
       "path": "skills/specrail-release-note/SKILL.md",
-      "computedHash": "sha256:1abe021db241d38da33f297c51b92b20b9cbfb6c047bbec065f98ed026715d9c"
+      "computedHash": "sha256:865ed80d87c9d1d60ede6f4dde636ffd6dce5ef4c88485c338f651c0b4df3bd8"
     },
     {
       "name": "specrail-review-pr",
       "path": "skills/specrail-review-pr/SKILL.md",
-      "computedHash": "sha256:ce817b056e9dcd3de3c7928a937980cdce050b7dfa0f219c58eeac7914ce3848"
+      "computedHash": "sha256:01150be7852018601e4b800f6e59047e15a8af8f35c5efceb06623358aa3324e"
     },
     {
       "name": "specrail-triage-issue",
       "path": "skills/specrail-triage-issue/SKILL.md",
-      "computedHash": "sha256:fea3ef3671023c61b91d3f2f51885665878804b7bdc77bf4f0b1141e63725c31"
+      "computedHash": "sha256:f35439ce5b497077b0a9f7eda09e6af449541647a2d03f53af2f6b85a30922e7"
     },
     {
       "name": "specrail-workflow",

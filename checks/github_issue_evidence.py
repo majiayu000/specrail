@@ -22,8 +22,8 @@ from sensitive_enforcement import (
     sensitive_registry,
 )
 from specrail_lib import (
+    ISSUE_STATES,
     PackConfig,
-    TERMINAL_BLOCKING_STATES,
     SpecRailError,
     load_pack,
     resolve_path,
@@ -44,16 +44,8 @@ STATE_HINT_PATTERN = re.compile(
     r"^\s*(?:[-*]\s*)?state\s*:\s*[`\"']?([A-Za-z0-9_]+)[`\"']?\s*$",
     re.IGNORECASE,
 )
-READINESS_STATES = {
-    "needs_info",
-    "ready_to_spec",
-    "ready_to_implement",
-    "in_progress",
-    "review",
-    "done",
-    "parked",
-}
-KNOWN_STATES = READINESS_STATES | TERMINAL_BLOCKING_STATES
+KNOWN_STATES = set(ISSUE_STATES)
+OUTCOME_LABELS = {"duplicate", "abandoned", "security_private", "done"}
 
 
 def parse_issue_number(raw: str) -> int:
@@ -106,13 +98,7 @@ def normalize_labels(value: Any) -> list[str]:
 
 
 def infer_state_from_labels(labels: list[str]) -> str | None:
-    terminal_matches = sorted({label for label in labels if label in TERMINAL_BLOCKING_STATES})
-    if len(terminal_matches) == 1:
-        return terminal_matches[0]
-    if len(terminal_matches) > 1:
-        raise EvidenceError(f"conflicting terminal labels: {', '.join(terminal_matches)}")
-
-    readiness_matches = sorted({label for label in labels if label in READINESS_STATES})
+    readiness_matches = sorted({label for label in labels if label in KNOWN_STATES})
     if len(readiness_matches) == 1:
         return readiness_matches[0]
     if len(readiness_matches) > 1:
@@ -177,6 +163,7 @@ def build_issue_evidence(
     labels = normalize_labels(issue_payload.get("labels"))
     body = _optional_body(issue_payload)
     state, state_source, state_trusted = infer_state_with_source(labels, body)
+    outcomes = sorted(set(labels) & OUTCOME_LABELS)
 
     return {
         "issue": issue_number,
@@ -185,6 +172,7 @@ def build_issue_evidence(
         "state_source": state_source,
         "state_trusted": state_trusted,
         "labels": labels,
+        "outcomes": outcomes,
         "url": url,
         "title": title,
         "artifacts": default_artifacts(issue_number) if artifacts is None else artifacts,

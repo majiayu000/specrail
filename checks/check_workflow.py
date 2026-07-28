@@ -140,6 +140,27 @@ REQUIRED_TOKENS = {
 }
 
 
+def _load_trusted_pack_asset_validation() -> tuple[object | None, str | None]:
+    helper_path = Path(__file__).with_name("pack_asset_validation.py")
+    if not helper_path.is_file():
+        return None, (
+            "cannot load trusted pack asset validation: "
+            "checks/pack_asset_validation.py is missing"
+        )
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_specrail_trusted_pack_asset_validation",
+            helper_path,
+        )
+        if spec is None or spec.loader is None:
+            return None, "cannot load trusted pack asset validation: no module loader"
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        return None, f"cannot load trusted pack asset validation: {exc}"
+    return module, None
+
+
 def validate_required_files(repo: Path) -> list[str]:
     errors: list[str] = []
     for rel in REQUIRED_FILES:
@@ -149,9 +170,15 @@ def validate_required_files(repo: Path) -> list[str]:
     checker_count = len(list((repo / "checks").glob("*.py")))
     if checker_count > 18:
         errors.append(f"checks: {checker_count} Python files exceeds 18-file hard limit")
-    schema_count = len(list((repo / "schemas").glob("*.json")))
-    if schema_count > 8:
-        errors.append(f"schemas: {schema_count} JSON files exceeds 8-file hard limit")
+    asset_module, _load_error = _load_trusted_pack_asset_validation()
+    if asset_module is not None:
+        owned_schemas = getattr(asset_module, "SPEC_SCHEMA_FILES", None)
+        if isinstance(owned_schemas, (set, frozenset, list, tuple)):
+            schema_count = len(owned_schemas)
+            if schema_count > 8:
+                errors.append(
+                    f"schemas: {schema_count} JSON files exceeds 8-file hard limit"
+                )
     return errors
 
 
@@ -178,21 +205,11 @@ def validate_tokens(repo: Path) -> list[str]:
 
 
 def validate_pack_assets(repo: Path) -> list[str]:
-    helper_path = Path(__file__).with_name("pack_asset_validation.py")
-    if not helper_path.is_file():
-        return [
-            "cannot load trusted pack asset validation: "
-            "checks/pack_asset_validation.py is missing"
-        ]
+    module, load_error = _load_trusted_pack_asset_validation()
+    if load_error is not None:
+        return [load_error]
+    assert module is not None
     try:
-        spec = importlib.util.spec_from_file_location(
-            "_specrail_trusted_pack_asset_validation",
-            helper_path,
-        )
-        if spec is None or spec.loader is None:
-            return ["cannot load trusted pack asset validation: no module loader"]
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
         validate_json_schemas = getattr(module, "validate_json_schemas", None)
         validate_template_parity = getattr(module, "validate_template_parity", None)
         if not callable(validate_json_schemas) or not callable(validate_template_parity):

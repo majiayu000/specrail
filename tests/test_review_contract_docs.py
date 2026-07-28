@@ -15,7 +15,9 @@ EXPECTED_BLOCK = """<!-- specrail-bounded-review-contract-v1:start -->
 Compact review contract (`contract_version: 3`):
 
 - Round 1 uses `mode: full`; round 2 uses `mode: diff_only` and binds
-  `base_head_sha` plus `diff_sha256`; round greater than 2 returns
+  `base_head_sha` plus `diff_sha256`. Round 2 also embeds the bound round-1
+  artifact as `prior_review` and carries each prior unresolved P0/P1 finding
+  forward. A round above the selected profile's configured cap returns
   `needs_human`.
 - Current unresolved `P0`/`P1` findings block. `P2`/`P3` findings are
   non-blocking follow-ups on the current Issue/PR and never create Issues

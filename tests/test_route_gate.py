@@ -108,6 +108,70 @@ def test_route_gate_allows_trusted_readiness_label_evidence(tmp_path: Path) -> N
     assert payload["decision"] == "allowed"
 
 
+def test_route_gate_blocks_terminal_outcome_evidence(tmp_path: Path) -> None:
+    evidence_path = tmp_path / "issue-evidence.json"
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "github_state": "OPEN",
+                "state": "ready_to_spec",
+                "state_source": "label",
+                "state_trusted": True,
+                "labels": ["ready_to_spec", "security_private"],
+                "outcomes": ["security_private"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _result, payload = run_route_gate(
+        "--route",
+        "write_spec",
+        "--issue",
+        "999",
+        "--evidence",
+        str(evidence_path),
+    )
+
+    assert payload["decision"] == "blocked"
+    assert any("security_private" in reason for reason in payload["reasons"])
+
+
+def test_implement_preserves_configured_required_evidence(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    workflow_path = repo / "workflow.yaml"
+    workflow_path.write_text(
+        workflow_path.read_text(encoding="utf-8").replace(
+            "    implement:\n"
+            "      allowed_from:\n"
+            "        - ready_to_implement\n"
+            "      required_artifacts:\n"
+            "        - linked_issue\n",
+            "    implement:\n"
+            "      allowed_from:\n"
+            "        - ready_to_implement\n"
+            "      required_artifacts:\n"
+            "        - linked_issue\n"
+            "        - verification\n",
+        ),
+        encoding="utf-8",
+    )
+
+    _result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--state",
+        "ready_to_implement",
+        repo=repo,
+    )
+
+    assert payload["decision"] == "warn"
+    assert "verification" in payload["missing"]
+
+
 def test_route_gate_uses_configured_spec_packet_in_verification_command(
     tmp_path: Path,
 ) -> None:

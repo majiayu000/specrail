@@ -16,7 +16,10 @@ Use this skill to create or update the task plan before implementation.
    checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
-python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json
+python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO \
+  --issue <issue-number> --json > issue-evidence.json
+python3 checks/route_gate.py --repo . --route implement --issue <issue-number> \
+  --profile heavy --evidence issue-evidence.json --json
 ```
 
 4. Write `specs/GH<issue-number>/tasks.md`.

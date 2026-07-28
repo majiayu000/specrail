@@ -45,6 +45,20 @@ def review_with(
         diff = load_diff().encode()
         review["base_head_sha"] = "b" * 40
         review["diff_sha256"] = hashlib.sha256(diff).hexdigest()
+        review["prior_review"] = {
+            "artifact_id": f"review-{profile}-1",
+            "contract_version": 3,
+            "repository": "acme/widgets",
+            "pr": 489,
+            "profile": profile,
+            "head_sha": "b" * 40,
+            "review_source": "independent_lane",
+            "round": 1,
+            "mode": "full",
+            "verdict": "clean",
+            "body": "## Summary\nFull review.\n\n## Verdict\nAdvisory result only.",
+            "findings": [],
+        }
     return review
 
 
@@ -96,7 +110,17 @@ def test_round_above_two_requires_human() -> None:
     )
 
     assert result["decision"] == "needs_human"
-    assert "review round cap exceeded; human review is required" in result["reasons"]
+    assert any("review round cap 2 reached" in item for item in result["satisfied"])
+
+
+def test_fastlane_round_two_requires_human_by_default() -> None:
+    result = evaluate_review_gate(
+        review_with(profile="fastlane", review_round=2, mode="diff_only"),
+        load_diff(),
+    )
+
+    assert result["decision"] == "needs_human"
+    assert any("review round cap 1 reached" in item for item in result["satisfied"])
 
 
 @pytest.mark.parametrize("severity", ["P0", "P1"])
@@ -229,6 +253,24 @@ def test_round_two_p0_without_diff_classification_is_invalid() -> None:
 
     assert result["decision"] == "blocked"
     assert "finding #1 round 2 P0/P1 must declare introduced_by_diff" in result["reasons"]
+
+
+def test_round_two_carries_forward_prior_blocking_findings() -> None:
+    review = review_with(review_round=2, mode="diff_only")
+    review["prior_review"]["verdict"] = "blocking"
+    review["prior_review"]["findings"] = [
+        {
+            "id": "P1-prior",
+            "severity": "P1",
+            "status": "unresolved",
+            "summary": "Prior blocking defect.",
+        }
+    ]
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("must be carried into round 2: P1-prior" in item for item in result["reasons"])
 
 
 def test_verdict_must_match_current_findings() -> None:

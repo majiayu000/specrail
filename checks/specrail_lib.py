@@ -35,37 +35,6 @@ ISSUE_STATES = frozenset(
     }
 )
 VERIFICATION_PROFILES = ("fastlane", "standard", "heavy")
-SPEC_STATUSES = frozenset(
-    {
-        "complete",
-        "needs_tasks",
-        "needs_spec",
-        "umbrella_covered",
-        "exception_allowed",
-    }
-)
-RUNTIME_ONLY_STATE = "runtime_only"
-RUNTIME_STATE_MAPPING = {
-    "blocked": RUNTIME_ONLY_STATE,
-    "closed": RUNTIME_ONLY_STATE,
-    "complete": RUNTIME_ONLY_STATE,
-    "deferred": RUNTIME_ONLY_STATE,
-    "eligible_impl": ("ready_to_implement",),
-    "handoff": RUNTIME_ONLY_STATE,
-    "merge_ready": ("review",),
-    "merged": ("done",),
-    "needs_ci": ("review",),
-    "needs_human": RUNTIME_ONLY_STATE,
-    "needs_review": ("in_progress", "review"),
-    "needs_spec": ("ready_to_spec",),
-    "needs_tasks": ("ready_to_implement",),
-    "open": RUNTIME_ONLY_STATE,
-    "planning": RUNTIME_ONLY_STATE,
-    "ready_to_merge": ("review",),
-    "review_required": ("review",),
-    "running": RUNTIME_ONLY_STATE,
-    "waiting_ci": ("review",),
-}
 TERMINAL_BLOCKING_STATES = {
     "abandoned", "duplicate", "parked", "security_private",
 }

@@ -59,8 +59,10 @@ states. CI, review, and merge readiness are PR evidence.
 ## Review And PR Gates
 
 Review contract v3 permits one full round and, only after P0/P1 fixes, one
-diff-only round. Current unresolved P0/P1 blocks; P2/P3 remain follow-ups on the
-current Issue/PR; outdated hosted findings do not block current head.
+diff-only round bound to the prior full artifact. Round 2 carries every prior
+unresolved P0/P1 finding forward. Current unresolved P0/P1 blocks; P2/P3 remain
+follow-ups on the current Issue/PR; outdated hosted findings do not block
+current head.
 
 The PR gate evaluates linked work, exact current head, changed files, CI,
 compact review, clean merge state, profile, sensitive classification, and

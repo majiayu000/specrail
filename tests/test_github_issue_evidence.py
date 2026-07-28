@@ -260,7 +260,8 @@ def test_build_evidence_matches_route_gate_contract_from_label() -> None:
         "state": "ready_to_spec",
         "state_source": "label",
         "state_trusted": True,
-        "labels": ["area_runtime", "ready_to_spec"],
+            "labels": ["area_runtime", "ready_to_spec"],
+            "outcomes": [],
         "url": "https://github.com/majiayu000/specrail/issues/16",
         "title": "Implement GitHub issue evidence adapter",
         "artifacts": {
@@ -452,20 +453,25 @@ def test_build_evidence_uses_none_source_without_state_evidence() -> None:
     assert evidence["state_trusted"] is False
 
 
-def test_terminal_label_takes_precedence_over_readiness_label() -> None:
+def test_outcome_label_is_separate_from_lifecycle_state() -> None:
     evidence = build_issue_evidence(
         issue_payload(labels=[{"name": "ready_to_spec"}, {"name": "security_private"}])
     )
 
-    assert evidence["state"] == "security_private"
+    assert evidence["state"] == "ready_to_spec"
     assert evidence["state_source"] == "label"
     assert evidence["state_trusted"] is True
+    assert evidence["outcomes"] == ["security_private"]
 
 
-def test_terminal_states_are_valid_issue_evidence_schema_values() -> None:
-    for label in ["security_private", "duplicate", "abandoned", "parked"]:
+def test_outcomes_do_not_replace_lifecycle_state() -> None:
+    for label in ["security_private", "duplicate", "abandoned"]:
         evidence = build_issue_evidence(issue_payload(labels=[{"name": label}]))
-        assert evidence["state"] == label
+        assert evidence["state"] is None
+        assert evidence["outcomes"] == [label]
+    parked = build_issue_evidence(issue_payload(labels=[{"name": "parked"}]))
+    assert parked["state"] == "parked"
+    assert parked["outcomes"] == []
 
 
 def test_closed_issue_state_is_preserved_for_route_gate() -> None:

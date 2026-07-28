@@ -48,7 +48,14 @@ def _impl_branch_token(config: PackConfig, issue: int) -> str | None:
     template = artifacts.get("impl_branch") if isinstance(artifacts, dict) else None
     if not isinstance(template, str) or "{issue_number}" not in template:
         return None
-    return f"gh{issue}"
+    prefix, suffix = template.split("{issue_number}", 1)
+    prefix = prefix.rsplit("/", 1)[-1]
+    suffix = suffix.split("/", 1)[0]
+    for placeholder in ("{agent}", "{slug}"):
+        prefix = prefix.replace(placeholder, "")
+        suffix = suffix.replace(placeholder, "")
+    token = f"{prefix}{issue}{suffix}".strip("/-_.").lower()
+    return token or None
 
 
 def _result(

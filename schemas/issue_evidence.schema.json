@@ -11,6 +11,7 @@
     "state_source",
     "state_trusted",
     "labels",
+    "outcomes",
     "url",
     "title",
     "artifacts"
@@ -35,6 +36,10 @@
     "state_source": {"enum": ["label", "body_hint", "none"]},
     "state_trusted": {"type": "boolean"},
     "labels": {"type": "array", "items": {"type": "string"}},
+    "outcomes": {
+      "type": "array",
+      "items": {"enum": ["duplicate", "abandoned", "security_private", "done"]}
+    },
     "url": {"type": "string", "minLength": 1},
     "title": {"type": "string", "minLength": 1},
     "repository": {"type": "string", "minLength": 1},

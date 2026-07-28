@@ -79,6 +79,20 @@ def test_required_files_include_pr_issue_reference_module() -> None:
     assert "checks/github_issue_reference.py" in REQUIRED_FILES
 
 
+def test_required_file_cap_ignores_consumer_owned_schema(tmp_path: Path) -> None:
+    shutil.copytree(ROOT, tmp_path / "repo", ignore=shutil.ignore_patterns(".git"))
+    repo = tmp_path / "repo"
+    (repo / "schemas" / "consumer.schema.json").write_text(
+        '{"type":"object"}\n',
+        encoding="utf-8",
+    )
+
+    assert not any(
+        "schemas:" in error and "hard limit" in error
+        for error in validate_required_files(repo)
+    )
+
+
 def test_required_files_exclude_removed_runtime_dependencies() -> None:
     assert not any("runtime" in path for path in REQUIRED_FILES)
     assert "checks/review_json_gate.py" in REQUIRED_FILES

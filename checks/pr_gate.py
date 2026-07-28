@@ -21,7 +21,13 @@ from rejection_items import (
 )
 from review_json_gate import evaluate_review_gate
 from sensitive_enforcement import classify_sensitive_changes
-from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
+from specrail_lib import (
+    PackConfig,
+    SpecRailError,
+    load_pack,
+    resolve_path,
+    verification_profiles,
+)
 
 
 CONTRACT_VERSION = 3
@@ -79,6 +85,40 @@ LEGACY_EVIDENCE_FIELDS = {
     "tier_dispute",
 }
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+DEFAULT_PROFILE_POLICIES = {
+    "fastlane": {
+        "max_review_rounds": 1,
+        "merge_authorization": "invocation",
+    },
+    "standard": {
+        "max_review_rounds": 2,
+        "merge_authorization": "invocation",
+    },
+    "heavy": {
+        "max_review_rounds": 2,
+        "merge_authorization": "explicit_human",
+    },
+}
+
+
+def _profile_policy(
+    config: PackConfig | None,
+    profile: object,
+) -> tuple[dict[str, Any], list[str]]:
+    fallback = DEFAULT_PROFILE_POLICIES.get(str(profile), {})
+    if config is None:
+        return fallback, []
+    if "verification_profiles" not in config.workflow:
+        return fallback, []
+    try:
+        _default, profiles = verification_profiles(config)
+    except SpecRailError as exc:
+        return fallback, [str(exc)]
+    if str(profile) not in profiles:
+        return fallback, [
+            f"workflow.yaml: verification profile {profile!r} is not configured"
+        ]
+    return profiles[str(profile)], []
 
 
 def _non_empty_string(value: Any) -> bool:
@@ -236,6 +276,40 @@ def _validate_authorization(
     return satisfied, missing, reasons
 
 
+def _round_two_diff(
+    review: dict[str, Any],
+    repo: Path | None,
+) -> tuple[str, bytes | None, list[str]]:
+    if review.get("round") != 2:
+        return "", None, []
+    if repo is None:
+        return "", None, ["round 2 review requires an exact local checkout"]
+    base = review.get("base_head_sha")
+    head = review.get("head_sha")
+    if not isinstance(base, str) or not SHA_RE.fullmatch(base):
+        return "", None, []
+    if not isinstance(head, str) or not SHA_RE.fullmatch(head):
+        return "", None, []
+    try:
+        completed = subprocess.run(
+            ["git", "diff", "--no-ext-diff", "--binary", f"{base}..{head}", "--"],
+            cwd=repo,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as exc:
+        return "", None, [f"cannot execute round 2 exact diff: {exc}"]
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        return "", None, [f"round 2 exact diff failed: {detail}"]
+    return (
+        completed.stdout.decode("utf-8", errors="replace"),
+        completed.stdout,
+        [],
+    )
+
+
 def evaluate_pr_gate(
     evidence: dict[str, Any],
     repo: Path | None = None,
@@ -348,11 +422,25 @@ def evaluate_pr_gate(
         reasons.append("profile must be fastlane, standard, or heavy")
     if sensitive and profile != "heavy":
         reasons.append("sensitive changes must use the heavy profile")
+    profile_policy, profile_policy_reasons = _profile_policy(config, profile)
+    reasons.extend(profile_policy_reasons)
 
     review = evidence.get("review")
     review_result: dict[str, Any] | None = None
     if isinstance(review, dict):
-        review_result = evaluate_review_gate(review, "", verify_diff=False)
+        review_diff, review_diff_bytes, review_diff_reasons = _round_two_diff(
+            review,
+            repo,
+        )
+        reasons.extend(review_diff_reasons)
+        review_result = evaluate_review_gate(
+            review,
+            review_diff,
+            repo=repo,
+            diff_bytes=review_diff_bytes,
+            verify_diff=True,
+            max_review_rounds=profile_policy.get("max_review_rounds"),
+        )
         if review.get("repository") != evidence.get("repository"):
             reasons.append("review.repository must match PR evidence")
         if review.get("pr") != evidence.get("pr"):
@@ -380,7 +468,7 @@ def evaluate_pr_gate(
 
     auth_satisfied, auth_missing, auth_reasons = _validate_authorization(
         evidence,
-        required=profile == "heavy",
+        required=profile_policy.get("merge_authorization") == "explicit_human",
     )
     satisfied.extend(auth_satisfied)
     missing.extend(auth_missing)

@@ -99,7 +99,7 @@ def test_review_gate_reports_legacy_and_unknown_fields_together() -> None:
 
 
 def test_review_gate_top_level_contract_is_compact() -> None:
-    assert len(REVIEW_TOP_LEVEL_KEYS) == 14
+    assert len(REVIEW_TOP_LEVEL_KEYS) == 15
     assert not (LEGACY_REVIEW_FIELDS & REVIEW_TOP_LEVEL_KEYS)
 
 
@@ -158,6 +158,26 @@ def test_validate_exact_git_diff_rejects_option_like_revisions(tmp_path: Path) -
 def test_round_two_digest_can_be_checked_without_git_repo() -> None:
     diff = load_diff()
     review = valid_review()
+    prior_review = copy.deepcopy(review)
+    prior_review["head_sha"] = "b" * 40
+    review.update(
+        {
+            "round": 2,
+            "mode": "diff_only",
+            "base_head_sha": "b" * 40,
+            "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
+            "prior_review": prior_review,
+        }
+    )
+
+    result = evaluate_review_gate(review, diff)
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_round_two_requires_bound_round_one_full_review() -> None:
+    diff = load_diff()
+    review = valid_review()
     review.update(
         {
             "round": 2,
@@ -169,7 +189,8 @@ def test_round_two_digest_can_be_checked_without_git_repo() -> None:
 
     result = evaluate_review_gate(review, diff)
 
-    assert result["decision"] == "allowed", result["reasons"]
+    assert result["decision"] == "blocked"
+    assert "prior_review" in result["missing"]
 
 
 def test_review_gate_rejects_legacy_artifact_with_rebuild_guidance() -> None:

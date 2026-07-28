@@ -184,3 +184,95 @@ def test_gate_reports_all_missing_contract_fields() -> None:
     assert result["decision"] == "blocked"
     assert {"pr", "linked_issue", "checks", "review", "profile"} <= set(result["missing"])
     assert result["rejection_items"]
+
+
+def test_gate_honors_configured_explicit_human_authorization() -> None:
+    payload, pack = evidence(profile="standard")
+    pack.workflow["verification_profiles"] = {
+        "default": "standard",
+        "profiles": {
+            "standard": {
+                "max_review_rounds": 2,
+                "merge_authorization": "explicit_human",
+            }
+        },
+    }
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "needs_human"
+    assert "human_merge_authorization" in result["missing"]
+
+
+def test_gate_honors_configured_profile_round_cap(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "app.py").write_text("before = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=SpecRail Test",
+            "-c",
+            "user.email=specrail@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    base = head_sha(repo)
+    (repo / "app.py").write_text("after = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=SpecRail Test",
+            "-c",
+            "user.email=specrail@example.invalid",
+            "commit",
+            "-qm",
+            "head",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    payload, pack = evidence(repo=repo, profile="standard")
+    pack.workflow["verification_profiles"] = {
+        "default": "standard",
+        "profiles": {
+            "standard": {
+                "max_review_rounds": 1,
+                "merge_authorization": "invocation",
+            }
+        },
+    }
+    payload["review"]["round"] = 2
+    payload["review"]["mode"] = "diff_only"
+    payload["review"]["base_head_sha"] = base
+    exact_diff = subprocess.run(
+        ["git", "diff", "--no-ext-diff", "--binary", f"{base}..HEAD", "--"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    payload["review"]["diff_sha256"] = hashlib.sha256(exact_diff).hexdigest()
+    payload["review"]["prior_review"] = {
+        **payload["review"],
+        "artifact_id": "review-42-round1",
+        "head_sha": base,
+        "round": 1,
+        "mode": "full",
+    }
+    for field in ["base_head_sha", "diff_sha256", "prior_review"]:
+        payload["review"]["prior_review"].pop(field, None)
+
+    result = evaluate_pr_gate(payload, repo, pack)
+
+    assert result["decision"] == "needs_human", result["reasons"]
+    assert result["review_decision"] == "needs_human"
+    assert "human_review" in result["missing"]

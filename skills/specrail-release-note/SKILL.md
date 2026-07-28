@@ -15,7 +15,7 @@ Use this skill for the `draft_release_note` route.
    checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
-python3 checks/route_gate.py --repo . --route draft_release_note --issue <issue-number> --pr <pr-number> --state merged --json
+python3 checks/route_gate.py --repo . --route draft_release_note --issue <issue-number> --pr <pr-number> --state done --json
 ```
 
 3. Draft a concise release note in the selected locale.
