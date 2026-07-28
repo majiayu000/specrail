@@ -28,6 +28,8 @@ def clean_evidence() -> dict[str, object]:
         },
         "merge": {
             "merge_head_sha": HEAD,
+            "merged_head_sha": HEAD,
+            "remote_confirmed": True,
             "merge_dispatched_at": "2026-07-16T14:37:00Z",
             "merged_at": "2026-07-16T14:38:00Z",
         },
@@ -78,6 +80,20 @@ def test_missing_chain_is_warning_not_gate() -> None:
         "closure_missing_merge_evidence",
     }
     assert "decision" not in result
+
+
+def test_unconfirmed_remote_merge_warns() -> None:
+    evidence = clean_evidence()
+    evidence["merge"]["remote_confirmed"] = False
+    evidence["merge"].pop("merged_head_sha")
+
+    result = audit_closure(evidence)
+
+    assert result["status"] == "warning"
+    assert {item["code"] for item in result["warnings"]} >= {
+        "closure_remote_not_confirmed",
+        "closure_head_mismatch",
+    }
 
 
 def test_cli_returns_zero_for_warning_and_performs_no_write(tmp_path: Path) -> None:

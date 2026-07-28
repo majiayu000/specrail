@@ -14,18 +14,18 @@ END = "<!-- specrail-bounded-review-contract-v1:end -->"
 EXPECTED_BLOCK = """<!-- specrail-bounded-review-contract-v1:start -->
 Compact review contract (`contract_version: 3`):
 
-- Round 1 uses `mode: full`; round 2 uses `mode: diff_only` and binds
-  `base_head_sha` plus `diff_sha256`. Round 2 also embeds the bound round-1
-  artifact as `prior_review` and carries each prior unresolved P0/P1 finding
-  forward. A round above the selected profile's configured cap returns
-  `needs_human`.
+- Round 1 uses `mode: full` and binds the exact PR base-to-head diff with
+  `base_head_sha` plus `diff_sha256`. Round 2 uses `mode: diff_only`, binds
+  the exact fix diff with the same fields, embeds the bound round-1 artifact
+  as `prior_review`, and carries each prior unresolved P0/P1 finding forward.
+  A round above the selected profile's configured cap returns `needs_human`.
 - Current unresolved `P0`/`P1` findings block. `P2`/`P3` findings are
   non-blocking follow-ups on the current Issue/PR and never create Issues
   automatically.
 - A hosted finding with `outdated: true` does not block. A current-head
   unresolved `P0`/`P1` still blocks regardless of origin.
-- Standard/heavy require `review_source: independent_lane`; fastlane may use
-  `self_review`.
+- `review_source` follows the selected profile's configured
+  `requires_independent_review` policy.
 - The artifact is advisory and cannot grant final approval or merge authority.
 <!-- specrail-bounded-review-contract-v1:end -->"""
 FORBIDDEN_LEGACY_PHRASES = (
@@ -100,3 +100,43 @@ def test_active_contracts_do_not_reintroduce_removed_runtime_artifacts() -> None
             )
         for token in FORBIDDEN_RUNTIME_TOKENS:
             assert token not in text, f"{path.relative_to(REPO)}: {token}"
+
+
+def test_implementation_skills_run_required_gate_and_fail_closed() -> None:
+    for relative_path in (
+        "AGENT_USAGE.md",
+        "README.md",
+        "skills/specrail-implement/SKILL.md",
+        "skills/specrail-implement-queue/SKILL.md",
+        "skills/specrail-plan-tasks/SKILL.md",
+    ):
+        text = (REPO / relative_path).read_text(encoding="utf-8")
+        assert "--mode required" in text
+        assert (
+            "decision is `allowed`" in text
+            or "returns `allowed`" in text
+            or "route decision is `allowed`" in text
+        )
+
+
+def test_active_review_guidance_uses_configured_independence_policy() -> None:
+    for relative_path in (
+        "README.md",
+        "SPEC.md",
+        "integrations/threads.md",
+        "skills/specrail-implement-queue/SKILL.md",
+        "skills/specrail-implement/SKILL.md",
+        "skills/specrail-review-pr/SKILL.md",
+        "skills/specrail-write-product-spec/SKILL.md",
+    ):
+        text = (REPO / relative_path).read_text(encoding="utf-8")
+        assert "requires_independent_review" in text
+        assert "Fastlane may self-review" not in text
+        assert "standard/heavy require" not in text.lower()
+        assert "standard 和 heavy 必须使用" not in text
+    queue = (REPO / "skills/specrail-implement-queue/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    spec = (REPO / "SPEC.md").read_text(encoding="utf-8")
+    assert "one independent full review" not in queue
+    assert "one independent full review" not in spec

@@ -19,11 +19,12 @@ Use this skill for the `implement` route.
 python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO \
   --issue <issue-number> --json > issue-evidence.json
 python3 checks/route_gate.py --repo . --route implement --issue <issue-number> \
-  --profile <fastlane|standard|heavy> --evidence issue-evidence.json --json
+  --profile <fastlane|standard|heavy> --evidence issue-evidence.json \
+  --mode required --json
 ```
 
-3. If the gate returns `needs_human` or `blocked`, stop and report the missing
-   evidence or gate.
+3. Continue only when the gate returns `allowed`; stop and report every other
+   decision and its missing evidence.
 4. Implement only the scoped tasks. Search before adding files, workflows,
    schemas, templates, policies, or public APIs.
 5. Keep machine-facing IDs in English and human-facing text in the selected
@@ -37,8 +38,9 @@ python3 checks/check_workflow.py --repo .
 
 7. For a GitHub PR, review the exact current-head diff, validate the compact
    review JSON with `checks/review_json_gate.py`, collect current PR evidence,
-   then run `checks/pr_gate.py` serially. Standard/heavy use an independent
-   review source; fastlane may use self-review. A current P0/P1 blocks.
+   then run `checks/pr_gate.py` serially. Use an independent review source when
+   the selected profile's configured `requires_independent_review` policy is
+   true. A current P0/P1 blocks.
 8. Record changed files, commands, results, and remaining human gates.
 
 ## Boundaries

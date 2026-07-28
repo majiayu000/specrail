@@ -19,6 +19,7 @@ from check_workflow import (  # noqa: E402
 from check_workflow import (  # noqa: E402
     validate_auth_mode,
     validate_impl_branch_template,
+    validate_issue_triage_contract,
     validate_pack_assets,
 )
 from specrail_lib import load_pack  # noqa: E402
@@ -77,6 +78,25 @@ def test_required_files_include_duplicate_work_checks() -> None:
 def test_required_files_include_pr_issue_reference_module() -> None:
     assert "checks/github_evidence_common.py" in REQUIRED_FILES
     assert "checks/github_issue_reference.py" in REQUIRED_FILES
+
+
+def test_issue_triage_schema_matches_readiness_labels(tmp_path: Path) -> None:
+    assert validate_issue_triage_contract(ROOT, load_pack(ROOT)) == []
+    for name in ("workflow.yaml", "states.yaml", "labels.yaml"):
+        shutil.copy(ROOT / name, tmp_path / name)
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    schema = (ROOT / "schemas" / "issue_triage.schema.json").read_text(
+        encoding="utf-8"
+    ).replace('"parked"', '"reserved_internal"')
+    (schema_dir / "issue_triage.schema.json").write_text(schema, encoding="utf-8")
+
+    errors = validate_issue_triage_contract(tmp_path, load_pack(tmp_path))
+
+    assert errors == [
+        "schemas/issue_triage.schema.json: recommended_state must match "
+        "labels.yaml readiness states"
+    ]
 
 
 def test_required_file_cap_ignores_consumer_owned_schema(tmp_path: Path) -> None:

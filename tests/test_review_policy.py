@@ -27,13 +27,16 @@ def review_with(
     verdict: str = "clean",
     findings: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
+    diff = load_diff().encode()
     review: dict[str, object] = {
         "artifact_id": f"review-{profile}-{review_round}",
         "contract_version": 3,
         "repository": "acme/widgets",
         "pr": 489,
         "profile": profile,
+        "base_head_sha": "b" * 40,
         "head_sha": "a" * 40,
+        "diff_sha256": hashlib.sha256(diff).hexdigest(),
         "review_source": "independent_lane",
         "round": review_round,
         "mode": mode,
@@ -42,7 +45,6 @@ def review_with(
         "findings": findings or [],
     }
     if review_round == 2:
-        diff = load_diff().encode()
         review["base_head_sha"] = "b" * 40
         review["diff_sha256"] = hashlib.sha256(diff).hexdigest()
         review["prior_review"] = {
@@ -51,7 +53,9 @@ def review_with(
             "repository": "acme/widgets",
             "pr": 489,
             "profile": profile,
+            "base_head_sha": "c" * 40,
             "head_sha": "b" * 40,
+            "diff_sha256": hashlib.sha256(diff).hexdigest(),
             "review_source": "independent_lane",
             "round": 1,
             "mode": "full",
@@ -80,6 +84,20 @@ def test_fastlane_allows_self_review() -> None:
     result = evaluate_review_gate(review, load_diff())
 
     assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_configured_fastlane_can_require_independent_review() -> None:
+    review = review_with(profile="fastlane")
+    review["review_source"] = "self_review"
+
+    result = evaluate_review_gate(
+        review,
+        load_diff(),
+        requires_independent_review=True,
+    )
+
+    assert result["decision"] == "blocked"
+    assert "fastlane profile requires an independent_lane review" in result["reasons"]
 
 
 @pytest.mark.parametrize(

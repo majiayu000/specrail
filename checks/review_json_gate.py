@@ -100,6 +100,11 @@ FORBIDDEN_FINAL_AUTHORITY = {
     "safe to merge": re.compile(r"\bsafe\s+to\s+merge\b", re.IGNORECASE),
     "LGTM, merge": re.compile(r"\blgtm\b[^.\\n]{0,40}\bmerge\b", re.IGNORECASE),
     "ship it": re.compile(r"\bship\s+it\b", re.IGNORECASE),
+    "中文授权合并": re.compile(
+        r"(?:批准|同意|允许|准许|可以|可|立即)\s*(?:予以)?合并"
+    ),
+    "合并即可": re.compile(r"合并\s*即可"),
+    "合并吧": re.compile(r"合并吧"),
 }
 HUNK_RE = re.compile(
     r"^@@ -(?P<old_start>[0-9]+)(?:,[0-9]+)? "
@@ -298,6 +303,7 @@ def evaluate_review_gate(
     diff_bytes: bytes | None = None,
     verify_diff: bool = True,
     max_review_rounds: int | None = None,
+    requires_independent_review: bool | None = None,
 ) -> dict[str, Any]:
     """Validate a v3 review artifact and return all failures in one result."""
 
@@ -309,8 +315,10 @@ def evaluate_review_gate(
     outdated: list[str] = []
     required = {
         "artifact_id",
+        "base_head_sha",
         "body",
         "contract_version",
+        "diff_sha256",
         "findings",
         "head_sha",
         "mode",
@@ -347,7 +355,12 @@ def evaluate_review_gate(
         reasons.append("profile must be fastlane, standard, or heavy")
     if source not in REVIEW_SOURCES:
         reasons.append("review_source must be independent_lane or self_review")
-    if profile in {"standard", "heavy"} and source != "independent_lane":
+    independent_required = (
+        requires_independent_review
+        if isinstance(requires_independent_review, bool)
+        else profile in {"standard", "heavy"}
+    )
+    if independent_required and source != "independent_lane":
         reasons.append(f"{profile} profile requires an independent_lane review")
 
     review_round = review.get("round")
@@ -389,7 +402,18 @@ def evaluate_review_gate(
                 prior_review,
                 "",
                 verify_diff=False,
+                requires_independent_review=independent_required,
             )
+            if verify_diff and repo is not None:
+                reasons.extend(
+                    "prior_review: " + reason
+                    for reason in validate_exact_git_diff(
+                        repo,
+                        prior_review.get("base_head_sha"),
+                        prior_review.get("head_sha"),
+                        prior_review.get("diff_sha256"),
+                    )
+                )
             reasons.extend(
                 f"prior_review: {reason}"
                 for reason in prior_result["reasons"]
@@ -440,12 +464,9 @@ def evaluate_review_gate(
                 satisfied.append("round 1 full-review evidence validated")
 
     supplied = diff_bytes if diff_bytes is not None else diff_text.encode("utf-8")
-    if review_round == 2:
+    if review_round in {1, 2}:
         base = review.get("base_head_sha")
         digest = review.get("diff_sha256")
-        for field in ("base_head_sha", "diff_sha256"):
-            if field not in review:
-                missing.append(field)
         if not verify_diff:
             if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
                 reasons.append("diff_sha256 must be a 64-character SHA-256 digest")
@@ -640,6 +661,9 @@ def main() -> int:
             repo=repo,
             diff_bytes=diff_bytes,
             max_review_rounds=profile_policy.get("max_review_rounds"),
+            requires_independent_review=profile_policy.get(
+                "requires_independent_review"
+            ),
         )
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         result = _result(

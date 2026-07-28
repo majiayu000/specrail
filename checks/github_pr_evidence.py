@@ -15,7 +15,13 @@ from typing import Any
 from github_evidence_common import EvidenceError, json_object, normalize_checks
 from github_issue_reference import normalize_issue_reference, relation_snapshot
 from sensitive_enforcement import classify_sensitive_changes
-from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
+from specrail_lib import (
+    PackConfig,
+    SpecRailError,
+    load_pack,
+    resolve_path,
+    verification_profiles,
+)
 
 
 PR_VIEW_FIELDS = [
@@ -200,7 +206,7 @@ def collect_hosted_findings(
     pr_number: int,
     expected_head: str,
 ) -> list[dict[str, Any]]:
-    """Collect severity-tagged hosted findings for standard/heavy profiles."""
+    """Collect hosted findings for profiles requiring independent review."""
     owner, name = parse_github_repo(github_repo)
     cursor: str | None = None
     seen_cursors: set[str] = set()
@@ -540,9 +546,18 @@ def collect_evidence(
         repo=repo,
         config=config,
     )
+    collect_hosted = collection_profile != "fastlane"
+    if config is not None and "verification_profiles" in config.workflow:
+        _default_profile, profiles = verification_profiles(config)
+        collect_hosted = (
+            profiles.get(collection_profile, {}).get(
+                "requires_independent_review"
+            )
+            is True
+        )
     before_hosted = (
         []
-        if collection_profile == "fastlane"
+        if not collect_hosted
         else collect_hosted_findings(github_repo, pr_number, before_head)
     )
 
@@ -562,7 +577,7 @@ def collect_evidence(
     after_head = _require_string(after, "headRefOid")
     after_hosted = (
         []
-        if collection_profile == "fastlane"
+        if not collect_hosted
         else collect_hosted_findings(github_repo, pr_number, after_head)
     )
     if after_hosted != before_hosted:

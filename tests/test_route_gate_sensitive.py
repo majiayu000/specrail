@@ -79,6 +79,44 @@ def test_sensitive_planned_change_blocks_non_heavy_profile(tmp_path: Path) -> No
     assert "sensitive planned changes must use the heavy profile" in payload["reasons"]
 
 
+def test_non_heavy_route_without_tech_spec_defers_to_pr_gate(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    write_sensitive_pack(repo)
+    for path in (repo / "specs" / "GH999").iterdir():
+        path.unlink()
+    (repo / "specs" / "GH999").rmdir()
+    evidence = write_evidence(
+        tmp_path,
+        {
+            "github_state": "OPEN",
+            "state": "ready_to_implement",
+            "state_source": "label",
+            "state_trusted": True,
+            "enforcement_sensitive": False,
+        },
+    )
+
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--profile",
+        "standard",
+        "--issue",
+        "999",
+        "--evidence",
+        str(evidence),
+        "--duplicate-evidence",
+        str(write_duplicate_evidence(tmp_path)),
+        "--mode",
+        "required",
+        repo=repo,
+    )
+
+    assert result.returncode == 0, payload["reasons"]
+    assert payload["decision"] == "allowed"
+    assert payload["sensitive_classification"]["source"] == "deferred_to_pr"
+
+
 def test_route_gate_blocks_complete_manifest_with_empty_paths(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     head = write_sensitive_pack(repo, planned_paths=[])

@@ -36,15 +36,17 @@ The cursor is not a gate. Refresh GitHub before resuming.
   focused diff, project tests, one review, and human merge boundary. No spec
   packet is required.
 - `standard`: normal feature/fix. Linked Issue, testable plan, project tests,
-  one independent full review, and at most one diff-only re-review after P0/P1
-  fixes. A spec packet is optional.
+  one full review, and at most one diff-only re-review after P0/P1 fixes. A
+  spec packet is optional.
 - `heavy`: architecture, public contract, migration, workflow enforcement, auth,
   secrets, payments, or any sensitive-registry match. Require approved
-  `product.md`, `tech.md`, `tasks.md`, independent review, security evidence,
-  and explicit current-invocation human merge authorization.
+  `product.md`, `tech.md`, `tasks.md`, security evidence, and explicit
+  current-invocation human merge authorization.
 
 Sensitive classification always upgrades to `heavy`; ambiguity also chooses the
 heavier profile.
+The selected profile's configured `requires_independent_review` value controls
+the review source and hosted-thread collection.
 
 ## Queue Rules
 
@@ -71,8 +73,10 @@ Run the route gate with the selected profile:
 python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO \
   --issue <n> --json > issue-evidence.json
 python3 checks/route_gate.py --repo . --route implement --profile <profile> \
-  --issue <n> --evidence issue-evidence.json --json
+  --issue <n> --evidence issue-evidence.json --mode required --json
 ```
+
+Continue only when the route decision is `allowed`.
 
 Load `skills/specrail-workflow/SKILL.md` only if routing is ambiguous. Load
 `skills/specrail-implement/SKILL.md` for implementation. Keep worktrees and file
@@ -88,8 +92,10 @@ python3 checks/github_duplicate_evidence.py --github-repo OWNER/REPO \
 ## Review
 
 Load `skills/specrail-review-pr/SKILL.md` before review; do not copy it here.
-One reviewer lane per PR is the default. Fastlane may self-review;
-standard/heavy require `independent_lane`.
+One reviewer lane per PR is the default. Select `independent_lane` when the
+chosen profile's configured `requires_independent_review` policy is true;
+otherwise self-review is allowed. Hosted-thread collection follows that same
+policy.
 
 - Round 1: `full`.
 - Round 2: `diff_only`, only after P0/P1 fixes.

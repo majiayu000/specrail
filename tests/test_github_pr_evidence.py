@@ -260,6 +260,45 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
     assert result["review"]["verdict"] == "non_blocking"
 
 
+def test_configured_fastlane_independent_review_collects_hosted_findings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot = pr_payload()
+    hosted_calls: list[str] = []
+    pack = config(tmp_path)
+    pack.workflow["verification_profiles"] = {
+        "default": "fastlane",
+        "profiles": {
+            "fastlane": {
+                "requires_independent_review": True,
+                "max_review_rounds": 1,
+                "merge_authorization": "invocation",
+            }
+        },
+    }
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_pr_view",
+        lambda _repo, _pr: snapshot,
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_hosted_findings",
+        lambda _repo, _pr, head: hosted_calls.append(head) or [],
+    )
+
+    collect_evidence(
+        "acme/widgets",
+        42,
+        profile="fastlane",
+        gate_invocation_id="gate-1",
+        review=review(profile="fastlane"),
+        repo=tmp_path,
+        config=pack,
+    )
+
+    assert hosted_calls == ["a" * 40, "a" * 40]
+
+
 def test_collect_evidence_rejects_head_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     snapshots = [pr_payload("a" * 40), pr_payload("c" * 40)]
     monkeypatch.setattr(

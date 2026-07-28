@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
@@ -28,13 +30,16 @@ def load_diff() -> str:
 
 
 def valid_review() -> dict[str, object]:
+    diff = load_diff().encode()
     return {
         "artifact_id": "review-pr489-round1",
         "contract_version": CONTRACT_VERSION,
         "repository": "acme/widgets",
         "pr": 489,
         "profile": "standard",
+        "base_head_sha": "b" * 40,
         "head_sha": "a" * 40,
+        "diff_sha256": hashlib.sha256(diff).hexdigest(),
         "review_source": "independent_lane",
         "round": 1,
         "mode": "full",
@@ -69,6 +74,8 @@ def test_review_gate_reports_all_missing_fields() -> None:
         "mode",
         "pr",
         "profile",
+        "base_head_sha",
+        "diff_sha256",
         "repository",
         "review_source",
         "round",
@@ -117,6 +124,20 @@ def test_review_gate_blocks_missing_headings_and_final_authority() -> None:
     assert any("final approval or merge authority" in item for item in result["reasons"])
 
 
+@pytest.mark.parametrize(
+    "authority",
+    ["批准合并", "允许合并", "可合并", "准许合并", "合并即可"],
+)
+def test_review_gate_blocks_localized_merge_authority(authority: str) -> None:
+    review = valid_review()
+    review["body"] = f"## Summary\n检查完成。\n\n## Verdict\n{authority}。"
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert any("final approval or merge authority" in item for item in result["reasons"])
+
+
 def test_review_gate_blocks_invalid_finding_location() -> None:
     review = valid_review()
     review["verdict"] = "blocking"
@@ -159,7 +180,9 @@ def test_round_two_digest_can_be_checked_without_git_repo() -> None:
     diff = load_diff()
     review = valid_review()
     prior_review = copy.deepcopy(review)
+    prior_review["base_head_sha"] = "c" * 40
     prior_review["head_sha"] = "b" * 40
+    prior_review["diff_sha256"] = hashlib.sha256(diff.encode()).hexdigest()
     review.update(
         {
             "round": 2,
@@ -173,6 +196,16 @@ def test_round_two_digest_can_be_checked_without_git_repo() -> None:
     result = evaluate_review_gate(review, diff)
 
     assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_round_one_digest_must_match_supplied_diff() -> None:
+    review = valid_review()
+    review["diff_sha256"] = "0" * 64
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert "diff_sha256 does not match the supplied diff" in result["reasons"]
 
 
 def test_round_two_requires_bound_round_one_full_review() -> None:
@@ -205,20 +238,67 @@ def test_review_gate_rejects_legacy_artifact_with_rebuild_guidance() -> None:
     assert "unsupported legacy review field: review_round" in result["reasons"]
 
 
-def test_review_gate_cli_json_contract() -> None:
+def test_review_gate_cli_json_contract(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "app.py").write_text("before = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=SpecRail Test", "-c",
+         "user.email=specrail@example.invalid", "commit", "-qm", "base"],
+        cwd=repo,
+        check=True,
+    )
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    (repo / "app.py").write_text("after = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=SpecRail Test", "-c",
+         "user.email=specrail@example.invalid", "commit", "-qm", "head"],
+        cwd=repo,
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    diff = subprocess.run(
+        ["git", "diff", "--no-ext-diff", "--binary", f"{base}..{head}", "--"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    review = valid_review()
+    review.update(
+        {
+            "base_head_sha": base,
+            "head_sha": head,
+            "diff_sha256": hashlib.sha256(diff).hexdigest(),
+        }
+    )
+    review_path = repo / "review.json"
+    diff_path = repo / "review.patch"
+    review_path.write_text(json.dumps(review), encoding="utf-8")
+    diff_path.write_bytes(diff)
+    for name in ("workflow.yaml", "states.yaml", "labels.yaml"):
+        (repo / name).write_bytes((ROOT / name).read_bytes())
     result = subprocess.run(
         [
             sys.executable,
-            "checks/review_json_gate.py",
+                str(ROOT / "checks" / "review_json_gate.py"),
             "--repo",
-            ".",
+            str(repo),
             "--review",
-            "examples/fixtures/review-v3-valid.json",
+            str(review_path),
             "--diff",
-            "examples/fixtures/pr-diff.patch",
+            str(diff_path),
             "--json",
         ],
-        cwd=ROOT,
+        cwd=repo,
         check=False,
         capture_output=True,
         text=True,

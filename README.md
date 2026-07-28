@@ -89,11 +89,14 @@ Collect read-only GitHub issue evidence before running the route gate:
 
 ```sh
 python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO --issue 123 --json > issue-evidence.json
-python3 checks/route_gate.py --repo . --route write_spec --issue 123 --evidence issue-evidence.json --json
+python3 checks/route_gate.py --repo . --route write_spec --issue 123 \
+  --evidence issue-evidence.json --mode required --json
 python3 checks/route_gate.py --repo . --route implement --issue 123 \
-  --profile <fastlane|standard|heavy> --evidence issue-evidence.json --json
+  --profile <fastlane|standard|heavy> --evidence issue-evidence.json \
+  --mode required --json
 ```
 
+Continue only when the route decision is `allowed`.
 `checks/github_issue_evidence.py` is read-only. It uses `gh issue view` for issue
 state and labels. For a trusted `ready_to_implement` issue in a repository with
 a sensitive registry, it first queries the GitHub default-base identity, checks
@@ -122,7 +125,7 @@ python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 `checks/github_pr_evidence.py` is a read-only collector for GitHub CLI output.
 It verifies the complete REST-paginated changed-file set against GitHub's
 reported count and includes current hosted review-thread state for
-standard/heavy reviews.
+profiles whose configured `requires_independent_review` policy is true.
 `checks/pr_gate.py` owns the offline merge-readiness decision.
 
 After a merge, audit that the allowed gate query, merge dispatch, and confirmed
@@ -132,7 +135,8 @@ remote merge all refer to the final head and satisfy `gate < dispatch <= merged`
 python3 checks/closure_audit.py --repo . --evidence closure-evidence.json --json
 ```
 
-The closure audit is offline and advisory-only. It performs no GitHub writes,
+The closure audit is offline and advisory-only. It requires remotely confirmed
+merge evidence bound to `merged_head_sha`, performs no GitHub writes,
 always returns success with `clear` or `warning`, and never creates follow-up
 Issues.
 
@@ -143,7 +147,8 @@ python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-123.jso
 ```
 
 Review artifacts are advisory evidence only. They do not grant final approval or
-merge authority. Round 1 is full. Round 2 is diff-only, embeds the bound round-1
+merge authority. Round 1 is full and binds the exact PR base-to-head diff.
+Round 2 is diff-only, embeds the bound round-1
 artifact as `prior_review`, and carries every prior unresolved P0/P1 finding
 forward as resolved or unresolved. Current P0/P1 blocks, and P2/P3 remains
 follow-up.

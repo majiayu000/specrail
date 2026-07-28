@@ -87,7 +87,9 @@ def evidence(
         "repository": "acme/widgets",
         "pr": 42,
         "profile": profile,
+        "base_head_sha": head,
         "head_sha": head,
+        "diff_sha256": hashlib.sha256(b"").hexdigest(),
         "review_source": review_source,
         "round": 1,
         "mode": "full",
@@ -102,7 +104,7 @@ def evidence(
         "linked_issue": 208,
         "state": "OPEN",
         "is_draft": False,
-        "base_sha": "b" * 40,
+        "base_sha": head,
         "head_sha": head,
         "gate_query_head_sha": head,
         "changed_files": changed,
@@ -144,6 +146,34 @@ def test_fastlane_self_review_is_allowed() -> None:
     result = evaluate_pr_gate(payload, ROOT, pack)
 
     assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_gate_honors_configured_fastlane_independent_review() -> None:
+    payload, pack = evidence(profile="fastlane")
+    pack.workflow["verification_profiles"] = verification_profile_config()
+    pack.workflow["verification_profiles"]["profiles"]["fastlane"][
+        "requires_independent_review"
+    ] = True
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert any("requires an independent_lane review" in item for item in result["reasons"])
+
+
+def test_gate_requires_every_configured_ci_check() -> None:
+    payload, pack = evidence()
+    pack.workflow["evidence"] = {
+        "ci_component_coverage": {
+            "tests": ["unit"],
+            "workflow-check": ["contract"],
+        }
+    }
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert "configured CI checks are missing: workflow-check" in result["reasons"]
 
 
 def test_gate_aggregates_all_legacy_fields() -> None:
@@ -263,6 +293,7 @@ def test_gate_honors_configured_profile_round_cap(tmp_path: Path) -> None:
         check=True,
     )
     payload, pack = evidence(repo=repo, profile="standard")
+    payload["base_sha"] = base
     pack.workflow["verification_profiles"] = verification_profile_config()
     pack.workflow["verification_profiles"]["profiles"]["standard"][
         "max_review_rounds"
@@ -283,8 +314,10 @@ def test_gate_honors_configured_profile_round_cap(tmp_path: Path) -> None:
         "head_sha": base,
         "round": 1,
         "mode": "full",
+        "base_head_sha": base,
+        "diff_sha256": hashlib.sha256(b"").hexdigest(),
     }
-    for field in ["base_head_sha", "diff_sha256", "prior_review"]:
+    for field in ["prior_review"]:
         payload["review"]["prior_review"].pop(field, None)
 
     result = evaluate_pr_gate(payload, repo, pack)
@@ -292,3 +325,69 @@ def test_gate_honors_configured_profile_round_cap(tmp_path: Path) -> None:
     assert result["decision"] == "needs_human", result["reasons"]
     assert result["review_decision"] == "needs_human"
     assert "human_review" in result["missing"]
+
+
+def test_round_two_prior_review_must_start_at_pr_base() -> None:
+    payload, pack = evidence()
+    pr_base = subprocess.run(
+        ["git", "rev-parse", "HEAD~3"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    truncated_base = subprocess.run(
+        ["git", "rev-parse", "HEAD~2"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    prior_head = subprocess.run(
+        ["git", "rev-parse", "HEAD~1"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    current_head = head_sha()
+    prior_diff = subprocess.run(
+        ["git", "diff", "--no-ext-diff", "--binary",
+         f"{truncated_base}..{prior_head}", "--"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout
+    current_diff = subprocess.run(
+        ["git", "diff", "--no-ext-diff", "--binary",
+         f"{prior_head}..{current_head}", "--"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout
+    prior_review = {
+        **payload["review"],
+        "artifact_id": "review-42-round1",
+        "base_head_sha": truncated_base,
+        "head_sha": prior_head,
+        "diff_sha256": hashlib.sha256(prior_diff).hexdigest(),
+    }
+    payload["base_sha"] = pr_base
+    payload["review"].update(
+        {
+            "round": 2,
+            "mode": "diff_only",
+            "base_head_sha": prior_head,
+            "head_sha": current_head,
+            "diff_sha256": hashlib.sha256(current_diff).hexdigest(),
+            "prior_review": prior_review,
+        }
+    )
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert (
+        "round 2 prior_review.base_head_sha must match PR evidence base_sha"
+        in result["reasons"]
+    )

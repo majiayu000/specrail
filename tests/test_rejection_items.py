@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -34,13 +37,71 @@ def load_diff() -> str:
 
 
 def run_review_gate_cli(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "checks/review_json_gate.py", "--repo", ".", *args, "--json"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    with tempfile.TemporaryDirectory() as temp:
+        repo = Path(temp)
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        env = {
+            "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z",
+            "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z",
+        }
+        (repo / "app.py").write_text("before = True\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=SpecRail Test", "-c",
+             "user.email=specrail@example.invalid", "commit", "-qm", "base"],
+            cwd=repo, check=True, env={**os.environ, **env},
+        )
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        (repo / "app.py").write_text("after = True\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=SpecRail Test", "-c",
+             "user.email=specrail@example.invalid", "commit", "-qm", "head"],
+            cwd=repo, check=True, env={**os.environ, **env},
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        diff = subprocess.run(
+            ["git", "diff", "--no-ext-diff", "--binary", f"{base}..{head}", "--"],
+            cwd=repo, check=True, capture_output=True,
+        ).stdout
+        normalized = list(args)
+        review_index = normalized.index("--review") + 1
+        original_review = Path(normalized[review_index])
+        if not original_review.is_absolute():
+            original_review = ROOT / original_review
+        review = json.loads(original_review.read_text(encoding="utf-8"))
+        review["base_head_sha"] = base
+        review["head_sha"] = head
+        review["diff_sha256"] = hashlib.sha256(diff).hexdigest()
+        review_path = repo / "review.json"
+        diff_path = repo / "review.patch"
+        review_path.write_text(json.dumps(review), encoding="utf-8")
+        diff_path.write_bytes(diff)
+        normalized[review_index] = str(review_path)
+        diff_index = normalized.index("--diff") + 1
+        normalized[diff_index] = str(diff_path)
+        for name in ("workflow.yaml", "states.yaml", "labels.yaml"):
+            (repo / name).write_bytes((ROOT / name).read_bytes())
+        return subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "checks" / "review_json_gate.py"),
+                "--repo",
+                str(repo),
+                *normalized,
+                "--json",
+            ],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
 
 
 def assert_item_shape(item: dict[str, object]) -> None:
