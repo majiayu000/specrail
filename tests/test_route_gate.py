@@ -260,6 +260,74 @@ def test_implement_preserves_configured_required_evidence(tmp_path: Path) -> Non
     assert "verification" in payload["missing"]
 
 
+@pytest.mark.parametrize(
+    "task_plan",
+    [
+        "",
+        "# Tasks\n\n- [ ] missing stable contract fields\n",
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: complete\n"
+        ),
+    ],
+)
+def test_standard_implement_rejects_invalid_task_plan(
+    tmp_path: Path,
+    task_plan: str,
+) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    packet = repo / "docs" / "specs" / "GH999"
+    packet.mkdir(parents=True)
+    (packet / "tasks.md").write_text(task_plan, encoding="utf-8")
+
+    _result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--github-repo",
+        "example/consumer",
+        "--profile",
+        "standard",
+        "--evidence",
+        str(write_issue_evidence(tmp_path)),
+        repo=repo,
+    )
+
+    assert payload["decision"] != "allowed"
+    assert "testable_plan" in payload["missing"]
+
+
+def test_standard_implement_accepts_valid_task_plan(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    write_custom_pack(repo)
+    packet = repo / "docs" / "specs" / "GH999"
+    packet.mkdir(parents=True)
+    (packet / "tasks.md").write_text(
+        "# Tasks\n\n"
+        "- [ ] `SP999-T1` Owner: test | Done when: complete | Verify: `true`\n",
+        encoding="utf-8",
+    )
+
+    _result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--github-repo",
+        "example/consumer",
+        "--profile",
+        "standard",
+        "--evidence",
+        str(write_issue_evidence(tmp_path)),
+        repo=repo,
+    )
+
+    assert payload["decision"] == "allowed", payload["reasons"]
+    assert "standard testable plan evidence validated" in payload["satisfied"]
+
+
 def test_route_gate_uses_configured_spec_packet_in_verification_command(
     tmp_path: Path,
 ) -> None:

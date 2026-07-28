@@ -176,6 +176,27 @@ def test_parse_unified_diff_tracks_binary_paths_without_hunks() -> None:
     assert index.paths == {"assets/old.bin", "assets/new.bin"}
 
 
+def test_parse_unified_diff_handles_git_paths_with_spaces_and_quotes() -> None:
+    index = parse_unified_diff(
+        "diff --git a/file with space.txt b/file with space.txt\n"
+        "old mode 100644\n"
+        "new mode 100755\n"
+        "diff --git a/owner's.bin b/owner's.bin\n"
+        "Binary files a/owner's.bin and b/owner's.bin differ\n"
+        "diff --git a/old name.txt b/new name.txt\n"
+        "similarity index 100%\n"
+        "rename from old name.txt\n"
+        "rename to new name.txt\n"
+    )
+
+    assert index.paths == {
+        "file with space.txt",
+        "owner's.bin",
+        "old name.txt",
+        "new name.txt",
+    }
+
+
 def test_validate_exact_git_diff_rejects_option_like_revisions(tmp_path: Path) -> None:
     reasons = validate_exact_git_diff(
         tmp_path,

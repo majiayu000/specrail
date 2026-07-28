@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from github_evidence_common import EvidenceError
+from github_pr_evidence import parse_github_repo
+
 
 SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
@@ -43,7 +46,18 @@ def audit_closure(
     warnings: list[dict[str, str]] = []
     repository = evidence.get("repository")
     if isinstance(repository, str):
-        repository = repository.lower()
+        try:
+            owner, name = parse_github_repo(repository)
+        except EvidenceError:
+            warnings.append(
+                {
+                    "code": "invalid_repository",
+                    "message": "repository must be OWNER/REPO",
+                }
+            )
+            repository = None
+        else:
+            repository = f"{owner}/{name}".lower()
     else:
         warnings.append({"code": "invalid_repository", "message": "repository must be OWNER/REPO"})
         repository = None

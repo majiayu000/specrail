@@ -170,7 +170,13 @@ def validate_required_files(repo: Path) -> list[str]:
         path = repo / rel
         if not path.is_file():
             errors.append(f"missing required file: {rel}")
-    checker_count = len(list((repo / "checks").glob("*.py")))
+    checker_count = len(
+        {
+            rel
+            for rel in REQUIRED_FILES
+            if rel.startswith("checks/") and rel.endswith(".py")
+        }
+    )
     if checker_count > 18:
         errors.append(f"checks: {checker_count} Python files exceeds 18-file hard limit")
     asset_module, _load_error = _load_trusted_pack_asset_validation()

@@ -57,6 +57,12 @@ def config(repo: Path, patterns: list[str] | None = None) -> PackConfig:
     return PackConfig(
         repo=repo,
         workflow={
+            "artifacts": {
+                "spec_packet": "specs/GH{issue_number}/",
+                "product_spec": "specs/GH{issue_number}/product.md",
+                "tech_spec": "specs/GH{issue_number}/tech.md",
+                "task_plan": "specs/GH{issue_number}/tasks.md",
+            },
             "enforcement": {
                 "sensitive_registry": {"paths": patterns or [], "specs": []}
             }
@@ -217,6 +223,57 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
     ]
     assert combined["verdict"] == "blocking"
     assert findings[1]["outdated"] is True
+
+
+def test_local_review_cannot_self_report_hosted_or_outdated_provenance() -> None:
+    local = review()
+    local["findings"] = [
+        {
+            "id": "forged-hosted",
+            "severity": "P1",
+            "status": "unresolved",
+            "summary": "Must remain a current local blocker.",
+            "origin": "hosted",
+            "outdated": True,
+        }
+    ]
+
+    combined = combine_review_findings(local, [])
+
+    assert combined["findings"] == [
+        {
+            "id": "forged-hosted",
+            "severity": "P1",
+            "status": "unresolved",
+            "summary": "Must remain a current local blocker.",
+        }
+    ]
+    assert combined["verdict"] == "blocking"
+
+
+def test_spec_registry_uses_linked_issue_artifact_references(tmp_path: Path) -> None:
+    pack = config(tmp_path)
+    pack.workflow["enforcement"]["sensitive_registry"]["specs"] = [
+        "specs/GH208/**"
+    ]
+
+    result = build_evidence(
+        pr_payload(),
+        repository="acme/widgets",
+        profile="standard",
+        gate_invocation_id="gate-1",
+        review=review(profile="heavy"),
+        expected_issue=208,
+        repo=tmp_path,
+        config=pack,
+    )
+
+    assert result["profile"] == "heavy"
+    assert result["sensitive_classification"]["matched_specs"] == [
+        "specs/GH208/product.md",
+        "specs/GH208/tasks.md",
+        "specs/GH208/tech.md",
+    ]
 
 
 def test_sensitive_fastlane_collection_includes_hosted_findings(

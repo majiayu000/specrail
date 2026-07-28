@@ -121,6 +121,19 @@ def test_implementation_skills_run_required_gate_and_fail_closed() -> None:
         )
 
 
+def test_plan_tasks_validates_tasks_before_implementation_preflight() -> None:
+    text = (REPO / "skills/specrail-plan-tasks/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    write_index = text.index("Write `specs/GH<issue-number>/tasks.md`")
+    validate_index = text.index("python3 checks/check_workflow.py")
+    implement_index = text.index(
+        "python3 checks/route_gate.py --repo . --route implement"
+    )
+    assert write_index < validate_index < implement_index
+
+
 def test_active_review_guidance_uses_canonical_independence_policy() -> None:
     for relative_path in (
         "README.md",

@@ -45,17 +45,21 @@ def test_heavy_change_without_authorization_needs_human() -> None:
     assert "human_merge_authorization" in result["missing"]
 
 
-def test_heavy_change_with_current_invocation_authorization_is_allowed() -> None:
+def test_offline_actor_claim_cannot_authenticate_a_human() -> None:
     payload, pack = evidence(
         profile="heavy",
         paths=["checks/pr_gate.py"],
         patterns=["checks/**"],
     )
-    payload["human_merge_authorization"] = authorization(payload)
+    payload["human_merge_authorization"] = {
+        **authorization(payload),
+        "actor": "codex",
+    }
 
     result = evaluate_pr_gate(payload, ROOT, pack)
 
-    assert result["decision"] == "allowed", result["reasons"]
+    assert result["decision"] == "needs_human", result["reasons"]
+    assert "human_merge_authorization" in result["missing"]
 
 
 def test_heavy_independent_review_requirement_cannot_be_disabled() -> None:

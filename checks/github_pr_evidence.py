@@ -14,12 +14,13 @@ from typing import Any
 
 from github_evidence_common import EvidenceError, json_object, normalize_checks
 from github_issue_reference import normalize_issue_reference, relation_snapshot
-from sensitive_enforcement import classify_sensitive_changes
+from sensitive_enforcement import classify_sensitive_changes, sensitive_registry
 from specrail_lib import (
     PackConfig,
     SpecRailError,
     load_pack,
     resolve_path,
+    spec_packet_artifact_paths,
     validate_verification_profiles,
     verification_profiles,
 )
@@ -297,8 +298,30 @@ def combine_review_findings(
     review: dict[str, Any],
     hosted_findings: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    combined = dict(review)
-    local_findings = review.get("findings")
+    def normalize_local_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(artifact)
+        local = artifact.get("findings")
+        if not isinstance(local, list):
+            raise EvidenceError("review.findings must be an array")
+        normalized["findings"] = [
+            (
+                {
+                    key: value
+                    for key, value in finding.items()
+                    if key not in {"origin", "outdated"}
+                }
+                if isinstance(finding, dict)
+                else finding
+            )
+            for finding in local
+        ]
+        prior = artifact.get("prior_review")
+        if isinstance(prior, dict):
+            normalized["prior_review"] = normalize_local_artifact(prior)
+        return normalized
+
+    combined = normalize_local_artifact(review)
+    local_findings = combined.get("findings")
     if not isinstance(local_findings, list):
         raise EvidenceError("review.findings must be an array")
     merged = [*local_findings, *hosted_findings]
@@ -338,17 +361,25 @@ def _effective_collection_profile(
     profile: str,
     paths: list[str],
     *,
+    linked_issue: int,
     repo: Path | None,
     config: PackConfig | None,
 ) -> str:
     if repo is None or config is None:
         return profile
+    spec_refs: list[str] = []
+    if sensitive_registry(config)["specs"]:
+        packet = spec_packet_artifact_paths(config, linked_issue)
+        spec_refs = [
+            packet[name]
+            for name in ("product_spec", "tech_spec", "task_plan")
+        ]
     try:
         classification = classify_sensitive_changes(
             config,
             repo,
             paths,
-            paths,
+            spec_refs,
             source="github_changed_files",
         )
     except SpecRailError as exc:
@@ -465,12 +496,19 @@ def build_evidence(
     classification = None
     enforcement_sensitive = False
     if repo is not None and config is not None:
+        spec_refs: list[str] = []
+        if sensitive_registry(config)["specs"]:
+            packet = spec_packet_artifact_paths(config, linked_issue)
+            spec_refs = [
+                packet[name]
+                for name in ("product_spec", "tech_spec", "task_plan")
+            ]
         try:
             classification = classify_sensitive_changes(
                 config,
                 repo,
                 paths,
-                paths,
+                spec_refs,
                 source="github_changed_files",
             )
         except SpecRailError as exc:
@@ -541,9 +579,11 @@ def collect_evidence(
     before_head = _require_string(before, "headRefOid")
     before_relation = relation_snapshot(before)
     before_paths = _changed_files(before)
+    linked_issue = _linked_issue(before, expected_issue, issue_payload)
     collection_profile = _effective_collection_profile(
         profile,
         before_paths,
+        linked_issue=linked_issue,
         repo=repo,
         config=config,
     )
