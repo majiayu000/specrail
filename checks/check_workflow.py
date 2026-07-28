@@ -22,6 +22,7 @@ from specrail_lib import (
     validate_labels,
     validate_state_graph,
     validate_skills_lock,
+    validate_verification_profiles,
 )
 from sensitive_enforcement import (
     parse_planned_changes_manifest,
@@ -101,13 +102,18 @@ REQUIRED_TOKENS = {
         "forbidden_agent_actions:",
         "required_human_gates:",
         "action_policy:",
+        "verification_profiles:",
+        "fastlane:",
+        "standard:",
+        "heavy:",
     ],
     "states.yaml": [
         "ready_to_spec",
         "ready_to_implement",
-        "agent_review",
-        "human_review",
-        "merge_ready",
+        "in_progress",
+        "review",
+        "parked",
+        "done",
     ],
     "labels.yaml": [
         "readiness:",
@@ -498,6 +504,7 @@ def main() -> int:
         errors.extend(validate_state_graph(config))
         errors.extend(validate_labels(config))
         errors.extend(validate_action_policy(config))
+        errors.extend(validate_verification_profiles(config))
         errors.extend(validate_sensitive_registry(config))
         errors.extend(validate_impl_branch_template(config))
         errors.extend(validate_auth_mode(config))

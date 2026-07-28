@@ -22,6 +22,19 @@ from schema_validation import (
 
 
 DECISIONS = {"allowed", "warn", "needs_human", "blocked"}
+ISSUE_STATES = frozenset(
+    {
+        "new_issue",
+        "needs_info",
+        "ready_to_spec",
+        "ready_to_implement",
+        "in_progress",
+        "review",
+        "done",
+        "parked",
+    }
+)
+VERIFICATION_PROFILES = ("fastlane", "standard", "heavy")
 SPEC_STATUSES = frozenset(
     {
         "complete",
@@ -39,22 +52,22 @@ RUNTIME_STATE_MAPPING = {
     "deferred": RUNTIME_ONLY_STATE,
     "eligible_impl": ("ready_to_implement",),
     "handoff": RUNTIME_ONLY_STATE,
-    "merge_ready": ("merge_ready",),
-    "merged": ("merged",),
-    "needs_ci": ("human_review",),
+    "merge_ready": ("review",),
+    "merged": ("done",),
+    "needs_ci": ("review",),
     "needs_human": RUNTIME_ONLY_STATE,
-    "needs_review": ("impl_pr_open", "agent_review"),
+    "needs_review": ("in_progress", "review"),
     "needs_spec": ("ready_to_spec",),
-    "needs_tasks": ("spec_approved",),
+    "needs_tasks": ("ready_to_implement",),
     "open": RUNTIME_ONLY_STATE,
     "planning": RUNTIME_ONLY_STATE,
-    "ready_to_merge": ("merge_ready",),
-    "review_required": ("human_review",),
+    "ready_to_merge": ("review",),
+    "review_required": ("review",),
     "running": RUNTIME_ONLY_STATE,
-    "waiting_ci": ("human_review", "ci_green"),
+    "waiting_ci": ("review",),
 }
 TERMINAL_BLOCKING_STATES = {
-    "abandoned", "duplicate", "reserved_internal", "security_private",
+    "abandoned", "duplicate", "parked", "security_private",
 }
 # GH142: legacy declaration parsing. Deliberately mirrors (not imports)
 # tools/spec_depth_audit.py so tools/ keeps zero checks/ dependencies; a third
@@ -224,6 +237,28 @@ def action_policy(config: PackConfig) -> dict[str, Any]:
     if not isinstance(actions, dict):
         raise SpecRailError("workflow.yaml action_policy.actions must be a mapping")
     return actions
+
+
+def verification_profiles(config: PackConfig) -> tuple[str, dict[str, dict[str, Any]]]:
+    raw = config.workflow.get("verification_profiles")
+    if not isinstance(raw, dict):
+        raise SpecRailError("workflow.yaml verification_profiles must be a mapping")
+    default = raw.get("default")
+    profiles = raw.get("profiles")
+    if not isinstance(default, str) or default not in VERIFICATION_PROFILES:
+        raise SpecRailError(
+            "workflow.yaml verification_profiles.default must be one of: "
+            + ", ".join(VERIFICATION_PROFILES)
+        )
+    if not isinstance(profiles, dict):
+        raise SpecRailError(
+            "workflow.yaml verification_profiles.profiles must be a mapping"
+        )
+    normalized: dict[str, dict[str, Any]] = {}
+    for name, body in profiles.items():
+        if isinstance(body, dict):
+            normalized[str(name)] = body
+    return default, normalized
 
 
 def artifact_templates(config: PackConfig) -> dict[str, str]:
@@ -485,6 +520,18 @@ def infer_state(config: PackConfig, state: str | None, labels: list[str]) -> tup
 def validate_state_graph(config: PackConfig) -> list[str]:
     errors: list[str] = []
     states = state_map(config)
+    actual_states = set(states)
+    if actual_states != set(ISSUE_STATES):
+        missing = sorted(set(ISSUE_STATES) - actual_states)
+        extra = sorted(actual_states - set(ISSUE_STATES))
+        if missing:
+            errors.append(
+                "states.yaml: missing canonical issue states: " + ", ".join(missing)
+            )
+        if extra:
+            errors.append(
+                "states.yaml: unsupported issue states: " + ", ".join(extra)
+            )
     for name, body in states.items():
         if not isinstance(body, dict):
             errors.append(f"states.yaml: state {name} must be a mapping")
@@ -510,12 +557,89 @@ def validate_labels(config: PackConfig) -> list[str]:
     for required_group in ["readiness", "outcome", "review"]:
         if required_group not in groups:
             errors.append(f"labels.yaml: missing label group {required_group}")
-    for state in ["needs_info", "triaged", "ready_to_spec", "ready_to_implement"]:
+    for state in ["needs_info", "ready_to_spec", "ready_to_implement", "parked"]:
         if state not in groups.get("readiness", []):
             errors.append(f"labels.yaml: readiness labels missing {state}")
-    for label in groups.get("readiness", []) + groups.get("outcome", []):
-        if label not in states and label not in {"merged"}:
+    allowed_outcomes = {"duplicate", "abandoned", "security_private", "done"}
+    for label in groups.get("readiness", []):
+        if label not in states:
             errors.append(f"labels.yaml: label {label} is not a known state or allowed outcome")
+    for label in groups.get("outcome", []):
+        if label not in allowed_outcomes:
+            errors.append(f"labels.yaml: label {label} is not an allowed outcome")
+    for label in groups.get("lifecycle", []):
+        if label not in states:
+            errors.append(f"labels.yaml: lifecycle label {label} is not a known state")
+    return errors
+
+
+def validate_verification_profiles(config: PackConfig) -> list[str]:
+    errors: list[str] = []
+    try:
+        default, profiles = verification_profiles(config)
+    except SpecRailError as exc:
+        return [str(exc)]
+    expected = set(VERIFICATION_PROFILES)
+    actual = set(profiles)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        if missing:
+            errors.append(
+                "workflow.yaml: missing verification profiles: " + ", ".join(missing)
+            )
+        if extra:
+            errors.append(
+                "workflow.yaml: unknown verification profiles: " + ", ".join(extra)
+            )
+    for name in VERIFICATION_PROFILES:
+        body = profiles.get(name)
+        if body is None:
+            continue
+        required = {
+            "requires_spec_packet",
+            "requires_independent_review",
+            "max_review_rounds",
+            "merge_authorization",
+        }
+        unknown = sorted(set(body) - required)
+        missing_fields = sorted(required - set(body))
+        if unknown:
+            errors.append(
+                f"workflow.yaml: verification profile {name} has unknown fields: "
+                + ", ".join(unknown)
+            )
+        if missing_fields:
+            errors.append(
+                f"workflow.yaml: verification profile {name} missing fields: "
+                + ", ".join(missing_fields)
+            )
+        for field in ["requires_spec_packet", "requires_independent_review"]:
+            if not isinstance(body.get(field), bool):
+                errors.append(
+                    f"workflow.yaml: verification profile {name}.{field} "
+                    "must be a boolean"
+                )
+        rounds = body.get("max_review_rounds")
+        if not isinstance(rounds, int) or isinstance(rounds, bool) or rounds not in {1, 2}:
+            errors.append(
+                f"workflow.yaml: verification profile {name}.max_review_rounds "
+                "must be 1 or 2"
+            )
+        authorization = body.get("merge_authorization")
+        if authorization not in {"invocation", "explicit_human"}:
+            errors.append(
+                f"workflow.yaml: verification profile {name}.merge_authorization "
+                "must be invocation or explicit_human"
+            )
+    if default != "standard":
+        errors.append("workflow.yaml: default verification profile must be standard")
+    if profiles.get("heavy", {}).get("requires_spec_packet") is not True:
+        errors.append("workflow.yaml: heavy profile must require a spec packet")
+    if profiles.get("heavy", {}).get("merge_authorization") != "explicit_human":
+        errors.append(
+            "workflow.yaml: heavy profile must require explicit_human merge authorization"
+        )
     return errors
 
 

@@ -53,10 +53,12 @@ STATE_HINT_PATTERN = re.compile(
 )
 READINESS_STATES = {
     "needs_info",
-    "triaged",
     "ready_to_spec",
     "ready_to_implement",
-    "reserved_internal",
+    "in_progress",
+    "review",
+    "done",
+    "parked",
 }
 KNOWN_STATES = READINESS_STATES | TERMINAL_BLOCKING_STATES
 

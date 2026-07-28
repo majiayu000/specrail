@@ -1,21 +1,22 @@
 labels:
   readiness:
     - needs_info
-    - triaged
     - ready_to_spec
     - ready_to_implement
-    - reserved_internal
+    - parked
 
   outcome:
     - duplicate
     - abandoned
     - security_private
-    - merged
+    - done
+
+  lifecycle:
+    - in_progress
+    - review
 
   review:
-    - agent_reviewed
     - human_review_required
-    - owner_approval_required
     - changes_requested
 
   area:
@@ -28,4 +29,3 @@ labels:
   source:
     - agent_generated
     - human_authored
-

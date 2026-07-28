@@ -27,6 +27,8 @@ from specrail_lib import (
     validate_action_policy,
     validate_labels,
     validate_state_graph,
+    validate_verification_profiles,
+    verification_profiles,
 )
 from duplicate_work_gate import evaluate_duplicate_work_gate_path
 from rejection_items import (
@@ -139,6 +141,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     config_errors.extend(validate_labels(config))
     config_errors.extend(validate_action_policy(config))
     config_errors.extend(validate_sensitive_registry(config))
+    config_errors.extend(validate_verification_profiles(config))
     try:
         configured_spec_paths = spec_packet_artifact_paths(config, 1)
         configured_spec_root = PurePosixPath(
@@ -155,6 +158,22 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         config_errors.append(f"unknown route: {route}")
 
     evidence = load_evidence(Path(args.evidence) if args.evidence else None)
+    default_profile = "standard"
+    profiles: dict[str, dict[str, Any]] = {}
+    try:
+        default_profile, profiles = verification_profiles(config)
+    except SpecRailError as exc:
+        config_errors.append(str(exc))
+    declared_profile = args.profile or evidence.get("profile") or default_profile
+    if not isinstance(declared_profile, str) or declared_profile not in profiles:
+        config_errors.append(
+            "verification profile must be one of: fastlane, standard, heavy"
+        )
+        effective_profile = default_profile
+    else:
+        effective_profile = declared_profile
+    if evidence.get("enforcement_sensitive") is True:
+        effective_profile = "heavy"
     labels = list(args.label or [])
     labels.extend(str(label) for label in evidence.get("labels", []) if str(label).strip())
     evidence_state = evidence.get("state")
@@ -181,6 +200,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         return {
             "decision": "blocked",
             "route": route,
+            "profile": effective_profile,
             "current_state": explicit_state,
             "issue": args.issue,
             "pr": args.pr,
@@ -209,6 +229,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     if state_from_evidence and current_state == evidence_state:
         state_evidence = [f"state provided by evidence: {current_state} ({state_source})"]
     satisfied.extend(state_evidence)
+    satisfied.append(f"verification profile: {effective_profile}")
 
     states = state_map(config)
     if current_state and current_state not in states:
@@ -232,6 +253,12 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     required = [str(artifact) for artifact in policy.get("required_artifacts", [])]
     creates = [str(artifact) for artifact in policy.get("creates_artifacts", [])]
     human_gates = [str(gate) for gate in policy.get("human_gates", [])]
+    if route == "implement":
+        required = ["linked_issue"]
+        profile_policy = profiles.get(effective_profile, {})
+        if profile_policy.get("requires_spec_packet") is True:
+            required.extend(["product_spec", "tech_spec", "task_plan"])
+            human_gates.extend(["spec_approval", "security_decision"])
 
     if current_state is None:
         missing.append("current_state")
@@ -561,6 +588,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "decision": decision,
         "route": route,
+        "profile": effective_profile,
         "mode": args.mode,
         "current_state": current_state,
         "issue": args.issue,
@@ -589,6 +617,7 @@ def blocked_result(
     return {
         "decision": "blocked",
         "route": route,
+        "profile": getattr(args, "profile", None) or "standard",
         "mode": args.mode,
         "current_state": current_state,
         "issue": args.issue,
@@ -643,6 +672,11 @@ def main() -> int:
     parser.add_argument("--issue", type=int, help="Linked GitHub issue number")
     parser.add_argument("--pr", type=int, help="Linked pull request number")
     parser.add_argument("--state", help="Canonical SpecRail state")
+    parser.add_argument(
+        "--profile",
+        choices=["fastlane", "standard", "heavy"],
+        help="Verification profile; defaults to workflow.yaml",
+    )
     parser.add_argument("--label", action="append", default=[], help="Issue/PR label evidence")
     parser.add_argument(
         "--artifact",
@@ -668,6 +702,7 @@ def main() -> int:
         result = {
             "decision": "blocked",
             "route": normalize_route(args.route),
+            "profile": args.profile or "standard",
             "mode": args.mode,
             "current_state": args.state,
             "issue": args.issue,

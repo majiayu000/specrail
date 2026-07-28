@@ -83,6 +83,12 @@ def write_sensitive_pack(
     packet = repo / "specs" / "GH999"
     packet.mkdir(parents=True)
     (packet / "product.md").write_text("GitHub issue: `#999`\n", encoding="utf-8")
+    (packet / "tasks.md").write_text(
+        "# Task Plan\n\n## Linked Issue\n\nGH-999\n\n"
+        "- [ ] `SP999-T1` Covers: B-001 | Owner: test | "
+        "Done when: fixture exists | Verify: `true`\n",
+        encoding="utf-8",
+    )
     manifest = {
         "version": 1,
         "issue": 999,
