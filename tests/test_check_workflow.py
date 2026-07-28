@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -79,6 +80,10 @@ def test_missing_workflow_fails_when_adoption_sentinel_exists(
         ("states.yaml", "states: {}\n"),
         ("labels.yaml", "labels: []\n"),
         ("skills-lock.json", "{}\n"),
+        (
+            "skills-lock.json",
+            '{"version":1,"algorithm":"sha256","skills":[]}\n',
+        ),
         ("AGENTS.md", "Use the repository's native workflow.\n"),
         ("AGENTS.md", "This repository does not use SpecRail.\n"),
     ],
@@ -96,12 +101,21 @@ def test_unrelated_assets_do_not_imply_adoption(
     assert result.stdout == "SpecRail check skipped: repository is not adopted\n"
 
 
-def test_specrail_manifest_combination_implies_adoption(tmp_path: Path) -> None:
-    (tmp_path / "states.yaml").write_text("states: {}\n", encoding="utf-8")
-    (tmp_path / "labels.yaml").write_text("labels: []\n", encoding="utf-8")
+@pytest.mark.parametrize(
+    "skill",
+    [
+        {"name": "specrail-workflow", "path": "skills/other/SKILL.md"},
+        {"name": "other", "path": "skills/specrail-workflow/SKILL.md"},
+        {"name": "implx", "path": "skills/other/SKILL.md"},
+        {"name": "other", "path": "skills/implx/SKILL.md"},
+    ],
+)
+def test_specrail_lock_alone_implies_adoption(
+    tmp_path: Path,
+    skill: dict[str, str],
+) -> None:
     (tmp_path / "skills-lock.json").write_text(
-        '{"skills":[{"name":"specrail-workflow",'
-        '"path":"skills/specrail-workflow/SKILL.md"}]}\n',
+        json.dumps({"skills": [skill]}) + "\n",
         encoding="utf-8",
     )
 
@@ -109,14 +123,10 @@ def test_specrail_manifest_combination_implies_adoption(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "missing workflow.yaml in adopted repository" in result.stdout
-    assert "states.yaml+labels.yaml+skills-lock.json" in result.stdout
+    assert "skills-lock.json" in result.stdout
 
 
-def test_unrelated_manifest_combination_does_not_imply_adoption(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "states.yaml").write_text("states: {}\n", encoding="utf-8")
-    (tmp_path / "labels.yaml").write_text("labels: []\n", encoding="utf-8")
+def test_generic_lock_alone_does_not_imply_adoption(tmp_path: Path) -> None:
     (tmp_path / "skills-lock.json").write_text(
         '{"skills":[{"name":"lint","path":"skills/lint/SKILL.md"}]}\n',
         encoding="utf-8",
@@ -126,6 +136,30 @@ def test_unrelated_manifest_combination_does_not_imply_adoption(
 
     assert result.returncode == 0
     assert result.stdout == "SpecRail check skipped: repository is not adopted\n"
+
+
+@pytest.mark.parametrize(
+    ("content", "detail"),
+    [
+        ("{", "invalid JSON"),
+        ("[]", "top-level value must be an object"),
+        ('{"skills":{}}', "skills must be a list"),
+        ('{"skills":[1]}', "skill #1 must be an object"),
+        ('{"skills":[{"name":"lint"}]}', "must have string name and path"),
+    ],
+)
+def test_malformed_lock_alone_fails_closed(
+    tmp_path: Path,
+    content: str,
+    detail: str,
+) -> None:
+    (tmp_path / "skills-lock.json").write_text(content, encoding="utf-8")
+
+    result = run_check(tmp_path)
+
+    assert result.returncode == 1
+    assert "malformed SpecRail adoption manifest" in result.stdout
+    assert detail in result.stdout
 
 
 def test_adopted_repository_with_missing_assets_fails_closed(tmp_path: Path) -> None:

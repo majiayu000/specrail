@@ -94,7 +94,6 @@ ADOPTION_FILE_MARKERS = {
 AGENTS_ADOPTION_MARKER = (
     "Treat SpecRail as an agent-facing workflow contract"
 )
-ADOPTION_MANIFEST_PATHS = ("states.yaml", "labels.yaml", "skills-lock.json")
 
 PLANNED_CHANGES_REQUIRED_MARKER = "specrail-requires-planned-changes-v1"
 
@@ -670,25 +669,50 @@ def adoption_sentinels(repo: Path) -> list[str]:
         )
         if (skills / "implx" / "SKILL.md").is_file():
             found.append("skills/implx/SKILL.md")
-    if all((repo / relative).is_file() for relative in ADOPTION_MANIFEST_PATHS):
+    lock_path = repo / "skills-lock.json"
+    if lock_path.is_file():
         try:
-            manifest = json.loads(read_text(repo / "skills-lock.json"))
-        except json.JSONDecodeError:
-            manifest = {}
-        declared_skills = (
-            manifest.get("skills", []) if isinstance(manifest, dict) else []
-        )
-        if isinstance(declared_skills, list) and any(
-            isinstance(item, dict)
-            and (
-                str(item.get("name", "")).startswith("specrail-")
-                or str(item.get("path", "")).startswith("skills/specrail-")
-                or item.get("name") == "implx"
-                or item.get("path") == "skills/implx/SKILL.md"
+            manifest = json.loads(read_text(lock_path))
+        except json.JSONDecodeError as exc:
+            raise SpecRailError(
+                "skills-lock.json: malformed SpecRail adoption manifest: "
+                f"invalid JSON: {exc.msg}"
+            ) from exc
+        if not isinstance(manifest, dict):
+            raise SpecRailError(
+                "skills-lock.json: malformed SpecRail adoption manifest: "
+                "top-level value must be an object"
             )
-            for item in declared_skills
-        ):
-            found.append("+".join(ADOPTION_MANIFEST_PATHS))
+        declared_skills = manifest.get("skills", [])
+        if not isinstance(declared_skills, list):
+            raise SpecRailError(
+                "skills-lock.json: malformed SpecRail adoption manifest: "
+                "skills must be a list"
+            )
+        for index, item in enumerate(declared_skills, start=1):
+            if not isinstance(item, dict):
+                raise SpecRailError(
+                    "skills-lock.json: malformed SpecRail adoption manifest: "
+                    f"skill #{index} must be an object"
+                )
+            name, skill_path = item.get("name"), item.get("path")
+            if (
+                not isinstance(name, str)
+                or not name.strip()
+                or not isinstance(skill_path, str)
+                or not skill_path.strip()
+            ):
+                raise SpecRailError(
+                    "skills-lock.json: malformed SpecRail adoption manifest: "
+                    f"skill #{index} must have string name and path"
+                )
+            if (
+                name.startswith("specrail-")
+                or skill_path.startswith("skills/specrail-")
+                or name == "implx"
+                or skill_path == "skills/implx/SKILL.md"
+            ):
+                found.append(f"skills-lock.json:{name}:{skill_path}")
     return sorted(set(found))
 
 
