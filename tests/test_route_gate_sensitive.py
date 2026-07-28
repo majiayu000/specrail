@@ -310,11 +310,11 @@ def test_route_gate_blocks_complete_manifest_with_no_planned_paths(
     assert any("at least one planned path" in reason for reason in payload["reasons"])
 
 
-def test_route_gate_allows_preimplement_without_tasks_md(tmp_path: Path) -> None:
+def test_route_gate_heavy_fixture_includes_task_plan(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     head = write_sensitive_pack(repo)
     evidence = sensitive_route_evidence(repo, head)
-    assert not (repo / "specs" / "GH999" / "tasks.md").exists()
+    assert (repo / "specs" / "GH999" / "tasks.md").is_file()
     evidence_path = tmp_path / "evidence.json"
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
 

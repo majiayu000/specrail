@@ -147,6 +147,12 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
     packet.mkdir(parents=True)
     for name in ["product.md", "tech.md"]:
         (packet / name).write_text("GitHub issue: `#999`\n", encoding="utf-8")
+    (packet / "tasks.md").write_text(
+        "# Task Plan\n\n## Linked Issue\n\nGH-999\n\n"
+        "- [ ] `SP999-T1` Covers: B-001 | Owner: test | "
+        "Done when: fixture exists | Verify: `true`\n",
+        encoding="utf-8",
+    )
     duplicate_evidence = write_duplicate_evidence(tmp_path)
 
     result, payload = run_route_gate(
@@ -156,6 +162,8 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         "999",
         "--state",
         "ready_to_implement",
+        "--profile",
+        "heavy",
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--artifact",
@@ -178,6 +186,8 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         "999",
         "--state",
         "ready_to_implement",
+        "--profile",
+        "heavy",
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--artifact",
@@ -200,6 +210,8 @@ def test_route_gate_accepts_normalized_configured_artifact_evidence(
         "999",
         "--state",
         "ready_to_implement",
+        "--profile",
+        "heavy",
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--artifact",
@@ -357,6 +369,8 @@ def test_route_gate_dry_run_warns_for_missing_artifacts_but_required_blocks(
         "999",
         "--state",
         "ready_to_implement",
+        "--profile",
+        "heavy",
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--mode",
@@ -369,6 +383,8 @@ def test_route_gate_dry_run_warns_for_missing_artifacts_but_required_blocks(
         "999",
         "--state",
         "ready_to_implement",
+        "--profile",
+        "heavy",
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--mode",
@@ -393,6 +409,8 @@ def test_route_gate_duplicate_success_reason_not_itemized(tmp_path: Path) -> Non
         "999",
         "--state",
         "ready_to_implement",
+        "--profile",
+        "heavy",
         "--duplicate-evidence",
         str(duplicate_evidence),
         "--mode",

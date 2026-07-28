@@ -115,6 +115,13 @@ def write_sensitive_implement_pack(repo: Path, issue: int = 16) -> str:
         + "\n-->\n",
         encoding="utf-8",
     )
+    (packet / "tasks.md").write_text(
+        "# Task Plan\n\n## Linked Issue\n\n"
+        f"GH-{issue}\n\n"
+        f"- [ ] `SP{issue}-T1` Covers: B-001 | Owner: test | "
+        "Done when: fixture exists | Verify: `true`\n",
+        encoding="utf-8",
+    )
     run_git(repo, "init", "-q")
     commit_all(repo, "approved specs")
     head = update_origin_main(repo)
@@ -456,7 +463,7 @@ def test_terminal_label_takes_precedence_over_readiness_label() -> None:
 
 
 def test_terminal_states_are_valid_issue_evidence_schema_values() -> None:
-    for label in ["security_private", "duplicate", "abandoned", "reserved_internal"]:
+    for label in ["security_private", "duplicate", "abandoned", "parked"]:
         evidence = build_issue_evidence(issue_payload(labels=[{"name": label}]))
         assert evidence["state"] == label
 

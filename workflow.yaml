@@ -1,5 +1,5 @@
 name: specrail
-version: 0.3.0
+version: 0.4.0
 description: Issue-first, spec-first, AI-assisted repository workflow pack.
 
 durable_state:
@@ -58,6 +58,25 @@ required_human_gates:
   - merge
   - release
 
+verification_profiles:
+  default: standard
+  profiles:
+    fastlane:
+      requires_spec_packet: false
+      requires_independent_review: false
+      max_review_rounds: 1
+      merge_authorization: invocation
+    standard:
+      requires_spec_packet: false
+      requires_independent_review: true
+      max_review_rounds: 2
+      merge_authorization: invocation
+    heavy:
+      requires_spec_packet: true
+      requires_independent_review: true
+      max_review_rounds: 2
+      merge_authorization: explicit_human
+
 # Consumer repositories populate these repo-relative glob registries. Empty
 # registries preserve compatibility; a configured registry makes trusted path
 # evidence mandatory for implement and PR gates.
@@ -91,7 +110,6 @@ action_policy:
       allowed_from:
         - new_issue
         - needs_info
-        - triaged
       required_artifacts: []
       creates_artifacts:
         - triage_result
@@ -99,7 +117,6 @@ action_policy:
 
     write_spec:
       allowed_from:
-        - triaged
         - ready_to_spec
       required_artifacts:
         - linked_issue
@@ -114,19 +131,14 @@ action_policy:
         - ready_to_implement
       required_artifacts:
         - linked_issue
-        - product_spec
-        - tech_spec
-      creates_artifacts:
-        - task_plan
+      creates_artifacts: []
       human_gates:
         - readiness_label
-        - spec_approval
 
     review_pr:
       allowed_from:
-        - impl_pr_open
-        - agent_review
-        - human_review
+        - in_progress
+        - review
       required_artifacts:
         - linked_issue
         - linked_pr
@@ -138,8 +150,7 @@ action_policy:
 
     fix_ci:
       allowed_from:
-        - human_review
-        - ci_green
+        - review
       required_artifacts:
         - linked_pr
       creates_artifacts:
@@ -148,7 +159,7 @@ action_policy:
 
     draft_release_note:
       allowed_from:
-        - merged
+        - done
       required_artifacts:
         - linked_pr
       creates_artifacts: []
