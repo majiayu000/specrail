@@ -337,6 +337,34 @@ def test_implement_preserves_configured_required_evidence(tmp_path: Path) -> Non
             "Done when: **「`TBD/TODO`」** | Verify: `true`\n"
         ),
         (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: TBD\u200bTODO | Verify: `true`\n"
+        ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: TBD\u0301TODO | Verify: `true`\n"
+        ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: TBDTODO | Verify: `true`\n"
+        ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: pendingTBD | Verify: `true`\n"
+        ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: TODOunknownnull | Verify: `true`\n"
+        ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: comingsoon | Verify: `true`\n"
+        ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: tobedeterminedTODO | Verify: `true`\n"
+        ),
+        (
             "# Tasks\n\n- [ ] `SP999-T1` Owner: | "
             "Done when: complete | Verify: `true`\n"
         ),

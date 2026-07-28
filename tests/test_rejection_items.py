@@ -156,6 +156,17 @@ def test_placeholder_expected_found_rejected() -> None:
         "TBD/TODO",
         "ＴＢＤ",
         "**「`TBD/TODO`」**",
+        "\u200b",
+        "\u0301",
+        "\ue000",
+        "\x00",
+        "TBD\u200b",
+        "TBD\u0301",
+        "TBDTODO",
+        "pendingTBD",
+        "TODOunknownnull",
+        "comingsoon",
+        "tobedeterminedTODO",
     ],
 )
 def test_substantive_text_rejects_quoted_placeholder(value: str) -> None:
@@ -170,10 +181,23 @@ def test_substantive_text_rejects_quoted_placeholder(value: str) -> None:
         '`“Run pytest -k placeholder”`',
         "TODO fix parser",
         "中文动作：处理 TBD",
+        "TBDx",
+        "क\u093f",
     ],
 )
 def test_substantive_text_accepts_quoted_sentence(value: str) -> None:
     assert is_substantive_text(value) is True
+
+
+def test_placeholder_phrases_are_closed_under_finite_separator_compositions() -> None:
+    placeholders = ("TBD", "TODO", "pending", "unknown", "to be determined")
+    separators = ("", "/", "\u200b", "\u0301", "✨", "「」")
+
+    for first in placeholders:
+        for second in placeholders:
+            for separator in separators:
+                assert is_substantive_text(first + separator + second) is False
+                assert is_substantive_text(first + separator + second + "fix") is True
 
 
 # --- B-004: dedup and conflict resolution ----------------------------------

@@ -141,6 +141,15 @@ def test_standard_implement_requires_testable_plan(tmp_path: Path) -> None:
         '“TBD"',
         "TBD/TODO",
         "**「`TBD/TODO`」**",
+        "\u200b",
+        "\u0301",
+        "TBD\u200bTODO",
+        "TBD\u0301TODO",
+        "TBDTODO",
+        "pendingTBD",
+        "TODOunknownnull",
+        "comingsoon",
+        "tobedeterminedTODO",
     ],
 )
 def test_standard_implement_rejects_placeholder_issue_plan(
