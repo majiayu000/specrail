@@ -273,6 +273,34 @@ def test_round_two_carries_forward_prior_blocking_findings() -> None:
     assert any("must be carried into round 2: P1-prior" in item for item in result["reasons"])
 
 
+def test_round_two_cannot_downgrade_prior_blocking_finding() -> None:
+    prior_finding = {
+        "id": "P1-prior",
+        "severity": "P1",
+        "status": "unresolved",
+        "summary": "Prior blocking defect.",
+    }
+    review = review_with(
+        review_round=2,
+        mode="diff_only",
+        verdict="non_blocking",
+        findings=[
+            {
+                **prior_finding,
+                "severity": "P3",
+                "introduced_by_diff": False,
+            }
+        ],
+    )
+    review["prior_review"]["verdict"] = "blocking"
+    review["prior_review"]["findings"] = [prior_finding]
+
+    result = evaluate_review_gate(review, load_diff())
+
+    assert result["decision"] == "blocked"
+    assert "round 2 finding P1-prior must preserve prior severity" in result["reasons"]
+
+
 def test_verdict_must_match_current_findings() -> None:
     finding = {
         "id": "P2-hidden",

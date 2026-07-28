@@ -45,7 +45,7 @@ STATE_HINT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 KNOWN_STATES = set(ISSUE_STATES)
-OUTCOME_LABELS = {"duplicate", "abandoned", "security_private", "done"}
+OUTCOME_LABELS = {"duplicate", "abandoned", "security_private"}
 
 
 def parse_issue_number(raw: str) -> int:

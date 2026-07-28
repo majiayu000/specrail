@@ -399,22 +399,37 @@ def evaluate_review_gate(
                 for field in prior_result["missing"]
             )
             current_findings = review.get("findings")
-            current_ids = (
+            current_by_id = (
                 {
-                    str(finding.get("id"))
+                    str(finding.get("id")): finding
                     for finding in current_findings
                     if isinstance(finding, dict)
                     and _non_empty_string(finding.get("id"))
                 }
                 if isinstance(current_findings, list)
-                else set()
+                else {}
             )
+            prior_findings = {
+                str(finding.get("id")): finding
+                for finding in prior_review.get("findings", [])
+                if isinstance(finding, dict)
+                and _non_empty_string(finding.get("id"))
+            }
             for finding_id in prior_result["blocking_findings"]:
-                if finding_id not in current_ids:
+                current_finding = current_by_id.get(finding_id)
+                if current_finding is None:
                     reasons.append(
                         "prior unresolved P0/P1 finding must be carried into "
                         f"round 2: {finding_id}"
                     )
+                    continue
+                prior_finding = prior_findings[finding_id]
+                for field in ("severity", "summary"):
+                    if current_finding.get(field) != prior_finding.get(field):
+                        reasons.append(
+                            f"round 2 finding {finding_id} must preserve prior "
+                            f"{field}"
+                        )
             if not prior_result["reasons"] and not prior_result["missing"]:
                 satisfied.append("round 1 full-review evidence validated")
 

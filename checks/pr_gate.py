@@ -26,6 +26,7 @@ from specrail_lib import (
     SpecRailError,
     load_pack,
     resolve_path,
+    validate_verification_profiles,
     verification_profiles,
 )
 
@@ -110,6 +111,9 @@ def _profile_policy(
         return fallback, []
     if "verification_profiles" not in config.workflow:
         return fallback, []
+    validation_errors = validate_verification_profiles(config)
+    if validation_errors:
+        return fallback, validation_errors
     try:
         _default, profiles = verification_profiles(config)
     except SpecRailError as exc:

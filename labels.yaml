@@ -9,7 +9,6 @@ labels:
     - duplicate
     - abandoned
     - security_private
-    - done
 
   lifecycle:
     - in_progress

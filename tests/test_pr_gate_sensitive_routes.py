@@ -7,7 +7,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR / "checks"))
 
 from pr_gate import evaluate_pr_gate
-from test_pr_gate import ROOT, evidence
+from test_pr_gate import ROOT, evidence, verification_profile_config
 
 
 def authorization(payload: dict[str, object]) -> dict[str, str]:
@@ -95,3 +95,22 @@ def test_sensitive_gate_fails_closed_without_exact_checkout(tmp_path: Path) -> N
 
     assert result["decision"] == "blocked"
     assert "sensitive PR gate requires an exact current-head checkout" in result["reasons"]
+
+
+def test_invalid_heavy_profile_cannot_bypass_round_or_authorization() -> None:
+    payload, pack = evidence(
+        profile="heavy",
+        paths=["checks/pr_gate.py"],
+        patterns=["checks/**"],
+    )
+    pack.workflow["verification_profiles"] = verification_profile_config()
+    heavy = pack.workflow["verification_profiles"]["profiles"]["heavy"]
+    heavy["max_review_rounds"] = 3
+    heavy["merge_authorization"] = "typo"
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert "human_merge_authorization" in result["missing"]
+    assert any("max_review_rounds must be 1 or 2" in reason for reason in result["reasons"])
+    assert any("merge_authorization must be" in reason for reason in result["reasons"])
