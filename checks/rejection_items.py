@@ -29,14 +29,37 @@ CATEGORIES = frozenset(
 _PLACEHOLDER_VALUES = frozenset(
     {"", "n/a", "na", "unknown", "none", "null", "-", "tbd", "todo"}
 )
+_NON_SUBSTANTIVE_VALUES = _PLACEHOLDER_VALUES | frozenset(
+    {
+        "coming soon",
+        "pending",
+        "placeholder",
+        "to be decided",
+        "to be defined",
+        "to be determined",
+    }
+)
 
 _WHITESPACE_RE = re.compile(r"\s+")
+_TEXT_WRAPPERS = "`*_~[](){}<> \t\r\n.,;:!?。；：！？…-–—"
+_SUBSTANTIVE_CHARACTER_RE = re.compile(r"[^\W_]", re.UNICODE)
 
 _ITEM_ID_SUFFIX_RE = re.compile(r"#\d+$")
 
 
 class RejectionItemError(ValueError):
     """Raised when a gate tries to build an invalid rejection item."""
+
+
+def is_substantive_text(value: Any) -> bool:
+    """Reject only closed placeholder values and punctuation-only text."""
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().strip(_TEXT_WRAPPERS).strip().casefold()
+    return (
+        bool(_SUBSTANTIVE_CHARACTER_RE.search(normalized))
+        and normalized not in _NON_SUBSTANTIVE_VALUES
+    )
 
 
 def _slug(text: str) -> str:

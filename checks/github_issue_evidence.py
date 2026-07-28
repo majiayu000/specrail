@@ -18,6 +18,7 @@ from github_pr_evidence import (
     parse_github_repo,
     run_gh_json,
 )
+from rejection_items import is_substantive_text
 from sensitive_enforcement import (
     classification_from_tech_spec,
     sensitive_registry,
@@ -143,6 +144,7 @@ def infer_state_with_source(labels: list[str], body: str) -> tuple[str | None, s
 def extract_testable_plan_from_body(body: str) -> dict[str, object] | None:
     section_level: int | None = None
     items: list[str] = []
+    invalid_item = False
     for line in body.splitlines():
         heading = PLAN_HEADING_RE.match(line)
         if heading is not None:
@@ -155,8 +157,10 @@ def extract_testable_plan_from_body(body: str) -> dict[str, object] | None:
             continue
         item = PLAN_ITEM_RE.match(line)
         if section_level is not None and item is not None:
-            items.append(item.group(1).strip())
-    if not items:
+            value = item.group(1).strip()
+            invalid_item = invalid_item or not is_substantive_text(value)
+            items.append(value)
+    if invalid_item or not items:
         return None
     return {
         "source": "issue_body_checklist",

@@ -125,6 +125,35 @@ def test_standard_implement_requires_testable_plan(tmp_path: Path) -> None:
     assert "testable_plan" in payload["missing"]
 
 
+def test_standard_implement_rejects_placeholder_issue_plan(tmp_path: Path) -> None:
+    result, payload = run_route_gate(
+        "--route",
+        "implement",
+        "--issue",
+        "999",
+        "--github-repo",
+        "example/consumer",
+        "--evidence",
+        str(write_issue_evidence(
+            tmp_path,
+            testable_plan={
+                "source": "issue_body_checklist",
+                "items": ["TBD"],
+            },
+        )),
+        "--profile",
+        "standard",
+        "--duplicate-evidence",
+        str(write_duplicate_evidence(tmp_path)),
+        "--mode",
+        "required",
+    )
+
+    assert result.returncode == 1
+    assert payload["decision"] == "blocked"
+    assert "testable_plan" in payload["missing"]
+
+
 def test_heavy_implement_requires_complete_spec_packet(tmp_path: Path) -> None:
     duplicate = write_duplicate_evidence(tmp_path)
     result, payload = run_route_gate(
