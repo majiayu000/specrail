@@ -22,20 +22,17 @@ def test_repository_passes_the_size_gate() -> None:
 
 
 def test_hard_caps_match_gh208_contract() -> None:
-    assert LINE_CAPS["skills/specrail-implement-queue/SKILL.md"] == 400
-    assert LINE_CAPS["skills/implx/SKILL.md"] == 150
+    assert LINE_CAPS["skills/specrail-implement-queue/SKILL.md"] == 200
+    assert LINE_CAPS["skills/implx/SKILL.md"] == 60
     assert DEFAULT_SKILL_LINE_CAP == 200
-    assert FASTLANE_BYTE_BUDGET == 30 * 1024
-    assert FULL_DRAIN_STARTUP_BYTE_BUDGET == 60 * 1024
+    assert FASTLANE_BYTE_BUDGET == 12 * 1024
+    assert FULL_DRAIN_STARTUP_BYTE_BUDGET == 30 * 1024
 
 
 def test_fastlane_read_set_matches_complete_bootstrap_contract() -> None:
     assert set(FASTLANE_READ_SET) == {
         "AGENTS.md",
-        "AGENT_USAGE.md",
         "workflow.yaml",
-        "states.yaml",
-        "labels.yaml",
         "skills/implx/SKILL.md",
     }
     result = evaluate(ROOT)
@@ -80,9 +77,9 @@ def test_queue_skill_keeps_single_review_lane_default() -> None:
 def test_implx_declares_tiered_read_set() -> None:
     text = (ROOT / "skills/implx/SKILL.md").read_text(encoding="utf-8")
     assert "## Tiered Read Set" in text
-    assert "The measured bootstrap set is" in text
-    assert "on entering review load the canonical" in text
-    assert "`integrations/threads.md`" in text
+    assert "reads exactly" in text
+    assert "review loads" in text
+    assert "maximum 12 KiB" in text
 
 
 def test_queue_contract_phase_loads_router_and_review_assets() -> None:
@@ -90,4 +87,4 @@ def test_queue_contract_phase_loads_router_and_review_assets() -> None:
         encoding="utf-8"
     )
     assert "Load `skills/specrail-workflow/SKILL.md` only" in text
-    assert "Load that Skill" in text and "before review" in text
+    assert "Load `skills/specrail-review-pr/SKILL.md` before review" in text

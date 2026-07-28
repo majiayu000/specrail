@@ -1,167 +1,53 @@
 ---
 name: specrail-review-pr
-description: Use when performing an advisory SpecRail PR review. Checks linked issue/spec evidence, route gates, verification evidence, review-thread state, human-gate preservation, and implementation quality without granting final approval or merging. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
+description: Advisory review for a SpecRail PR. Validate the current head against linked work, produce the compact v3 review artifact, and preserve human approval and merge boundaries.
 ---
 
 # SpecRail Review PR
 
-Use this skill for the `review_pr` route.
+Review only the current PR head. Do not approve, merge, close, or publish
+security findings.
 
-## Steps
+## Inputs
 
-1. Read the PR, linked issue, product spec, tech spec, task plan, and local diff.
-2. Confirm the PR has current evidence for linked work, verification, CI, review
-   state, and review threads when available.
-3. Run the review route gate. It is mandatory when `checks/route_gate.py`
-   exists; see Gate Availability when it does not.
+- repository and PR number;
+- current 40-character head SHA;
+- selected profile;
+- exact full diff for round 1 or exact fix diff for round 2;
+- linked Issue and heavy spec packet when applicable.
 
-```sh
-python3 checks/route_gate.py --repo . --route review_pr --issue <issue-number> --pr <pr-number> --state impl_pr_open --json
-```
+Standard/heavy use an independent reviewer lane. Fastlane may use self-review.
 
-4. Inspect for behavioral regressions, missing acceptance coverage, test gaps,
-   silent degradation, security risk, and human-gate bypasses.
-5. Lead with findings ordered by severity and cite exact files or lines.
-6. When producing a review artifact, use a top-level body with `## Summary` and
-   `## Verdict`, keep inline comments bound to real diff `path` / `line` /
-   `side` values, and only add `start_line` / `start_side` together for an
-   inclusive diff range. Suggested changes must be non-empty and appear only on
-   RIGHT-side comments, either through a `suggestion` field, a fenced
-   `suggestion` block, or both. Record `review_execution: local` for the
-   terminal artifact produced by the local CLI/native reviewer lane. A GitHub
-   hosted `@codex review` may be supplemental, but if recorded separately it
-   uses `review_execution: hosted` and never replaces the local primary
-   artifact.
-7. Validate the review artifact against the diff. This is mandatory whenever a
-   review artifact was produced in step 6 and `checks/review_json_gate.py`
-   exists; an unvalidated artifact must not be published.
-
-```sh
-python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-number>.json --diff <patch> --json
-```
-
-8. If merge readiness is requested, route to
-   `skills/specrail-pr-gate/SKILL.md`.
-
-## Gate Availability
-
-The `review_pr` route depends on the repository's gate scripts. Decide before
-step 3, and never let a missing or failing gate pass as a completed check.
-
-| Condition | Required action |
-|---|---|
-| `checks/route_gate.py` exists | Run it. Treat a non-`allowed` decision per Rejection Persistence And Retry. |
-| `checks/route_gate.py` is absent | Stop the `review_pr` route. Report that the repository is not SpecRail-instrumented and that a generic code review should be used instead. Do not run the gate command speculatively. |
-| The gate command errors (missing file, missing interpreter, non-zero exit that is not a gate decision) | Treat as absent, not as `allowed`. Report the error verbatim. |
-
-If a human explicitly asks to continue without a gate, the review may proceed
-only as an explicitly degraded pass:
-
-- Record `gate_status: "unavailable"` and put the quoted human authorization in
-  `gate_authorization` in the review result JSON.
-- State in `## Summary` that no SpecRail gate validated this review and include
-  the stable marker `SpecRail gate status: unavailable`.
-- Do not describe the result as SpecRail-gated, verified, or merge-ready.
-
-## Review Rounds And Modes
+## Contract
 
 <!-- specrail-bounded-review-contract-v1:start -->
-Bounded review contract (`manifest.version: 2`,
-`round_policy: {name: "bounded_diff_v1", cap: 3}`):
+Compact review contract (`contract_version: 3`):
 
-- `rounds[]` is the source of truth. Each entry is the closed set
-  `{artifact_id, review_round, review_mode, base_head_sha, head_sha, diff_sha256, escalation_authorization_id}`;
-  the loader derives continuous rounds `1..N` from the artifact set.
-- Round 1 may use `full`. Every `review_round >= 2` must use `review_mode:
-  resumed | diff_only`, never `full`; `base_head_sha` must equal the previous
-  round's `head_sha`, and the supplied bytes and `diff_sha256` must match the
-  exact `git diff --no-ext-diff --binary <base_head_sha>..<head_sha> --` output.
-- `prior_findings[]` is compact typed carry only:
-  `{finding_id, source_artifact_id, status, evidence_pointer}` with
-  `evidence_pointer.kind: thread | comment | artifact | commit`; do not replay
-  historical finding prose. Carry every still-unresolved historical finding.
-- Before every `review_round >= 4`, stop. Continue exactly once only with an
-  external, role-mapped maintainer authorization whose `decision` is
-  `continue_once` and whose id, PR, prior/target heads, and round match exactly.
-- The over-cap `round_cap_escalation.unresolved_findings[]` must equal the full
-  union of historical unresolved findings and current critical, important, or
-  otherwise actionable findings; no finding may disappear or be invented.
-- `auth_mode: auto` merge authorization and `human_full_review_request` do not
-  authorize an over-cap review round and cannot replace that exact cap evidence.
+- Round 1 uses `mode: full`; round 2 uses `mode: diff_only` and binds
+  `base_head_sha` plus `diff_sha256`; round greater than 2 returns
+  `needs_human`.
+- Current unresolved `P0`/`P1` findings block. `P2`/`P3` findings are
+  non-blocking follow-ups on the current Issue/PR and never create Issues
+  automatically.
+- A hosted finding with `outdated: true` does not block. A current-head
+  unresolved `P0`/`P1` still blocks regardless of origin.
+- Standard/heavy require `review_source: independent_lane`; fastlane may use
+  `self_review`.
+- The artifact is advisory and cannot grant final approval or merge authority.
 <!-- specrail-bounded-review-contract-v1:end -->
 
-## Structurally Unavailable Hosted CI
+Artifact fields are the closed set declared by
+`schemas/review_result.schema.json`. `body` includes `## Summary` and
+`## Verdict`. Findings use stable IDs, severity, status, and summary; path/line
+must point into the supplied diff when present.
 
-Empty hosted checks have two distinct causes, and they need opposite actions.
+## Verify
 
-| Condition | Required action |
-|---|---|
-| CI is pending, failed, or was not yet triggered for the current head | Normal evidence gap. Wait, re-run, or continue the round policy. |
-| CI can never run for this PR, for example the base branch is outside the repository's `pull_request` trigger filter | Structural. Report it once as a repository configuration defect with the trigger evidence. Do not open another review round for it. |
+```sh
+python3 checks/review_json_gate.py --repo . \
+  --review artifacts/review.json --diff artifacts/review.patch --json
+```
 
-Before recording a blocked verdict whose only unmet item is hosted checks,
-determine which case applies. When the PR's base ref is not the default branch,
-read the repository's workflow triggers and quote the exact filter.
-
-A structural finding is closed by one of two paths, both explicit:
-
-- Fix the repository configuration so the workflow triggers for this base, then
-  collect fresh evidence; or
-- Record a `checks_unavailable` declaration in the PR evidence
-  (`reason: hosted_ci_not_triggered_for_base`, the differing `base_ref` and
-  `default_base_ref`, `workflow_trigger_evidence` quoting the trigger, the
-  `local_verification` commands actually run, and `verified: true`). The gate
-  then reports a degraded pass that names the downgrade; it never reads as a
-  passing CI run, and it does not relax any other gate or the human merge
-  authorization.
-
-Repeating a full review round whose only new information is the same empty
-check rollup is a contract violation, not diligence.
-
-## Thread Resolution Ownership
-
-Reviewer lanes may resolve review threads only after re-checking that the
-finding is fixed or no longer applies. A reviewer lane may resolve its own
-thread, a successor reviewer lane may resolve after re-review, and a human
-maintainer may resolve directly.
-
-When a local reviewer uses a shared repository GitHub credential, record the
-credential login through `--resolver-role-map`; do not rename the local
-artifact `producer_identity` to impersonate that login. For hosted-review roots,
-successor lane lineage must terminate at the exact hosted `original_author`,
-and the resolving lane must provide a trusted terminal re-review artifact.
-Every successor resolution requires an explicit resolver mapping. When one
-GitHub login represents multiple lanes, use a thread-specific mapping instead
-of duplicate global login entries. A hosted root omitted from the local roster
-must be declared as `external_root` with the exact author and
-`review_execution: hosted`; an untyped missing predecessor is not proof.
-
-Implementation lanes and orchestrators must not call `resolveReviewThread` for
-reviewer-lane findings. They may reply with context and push fixes, but the
-resolution action stays with the reviewer or human.
-
-## Boundaries
-
-- Treat the review as advisory.
-- Do not grant final approval.
-- Do not present a review as gated when the gate was absent, skipped, or errored.
-- Do not merge or mark human gates complete.
-- Do not resolve reviewer-lane threads from an implementation or coordinator
-  role.
-- Do not disclose private security details publicly.
-
-## Rejection Persistence And Retry
-
-When a gate command in this skill (`checks/route_gate.py`,
-`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
-other than `allowed`, the caller persists the gate's JSON output to
-`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
-missing). This write is orchestrator behavior; the gate itself stays
-read-only. Use the `rejection_items[]` list to fix every defect in a single
-round instead of guessing one item per retry.
-
-On the next retry of the same gate for the same issue or PR, pass
-`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
-the new output contains a `repeat_rejection` section, the same item was
-rejected verbatim twice: stop retrying and report the contract violation to a
-human instead of starting another round.
+Report every rejection in one response. If the gate returns `blocked`, correct
+the artifact or implementation according to the evidence; do not add review
+rounds. If it returns `needs_human`, stop and request a human decision.

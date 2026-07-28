@@ -56,7 +56,6 @@ checks/route_gate.py
 checks/github_issue_evidence.py
 checks/github_pr_evidence.py
 checks/review_json_gate.py
-checks/runtime_ledger_gate.py
 checks/closure_audit.py
 .github/workflows/workflow-check.yml
 ```
@@ -136,21 +135,8 @@ python3 checks/closure_audit.py --repo . --evidence closure-evidence.json --json
 ```
 
 The closure audit is offline and advisory-only. It performs no GitHub writes,
-returns `0` for a compliant chain, `1` for a schema-valid violation, and `2`
-for malformed input. Violations include a stable `required_follow_up` payload
-that a consumer may persist or route without granting the audit write access.
-
-Validate an optional local runtime checkpoint for long agent runs:
-
-```sh
-python3 checks/runtime_ledger_gate.py --checkpoint .specrail/runtime/current.json --json
-```
-
-Runtime checkpoints are handoff aids for bounded agent tranches. They do not
-replace GitHub issues, pull requests, labels, reviews, branches, or SpecRail
-spec packets as durable workflow state. For checkpoint contracts, the schema is
-the structure authority and `checks/runtime_ledger_gate.py` is the behavior
-authority; see [`SPEC.md`](SPEC.md#runtime-checkpoint-contract-authority).
+always returns success with `clear` or `warning`, and never creates follow-up
+Issues.
 
 Validate an advisory review artifact against a unified diff:
 
@@ -159,8 +145,8 @@ python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-123.jso
 ```
 
 Review artifacts are advisory evidence only. They do not grant final approval or
-merge authority. Their body must include `## Summary` and `## Verdict`; inline
-comments may use validated multi-line ranges and RIGHT-side suggestion blocks.
+merge authority. Round 1 is full, round 2 is diff-only, current P0/P1 blocks,
+and P2/P3 remains follow-up.
 
 Evaluate a spec packet and adoption smoke evidence:
 
@@ -178,10 +164,9 @@ The matrix currently records `rclean`, `litellm-rs`, and
 levels. `evaluate.py` validates the required matrix records and local
 SpecRail evidence paths.
 
-For long issue or PR queues, agents may also keep an optional local runtime
-checkpoint based on [`templates/tranche_checkpoint.md`](templates/tranche_checkpoint.md).
-The checkpoint is for context-budget and handoff control only; the canonical
-workflow truth remains the repository and GitHub artifacts above.
+For long issue or PR queues, agents may keep an optional five-field handoff
+cursor (`completed`, `pending`, `blocked`, `artifact_refs`, `resume_action`).
+It is not a gate; refresh GitHub before resuming.
 
 Gate benchmark fixtures live in `examples/fixtures/`. They are deterministic
 test inputs for route, PR, and review gates, not claims about current GitHub

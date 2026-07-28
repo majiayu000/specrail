@@ -131,8 +131,8 @@ Keep the boundary clear:
   deterministic verification.
 - Threads owns lane maps, queue gates, remote truth refresh, review-thread
   handling, and closure audit.
-- Optional runtime checkpoints are local handoff artifacts only; they do not
-  replace GitHub or SpecRail artifacts as workflow truth.
+- Optional five-field resume cursors are local handoff notes only; they do not
+  replace GitHub or SpecRail artifacts as workflow truth or participate in gates.
 - If no threads skill or native subagent capability is available, continue with
   the single-agent SpecRail flow only after recording the fallback and reporting
   that no native threads were launched.
