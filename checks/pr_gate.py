@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from github_evidence_common import EvidenceError
+from github_pr_evidence import parse_github_repo
 from rejection_items import (
     add_prior_rejection_argument,
     apply_prior_rejection,
@@ -369,9 +371,39 @@ def evaluate_pr_gate(
         else:
             reasons.append(f"unknown PR evidence field: {key}")
     if unsupported:
-        reasons.append(
-            "unsupported legacy evidence fields: " + ", ".join(unsupported)
+        legacy_reason = (
+            "unsupported legacy evidence fields: "
+            + ", ".join(unsupported)
+            + "; rebuild evidence from GitHub PR current state"
         )
+        return {
+            "decision": "blocked",
+            "pr": evidence.get("pr"),
+            "linked_issue": evidence.get("linked_issue"),
+            "head_sha": evidence.get("head_sha"),
+            "profile": evidence.get("profile"),
+            "enforcement_sensitive": evidence.get("enforcement_sensitive"),
+            "sensitive_classification": evidence.get("sensitive_classification"),
+            "review_decision": None,
+            "unsupported_legacy_evidence": unsupported,
+            "reasons": [legacy_reason],
+            "satisfied": [],
+            "missing": [],
+            "rejection_items": finalize_items(
+                items_from_legacy(
+                    [],
+                    [legacy_reason],
+                    missing_category="missing_evidence_field",
+                    reason_category="contract_violation",
+                )
+            ),
+            "blocked_actions": ["merge"],
+            "advisory_only": True,
+            "verification_commands": [
+                "python3 checks/pr_gate.py --repo . --evidence <evidence.json>",
+                "python3 checks/check_workflow.py --repo .",
+            ],
+        }
 
     required = {
         "base_sha",
@@ -402,6 +434,12 @@ def evaluate_pr_gate(
     for field in ("repository", "gate_invocation_id"):
         if field in evidence and not _non_empty_string(evidence.get(field)):
             reasons.append(f"{field} must be a non-empty string")
+    repository = evidence.get("repository")
+    if _non_empty_string(repository):
+        try:
+            parse_github_repo(str(repository))
+        except EvidenceError as exc:
+            reasons.append(str(exc))
     for field in ("pr", "linked_issue"):
         if field in evidence and not _positive_int(evidence.get(field)):
             reasons.append(f"{field} must be a positive integer")

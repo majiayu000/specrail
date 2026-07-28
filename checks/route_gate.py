@@ -177,7 +177,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     if evidence.get("enforcement_sensitive") is True:
         effective_profile = "heavy"
     labels = [] if collector_authoritative else list(args.label or [])
-    labels.extend(str(label) for label in evidence.get("labels", []) if str(label).strip())
+    labels.extend(str(label) for label in (evidence.get("labels") if isinstance(evidence.get("labels"), list) else []) if str(label).strip())
     evidence_state = evidence.get("state")
     explicit_state = evidence_state if collector_authoritative else args.state or evidence_state
     github_state = str(evidence.get("github_state") or "").upper()
@@ -250,7 +250,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         )
     outcome_labels = {
         str(label)
-        for label in evidence.get("outcomes", [])
+        for label in (evidence.get("outcomes") if isinstance(evidence.get("outcomes"), list) else [])
         if isinstance(label, str)
     }
     outcome_labels.update(
@@ -486,8 +486,8 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                 label="configured task plan",
             )
             task_plan_valid = not validate_task_plan(
-                task_plan_path,
-                str(args.issue) if args.issue is not None else None,
+                task_plan_path, str(args.issue) if args.issue is not None else None,
+                product_path=resolve_repo_path(repo, spec_packet_artifact_paths(config, args.issue)["product_spec"], label="configured product spec"),
             )
         if task_plan_valid or valid_testable_plan(evidence.get("testable_plan")):
             satisfied.append("standard testable plan evidence validated")
@@ -507,10 +507,9 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             args.approved_spec_revision,
             [packet[name] for name in ("product_spec", "tech_spec", "task_plan")] if packet else [],
         ):
-            satisfied.append("security evidence bound to explicit approved spec revision")
-        else:
-            missing.append("security_evidence")
-            items.append(item_from_missing("security_evidence"))
+            satisfied.append("candidate spec revision content matches the current spec packet")
+        missing.append("security_evidence")
+        items.append(item_from_missing("security_evidence"))
 
     legacy_spec = False
     if route == "implement":
@@ -728,7 +727,7 @@ def main() -> int:
     parser.add_argument("--github-repo", help="GitHub repository as OWNER/REPO")
     parser.add_argument(
         "--approved-spec-revision",
-        help="Exact maintainer-approved revision containing the heavy tech spec",
+        help="Candidate revision used only to verify heavy spec content identity",
     )
     parser.add_argument("--pr", type=int, help="Linked pull request number")
     parser.add_argument("--state", help="Canonical SpecRail state")

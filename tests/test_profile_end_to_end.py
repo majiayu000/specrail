@@ -59,8 +59,13 @@ def test_profile_route_review_and_pr_gate_end_to_end(
         "--mode",
         "required",
     )
-    assert route_process.returncode == 0, route
-    assert route["decision"] == "allowed"
+    if profile == "heavy":
+        assert route_process.returncode == 1, route
+        assert route["decision"] == "needs_human"
+        assert "security_evidence" in route["missing"]
+    else:
+        assert route_process.returncode == 0, route
+        assert route["decision"] == "allowed"
     assert route["profile"] == profile
 
     review = copy.deepcopy(valid_review())

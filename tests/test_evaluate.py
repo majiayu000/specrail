@@ -57,6 +57,65 @@ def test_task_plan_requires_done_when_and_verify(tmp_path: Path) -> None:
     assert any("missing Verify:" in error for error in errors)
 
 
+def test_task_plan_requires_per_task_covers_and_complete_product_union(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "GH5"
+    product_path = spec_dir / "product.md"
+    task_path = spec_dir / "tasks.md"
+    write_text(
+        product_path,
+        "## Behavior Invariants\n\n"
+        "1. B-001 first behavior\n"
+        "2. B-002 second behavior\n",
+    )
+    write_text(
+        task_path,
+        "\n".join(
+            [
+                "- [ ] `SP5-T001` Covers: B-001 | Owner: docs | "
+                "Done when: done | Verify: review",
+                "- [ ] `SP5-T002` Owner: tests | "
+                "Done when: done | Verify: pytest",
+            ]
+        ),
+    )
+
+    errors = validate_task_plan(task_path, "5", product_path=product_path)
+
+    assert any("task SP5-T002 missing Covers:" in error for error in errors)
+    assert any(
+        "product invariants not covered by any task: B-002" in error
+        for error in errors
+    )
+
+
+def test_task_plan_accepts_range_coverage_and_covers_none(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "GH5"
+    product_path = spec_dir / "product.md"
+    task_path = spec_dir / "tasks.md"
+    write_text(
+        product_path,
+        "## Behavior Invariants\n\n"
+        "1. B-001 first behavior\n"
+        "2. B-002 second behavior\n"
+        "3. B-003 third behavior\n",
+    )
+    write_text(
+        task_path,
+        "\n".join(
+            [
+                "- [ ] `SP5-T001` Covers: B-001..B-003 | Owner: tests | "
+                "Done when: done | Verify: pytest",
+                "- [ ] `SP5-T002` Covers: none (housekeeping) | Owner: docs | "
+                "Done when: done | Verify: review",
+            ]
+        ),
+    )
+
+    assert validate_task_plan(task_path, "5", product_path=product_path) == []
+
+
 def test_spec_packet_requires_tasks_md(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs" / "GH5"
     write_text(spec_dir / "product.md", "GitHub issue: `#5`\n")
