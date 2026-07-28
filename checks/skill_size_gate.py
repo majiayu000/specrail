@@ -14,8 +14,8 @@ import sys
 from pathlib import Path
 
 LINE_CAPS = {
-    "skills/specrail-implement-queue/SKILL.md": 400,
-    "skills/implx/SKILL.md": 150,
+    "skills/specrail-implement-queue/SKILL.md": 200,
+    "skills/implx/SKILL.md": 60,
 }
 DEFAULT_SKILL_LINE_CAP = 200
 
@@ -23,28 +23,21 @@ DEFAULT_SKILL_LINE_CAP = 200
 # Implementation, review/threads, and PR-gate contracts load at phase entry.
 FASTLANE_READ_SET = (
     "AGENTS.md",
-    "AGENT_USAGE.md",
     "workflow.yaml",
-    "states.yaml",
-    "labels.yaml",
     "skills/implx/SKILL.md",
 )
-FASTLANE_BYTE_BUDGET = 30 * 1024
+FASTLANE_BYTE_BUDGET = 12 * 1024
 
 # Files read at startup for a full queue drain. Phase-loaded files
 # (review-pr, pr-gate, implement, threads, workflow router) are excluded:
 # they load lazily per skills/implx/SKILL.md Tiered Read Set.
 FULL_DRAIN_STARTUP_READ_SET = (
     "AGENTS.md",
-    "AGENT_USAGE.md",
     "workflow.yaml",
-    "states.yaml",
-    "labels.yaml",
     "skills/implx/SKILL.md",
     "skills/specrail-implement-queue/SKILL.md",
-    "templates/queue_plan.yaml",
 )
-FULL_DRAIN_STARTUP_BYTE_BUDGET = 60 * 1024
+FULL_DRAIN_STARTUP_BYTE_BUDGET = 30 * 1024
 
 
 def evaluate(repo: Path) -> dict:

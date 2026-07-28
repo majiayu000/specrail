@@ -107,16 +107,9 @@ The first validator is intentionally deterministic:
 LLM-based triage and review should be added only after the deterministic checks
 are stable.
 
-## Runtime Checkpoint Contract Authority
+## Optional Resume Cursor
 
-For `.specrail/runtime/current.json`, `checks/runtime_ledger_gate.py` is the
-behavior authority and `schemas/runtime_checkpoint.schema.json` is the structure
-authority. The schema covers JSON shape, required fields, enum values, and
-nested object structure. The gate covers semantic rules that JSON Schema cannot
-express cleanly here, such as fresh head SHA evidence, merge authorization,
-review-thread cleanliness, and queue-drain completion semantics.
-
-Tests keep the two in sync by validating representative runtime checkpoint
-instances against the schema and checking their gate decisions. The gate does
-not read the schema at runtime, so it can still diagnose malformed or missing
-schema files independently.
+A queue handoff may use a local cursor containing only `completed`, `pending`,
+`blocked`, `artifact_refs`, and `resume_action`. The cursor has no schema and
+does not participate in route, PR, review, authorization, or merge decisions.
+GitHub Issues, PRs, branches, reviews, and CI remain durable truth.

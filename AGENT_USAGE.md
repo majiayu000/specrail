@@ -171,26 +171,14 @@ the explicitly selected `linked_issue`. A verified `partial` relation satisfies
 only the PR gate's linked-work requirement. It does not prove final-slice
 completion and does not authorize issue closure.
 
-The GitHub adapter is read-only and only reshapes `gh` output. The PR gate is
-offline. GitHub or `threads` may collect evidence such as PR head SHA, CI
-status, review threads, review source, lane failures, merge state, and linked
-issue references. Resolver role mapping comes from explicit lane-roster evidence
-such as `--resolver-role-map`; the adapter must not infer it from GitHub alone.
-The gate only evaluates that evidence and never merges or writes remote state.
-Self-review evidence must use `--review-source self_review` plus
-self-review authorization fields recorded after the lane failure.
+The GitHub adapter is read-only and only reshapes `gh` output. The offline PR
+gate checks linked work, current/query head, changed files, CI, compact review,
+merge state, profile, sensitive classification, and current heavy
+authorization. It never merges or writes remote state.
 
-For long agent runs, maintain an optional local runtime checkpoint before
-handoff or compaction:
-
-```sh
-python3 checks/runtime_ledger_gate.py --repo . --checkpoint .specrail/runtime/current.json --json
-```
-
-Use the checkpoint to preserve tranche scope, context budget, output-firewall
-settings, verification evidence paths, blockers, and resume prompts. Do not use
-it as a replacement for GitHub issues, PRs, labels, reviews, branches, or
-SpecRail spec packets.
+An optional handoff cursor may store only `completed`, `pending`, `blocked`,
+`artifact_refs`, and `resume_action`. It has no schema or gate and never
+replaces current GitHub truth.
 
 Issue evidence includes `state_source` and `state_trusted`. Label-derived state
 is trusted readiness evidence. Body-hint state is useful context, but it is not
@@ -284,7 +272,7 @@ SpecRail currently provides:
 - a read-only duplicate-work evidence adapter and offline implementation
   duplicate-work gate
 - an advisory review JSON gate
-- an optional runtime checkpoint gate for long agent-run handoffs
+- an optional five-field, non-gating handoff cursor
 - a local evaluator that returns `allowed`, `warn`, `needs_human`, or `blocked`
 - an adoption matrix and fixture for real repo pilot evidence:
   `docs/ADOPTION_MATRIX.md` and `examples/adoptions/matrix.json`

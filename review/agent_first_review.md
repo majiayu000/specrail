@@ -1,55 +1,17 @@
 # Agent First Review
 
-Agent review is advisory. It must produce findings and evidence, not final
-approval.
+Agent review is advisory. Check linked scope, acceptance criteria, changed
+behavior, tests, degradation, and security-sensitive paths.
 
-## Check
-
-- Scope matches linked issue and spec.
-- Implementation satisfies acceptance criteria.
-- Tests cover changed behavior.
-- User-visible behavior is not silently degraded.
-- Security-sensitive areas are identified.
-- PR template is complete.
-- Release note need is explicit.
-
-## Output
-
-Return advisory structured findings. For simple chat review, use:
-
-```json
-{
-  "verdict": "findings|no_findings",
-  "blocking_findings": [],
-  "non_blocking_findings": [],
-  "missing_evidence": [],
-  "recommended_human_reviewers": []
-}
-```
-
-For a file artifact that should be checked before posting or handoff, use
-`schemas/review_result.schema.json` and validate it against the diff:
+Use the v3 artifact in `schemas/review_result.schema.json` and validate it:
 
 ```sh
-python3 checks/review_json_gate.py --repo . --review artifacts/review/pr-<pr-number>.json --diff <patch> --json
+python3 checks/review_json_gate.py --repo . \
+  --review artifacts/review.json --diff artifacts/review.patch --json
 ```
 
-Inline comments must reference real diff `path`, `line`, and `side` values.
-Severity must be `critical`, `important`, `suggestion`, or `nit`.
+The canonical compact contract lives in
+`skills/specrail-review-pr/SKILL.md`; do not copy it here. Current P0/P1 blocks,
+P2/P3 is follow-up, and outdated hosted findings do not block.
 
-Top-level `body` must include `## Summary` and `## Verdict` headings. A
-multi-line inline comment may add `start_line` and `start_side`, but those fields
-must appear together and every line in the inclusive range must exist in the
-diff. Suggested changes may use a non-empty `suggestion` field, a non-empty
-fenced `suggestion` block in `body`, or both; suggestions are only valid on
-RIGHT-side comments.
-
-## Bounded Review Contract
-
-The canonical bounded review contract (`manifest.version: 2`,
-`bounded_diff_v1`) lives in `skills/specrail-review-pr/SKILL.md`;
-do not copy it here — load that Skill before any review lane.
-
-## Boundary
-
-Do not approve, merge, close issues, or mark security findings public.
+Do not approve, merge, close Issues, or publish security findings.

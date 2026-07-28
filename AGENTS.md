@@ -26,9 +26,9 @@ small, explicit, and verifiable.
 ## Contract Size Discipline (GH-208)
 
 - Hard line caps, enforced by `checks/skill_size_gate.py` in CI:
-  `skills/specrail-implement-queue/SKILL.md` ≤ 400,
-  `skills/implx/SKILL.md` ≤ 150, every other `skills/*/SKILL.md` ≤ 200.
-  Tiered read-set byte budgets: fastlane ≤ 30KB, full-drain startup ≤ 60KB.
+  `skills/specrail-implement-queue/SKILL.md` ≤ 200,
+  `skills/implx/SKILL.md` ≤ 60, every other `skills/*/SKILL.md` ≤ 200.
+  Fastlane startup reads at most three files and 12 KiB.
 - One-in-one-out: when a contract file is at its cap, adding a new clause
   requires deleting or condensing an equal amount of existing text in the
   same PR. Never raise a cap to make room.
@@ -43,14 +43,13 @@ small, explicit, and verifiable.
 - For approved-spec issue/PR queues, route through `skills/implx/SKILL.md` and
   `skills/specrail-implement-queue/SKILL.md`; use `integrations/threads.md`
   when native threads, reviewer lanes, CI waits, or closure audit are needed.
-- Keep long runs bounded to a named tranche. For handoff or compaction, write a
-  runtime checkpoint and validate it with `checks/runtime_ledger_gate.py`.
+- Keep long runs bounded to a named tranche. Optional handoff cursors contain
+  only completed/pending/blocked IDs, artifact references, and a resume action;
+  they never participate in gates.
 - Large command output belongs in artifacts, not parent context. Parent-visible
   evidence should be command status, short summaries, bounded tails, and paths.
 - Do not read raw Codex session JSONL or old parent transcripts as live queue
   state unless the user explicitly asks for forensic analysis.
-- Codex Goal may bound the current thread, but it does not replace SpecRail
-  artifacts, GitHub truth, or runtime checkpoints.
 
 ## Validation
 
