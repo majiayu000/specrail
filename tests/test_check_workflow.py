@@ -24,6 +24,33 @@ from check_workflow import (  # noqa: E402
 from specrail_lib import load_pack  # noqa: E402
 
 
+def run_check(repo: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(ROOT / "checks" / "check_workflow.py"), "--repo", str(repo)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_unadopted_repository_is_explicitly_skipped(tmp_path: Path) -> None:
+    result = run_check(tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout == "SpecRail check skipped: repository is not adopted\n"
+
+
+def test_adopted_repository_with_missing_assets_fails_closed(tmp_path: Path) -> None:
+    shutil.copy(ROOT / "workflow.yaml", tmp_path / "workflow.yaml")
+
+    result = run_check(tmp_path)
+
+    assert result.returncode == 1
+    assert "SpecRail check failed" in result.stdout
+    assert "missing required file: states.yaml" in result.stdout
+
+
 def test_required_files_do_not_enumerate_fixtures_or_non_runtime_schemas() -> None:
     assert not any(path.startswith("examples/fixtures/") for path in REQUIRED_FILES)
     schema_paths = [path for path in REQUIRED_FILES if path.startswith("schemas/")]

@@ -12,7 +12,8 @@ Use this skill for the `implement` route.
 1. Read the linked issue and selected verification profile. Read the complete
    product/tech/tasks packet when the profile is `heavy`; for `fastlane` and
    `standard`, use the smallest current plan that makes done-when testable.
-2. Run the implementation route gate when available:
+2. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
+   checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
 python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json

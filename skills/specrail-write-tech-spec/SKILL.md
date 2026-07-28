@@ -12,7 +12,8 @@ Use this skill for the technical half of the `write_spec` route.
 1. Read the linked issue and `specs/GH<issue-number>/product.md`.
 2. Read the relevant tech spec template from
    `templates/<locale>/tech_spec.md` or `templates/tech_spec.md`.
-3. Run the local gate when available:
+3. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
+   checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json

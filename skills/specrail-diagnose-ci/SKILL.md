@@ -11,7 +11,8 @@ Use this skill for the `fix_ci` route.
 
 1. Collect the failing workflow, job, step, command, logs, PR head SHA, and base
    branch evidence.
-2. Run the CI route gate when available:
+2. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
+   checks. If it exists, the CI route gate is mandatory; a missing checker blocks:
 
 ```sh
 python3 checks/route_gate.py --repo . --route fix_ci --issue <issue-number> --pr <pr-number> --state human_review --json

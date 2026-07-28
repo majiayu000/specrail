@@ -12,7 +12,8 @@ Use this skill to create or update the task plan before implementation.
 1. Read `specs/GH<issue-number>/product.md` and
    `specs/GH<issue-number>/tech.md`.
 2. Read `templates/<locale>/tasks.md` or `templates/tasks.md`.
-3. Run the implementation route gate when available:
+3. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
+   checks. If it exists, the route gate is mandatory; a missing checker blocks:
 
 ```sh
 python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json
