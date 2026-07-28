@@ -320,12 +320,16 @@ query SpecRailHostedFindings(
         pageInfo { hasNextPage endCursor }
         nodes {
           id
+          path
           isResolved
           isOutdated
           comments(first: 1) {
             nodes {
               body
               createdAt
+              line
+              originalLine
+              path
               originalCommit { oid }
               pullRequestReview {
                 id
@@ -406,6 +410,13 @@ def collect_head_push_boundary(
 
 def _hosted_thread_finding(thread: dict[str, Any]) -> dict[str, Any] | None:
     thread_id = _review_string(thread, "id")
+    path = _review_string(thread, "path")
+    if (
+        path.startswith("/")
+        or "\\" in path
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+    ):
+        raise EvidenceError(f"hosted review thread {thread_id} path is malformed")
     resolved = thread.get("isResolved")
     outdated = thread.get("isOutdated")
     comments = thread.get("comments")
@@ -437,8 +448,20 @@ def _hosted_thread_finding(thread: dict[str, Any]) -> dict[str, Any] | None:
         "summary": summary[:240],
         "origin": "hosted",
         "outdated": outdated,
+        "path": path,
+        "fix_paths": [path],
         "_created_at": created_at,
     }
+    root_path = root.get("path")
+    if root_path is not None and root_path != path:
+        raise EvidenceError(
+            f"hosted review thread {thread_id} root path does not match thread path"
+        )
+    line = root.get("originalLine")
+    if not isinstance(line, int) or isinstance(line, bool) or line <= 0:
+        line = root.get("line")
+    if isinstance(line, int) and not isinstance(line, bool) and line > 0:
+        finding["line"] = line
     original = root.get("originalCommit")
     if original is not None:
         oid = original.get("oid") if isinstance(original, dict) else None
@@ -537,6 +560,17 @@ def _trusted_hosted_history(
 ) -> bool:
     if finding is None or boundary_raw is None:
         return False
+    path = finding.get("path")
+    if (
+        finding.get("severity") not in {"P0", "P1", "P2", "P3"}
+        or not isinstance(finding.get("summary"), str)
+        or not finding["summary"].strip()
+        or not isinstance(path, str)
+        or finding.get("fix_paths") != [path]
+        or not isinstance(finding.get("_review_id"), str)
+        or not finding["_review_id"].strip()
+    ):
+        return False
     try:
         created_at = _review_timestamp(finding.get("_created_at"), "createdAt")
         submitted_at = _review_timestamp(
@@ -549,9 +583,8 @@ def _trusted_hosted_history(
     return (
         finding.get("_original_head_sha") == artifact.get("head_sha")
         and finding.get("_review_head_sha") == artifact.get("head_sha")
-        and finding.get("_review_id") == artifact.get("artifact_id")
-        and created_at <= boundary
-        and submitted_at <= boundary
+        and created_at < boundary
+        and submitted_at < boundary
     )
 
 
@@ -585,10 +618,23 @@ def combine_review_findings(
             if not isinstance(finding, dict):
                 normalized["findings"].append(finding)
                 continue
+            excluded = {"origin", "outdated"}
+            if trusted_history:
+                excluded.update(
+                    {
+                        "severity",
+                        "status",
+                        "summary",
+                        "fix_paths",
+                        "path",
+                        "line",
+                        "introduced_by_diff",
+                    }
+                )
             sanitized = {
                 key: value
                 for key, value in finding.items()
-                if not key.startswith("_") and key not in {"origin", "outdated"}
+                if not key.startswith("_") and key not in excluded
             }
             canonical = hosted_by_id.get(str(sanitized.get("id")))
             if trusted_history and _trusted_hosted_history(
@@ -596,7 +642,21 @@ def combine_review_findings(
                 canonical,
                 prior_review_boundary,
             ):
-                sanitized.update({"origin": "hosted", "outdated": False})
+                assert canonical is not None
+                sanitized.update(
+                    {
+                        key: value
+                        for key, value in canonical.items()
+                        if not key.startswith("_")
+                    }
+                )
+                sanitized.update(
+                    {
+                        "status": "unresolved",
+                        "origin": "hosted",
+                        "outdated": False,
+                    }
+                )
             normalized["findings"].append(sanitized)
         prior = artifact.get("prior_review")
         if isinstance(prior, dict):
@@ -635,15 +695,24 @@ def combine_review_findings(
         if finding_id not in matched
     )
     if review.get("round") == 2:
+        prior = combined.get("prior_review")
+        prior_ids = (
+            {
+                str(finding.get("id"))
+                for finding in prior.get("findings", [])
+                if isinstance(finding, dict)
+                and finding.get("origin") == "hosted"
+            }
+            if isinstance(prior, dict)
+            else set()
+        )
         merged = [
             {
                 **finding,
                 **(
-                    {"introduced_by_diff": False}
+                    {"introduced_by_diff": finding.get("id") not in prior_ids}
                     if finding.get("origin") == "hosted"
                     and finding.get("severity") in {"P0", "P1"}
-                    and finding.get("status") == "unresolved"
-                    and not finding.get("outdated", False)
                     else {}
                 ),
             }
