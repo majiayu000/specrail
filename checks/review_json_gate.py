@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import hashlib
 import json
 import re
@@ -160,24 +159,30 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _clean_diff_path(raw_path: str) -> str | None:
-    path = raw_path.strip().split("\t", 1)[0]
-    if path == "/dev/null":
-        return None
-    if path.startswith(("a/", "b/")):
-        path = path[2:]
-    return path or None
+    path = _decode_git_path(raw_path)
+    if not path or path == "/dev/null": return None
+    return path[2:] if path.startswith(("a/", "b/")) else path
 
 
-def _decode_git_quoted_path(token: str) -> str:
-    try:
-        return ast.literal_eval(token).encode("latin1").decode("utf-8", errors="surrogateescape")
-    except (SyntaxError, ValueError, UnicodeError) as exc:
-        raise ValueError("invalid Git C-style quoted path") from exc
-
-
-def _metadata_path(raw_path: str) -> str | None:
-    path = raw_path.strip()
-    return _decode_git_quoted_path(path) if path.startswith('"') else path or None
+def _decode_git_path(raw_path: str) -> str:
+    value = raw_path.strip()
+    if not value.startswith('"'):
+        return value.split("\t", 1)[0]
+    output, index = bytearray(), 1
+    while index < len(value) - 1:
+        character = value[index]
+        if character == '"': raise ValueError("unescaped quote in Git C-style path")
+        if character != "\\":
+            output.extend(character.encode("utf-8")); index += 1; continue
+        index += 1; octal = re.match(r"[0-7]{1,3}", value[index:])
+        if octal:
+            token = octal.group(); output.append(int(token, 8)); index += len(token); continue
+        try:
+            position = '"\\abtnvfr'.index(value[index])
+        except (IndexError, ValueError) as exc: raise ValueError("unknown Git path escape") from exc
+        output.append(b'"\\\a\b\t\n\v\f\r'[position]); index += 1
+    if index != len(value) - 1 or value[index:] != '"': raise ValueError("unterminated Git C-style path")
+    return output.decode("utf-8", errors="surrogateescape")
 
 
 def _add_line(lines: dict[str, set[int]], path: str | None, line: int) -> None:
@@ -191,18 +196,12 @@ def _diff_header_paths(raw_line: str) -> tuple[str | None, str | None]:
         r'(?P<old>"(?:\\.|[^"\\])*") (?P<new>"(?:\\.|[^"\\])*")', payload
     )
     if quoted:
-        return tuple(
-            _clean_diff_path(_decode_git_quoted_path(quoted.group(name)))
-            for name in ("old", "new")
-        )
+        return tuple(_clean_diff_path(quoted.group(name)) for name in ("old", "new"))
+    if not payload.startswith("a/"):
+        raise ValueError("invalid diff --git file header")
     candidates = [
-        (
-            _clean_diff_path(payload[:index]),
-            _clean_diff_path(payload[index + 1 :]),
-        )
-        for index in range(len(payload))
-        if payload.startswith(" b/", index)
-        if payload.startswith("a/")
+        (_clean_diff_path(payload[:match.start()]), _clean_diff_path(payload[match.start() + 1:]))
+        for match in re.finditer(r" b/", payload)
     ]
     if not candidates:
         raise ValueError("invalid diff --git file header")
@@ -231,12 +230,12 @@ def parse_unified_diff(diff_text: str) -> DiffIndex:
             in_hunk = False
             continue
         if not in_hunk and raw_line.startswith(("rename from ", "copy from ")):
-            old_path = _metadata_path(raw_line.split(" ", 2)[2])
+            old_path = _decode_git_path(raw_line.split(" ", 2)[2]) or None
             if old_path is not None:
                 paths.add(old_path)
             continue
         if not in_hunk and raw_line.startswith(("rename to ", "copy to ")):
-            new_path = _metadata_path(raw_line.split(" ", 2)[2])
+            new_path = _decode_git_path(raw_line.split(" ", 2)[2]) or None
             if new_path is not None:
                 paths.add(new_path)
             continue
