@@ -197,6 +197,38 @@ def test_parse_unified_diff_handles_git_paths_with_spaces_and_quotes() -> None:
     }
 
 
+def test_parse_unified_diff_decodes_git_c_style_quoted_headers() -> None:
+    index = parse_unified_diff(
+        'diff --git "a/quote\\\"file.txt" "b/quote\\\"file.txt"\n'
+        "old mode 100644\n"
+        "new mode 100755\n"
+        'diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251.txt"\n'
+        "Binary files differ\n"
+    )
+
+    assert index.paths == {'quote"file.txt', "café.txt"}
+
+
+def test_rename_and_copy_metadata_preserve_top_level_a_directory() -> None:
+    index = parse_unified_diff(
+        "diff --git a/a/old.txt b/a/new.txt\n"
+        "similarity index 100%\n"
+        "rename from a/old.txt\n"
+        "rename to a/new.txt\n"
+        "diff --git a/a/source.txt b/a/copied.txt\n"
+        "similarity index 100%\n"
+        "copy from a/source.txt\n"
+        "copy to a/copied.txt\n"
+    )
+
+    assert index.paths == {
+        "a/old.txt",
+        "a/new.txt",
+        "a/source.txt",
+        "a/copied.txt",
+    }
+
+
 def test_validate_exact_git_diff_rejects_option_like_revisions(tmp_path: Path) -> None:
     reasons = validate_exact_git_diff(
         tmp_path,
