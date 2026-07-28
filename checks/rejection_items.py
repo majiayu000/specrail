@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -41,9 +42,6 @@ _NON_SUBSTANTIVE_VALUES = _PLACEHOLDER_VALUES | frozenset(
 )
 
 _WHITESPACE_RE = re.compile(r"\s+")
-_TEXT_WRAPPERS = "`*_~[](){}<> \t\r\n.,;:!?。；：！？…-–—"
-_QUOTE_PAIRS = (('"', '"'), ("'", "'"), ("“", "”"), ("‘", "’"))
-_SUBSTANTIVE_CHARACTER_RE = re.compile(r"[^\W_]", re.UNICODE)
 
 _ITEM_ID_SUFFIX_RE = re.compile(r"#\d+$")
 
@@ -52,24 +50,50 @@ class RejectionItemError(ValueError):
     """Raised when a gate tries to build an invalid rejection item."""
 
 
+def _text_tokens(value: str) -> tuple[str, ...]:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    tokens: list[str] = []
+    current: list[str] = []
+    for character in normalized:
+        category = unicodedata.category(character)
+        if character.isspace() or category[0] in {"P", "S", "Z"}:
+            if current:
+                tokens.append("".join(current))
+                current = []
+        else:
+            current.append(character)
+    if current:
+        tokens.append("".join(current))
+    return tuple(tokens)
+
+
+_NON_SUBSTANTIVE_TOKEN_SEQUENCES = tuple(
+    sorted(
+        {
+            tokens
+            for value in _NON_SUBSTANTIVE_VALUES
+            if (tokens := _text_tokens(value))
+        }
+    )
+)
+
+
 def is_substantive_text(value: Any) -> bool:
-    """Reject only closed placeholder values and punctuation-only text."""
+    """Reject text composed only of declared placeholders and separators."""
     if not isinstance(value, str):
         return False
-    normalized = value.strip()
-    previous = None
-    while normalized != previous:
-        previous = normalized
-        normalized = normalized.strip(_TEXT_WRAPPERS).strip()
-        for opening, closing in _QUOTE_PAIRS:
-            if normalized.startswith(opening) and normalized.endswith(closing):
-                normalized = normalized[len(opening):-len(closing)].strip()
-                break
-    normalized = normalized.casefold()
-    return (
-        bool(_SUBSTANTIVE_CHARACTER_RE.search(normalized))
-        and normalized not in _NON_SUBSTANTIVE_VALUES
-    )
+    tokens = _text_tokens(value)
+    if not tokens:
+        return False
+    reachable = {0}
+    for start in range(len(tokens)):
+        if start not in reachable:
+            continue
+        for placeholder in _NON_SUBSTANTIVE_TOKEN_SEQUENCES:
+            end = start + len(placeholder)
+            if tokens[start:end] == placeholder:
+                reachable.add(end)
+    return len(tokens) not in reachable
 
 
 def _slug(text: str) -> str:

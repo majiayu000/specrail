@@ -67,12 +67,14 @@ def test_non_heavy_implement_does_not_require_spec_packet(
     duplicate = write_duplicate_evidence(tmp_path)
     evidence = tmp_path / "issue-evidence.json"
     evidence.write_text(
-        json.dumps(complete_issue_evidence(
-            testable_plan={
+        json.dumps(
+            complete_issue_evidence(
+                testable_plan={
                     "source": "issue_body_checklist",
-                    "items": ["verify the standard change"],
-            },
-        )),
+                    "items": ["「TODO fix parser」"],
+                },
+            )
+        ),
         encoding="utf-8",
     )
     result, payload = run_route_gate(
@@ -127,7 +129,19 @@ def test_standard_implement_requires_testable_plan(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "item",
-    ['"TBD"', "'TODO'", "“TBD”", "‘TODO’", '`"TBD"`'],
+    [
+        '"TBD"',
+        "'TODO'",
+        "“TBD”",
+        "‘TODO’",
+        '`"TBD"`',
+        "「TBD」",
+        "«TBD»",
+        "„TBD“",
+        '“TBD"',
+        "TBD/TODO",
+        "**「`TBD/TODO`」**",
+    ],
 )
 def test_standard_implement_rejects_placeholder_issue_plan(
     tmp_path: Path,
