@@ -31,6 +31,7 @@ from sensitive_enforcement import (
     parse_planned_changes_manifest,
     validate_sensitive_registry,
 )
+from rejection_items import is_substantive_text
 
 
 REQUIRED_FILES = [
@@ -524,6 +525,11 @@ BEHAVIOR_COVERAGE_LIST = re.compile(
     rf"(?:\s*(?:[,，]\s*|\s+){BEHAVIOR_COVERAGE_ITEM})*"
 )
 COVERS_NONE = re.compile(r"none \(\S(?:.*\S)?\)", re.IGNORECASE)
+TASK_FIELD_NAMES = ("Owner", "Done when", "Verify")
+TASK_FIELD_BOUNDARY = (
+    r"(?=\s*(?:(?:\|\s*)|[.;。；]\s*)?"
+    r"(?:Owner|Done when|Verify|Dependencies|Depends on|Covers):|$)"
+)
 
 
 def _task_behavior_coverage(text: str) -> set[str] | None:
@@ -610,9 +616,18 @@ def validate_task_plan(
                     )
                 else:
                     covered_ids.update(task_coverage)
-        for token in ["Owner:", "Done when:", "Verify:"]:
-            if token not in line:
-                errors.append(f"{path}:{line_number}: task {task_id} missing {token}")
+        for field in TASK_FIELD_NAMES:
+            value = re.search(
+                rf"\b{re.escape(field)}:\s*(.*?){TASK_FIELD_BOUNDARY}",
+                line,
+            )
+            if value is None:
+                errors.append(f"{path}:{line_number}: task {task_id} missing {field}:")
+            elif not is_substantive_text(value.group(1)):
+                errors.append(
+                    f"{path}:{line_number}: task {task_id} {field}: "
+                    "must have a substantive value"
+                )
     if not ids:
         errors.append(f"{path}: no task checklist items found")
     duplicates = sorted({task_id for task_id in ids if ids.count(task_id) > 1})

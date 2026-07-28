@@ -263,6 +263,26 @@ def test_issue_done_when_checklist_becomes_bound_testable_plan() -> None:
     assert len(plan["body_sha256"]) == 64
 
 
+@pytest.mark.parametrize(
+    "item",
+    ["TBD", "TODO:", "to be determined", "..."],
+)
+def test_issue_done_when_placeholder_is_not_a_testable_plan(item: str) -> None:
+    body = f"## Done when\n\n- [ ] {item}\n"
+
+    assert extract_testable_plan_from_body(body) is None
+    assert "testable_plan" not in build_issue_evidence(issue_payload(body=body))
+
+
+def test_issue_done_when_placeholder_word_inside_substantive_item_is_allowed() -> None:
+    body = "## Done when\n\n- [ ] Reject TBD tokens in the task parser\n"
+
+    plan = extract_testable_plan_from_body(body)
+
+    assert plan is not None
+    assert plan["items"] == ["Reject TBD tokens in the task parser"]
+
+
 def test_configured_artifacts_uses_workflow_templates(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     write_custom_pack(repo)

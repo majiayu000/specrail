@@ -300,6 +300,14 @@ def test_implement_preserves_configured_required_evidence(tmp_path: Path) -> Non
             "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
             "Done when: complete\n"
         ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: test | "
+            "Done when: TBD | Verify: `true`\n"
+        ),
+        (
+            "# Tasks\n\n- [ ] `SP999-T1` Owner: | "
+            "Done when: complete | Verify: `true`\n"
+        ),
     ],
 )
 def test_standard_implement_rejects_invalid_task_plan(

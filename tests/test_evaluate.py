@@ -59,6 +59,49 @@ def test_task_plan_requires_done_when_and_verify(tmp_path: Path) -> None:
     assert any("missing Verify:" in error for error in errors)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("Owner", ""),
+        ("Done when", "TBD"),
+        ("Verify", "..."),
+    ],
+)
+def test_task_plan_requires_substantive_contract_fields(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    values = {"Owner": "tests", "Done when": "parser rejects placeholders", "Verify": "pytest"}
+    values[field] = value
+    task_path = tmp_path / "specs" / "GH5" / "tasks.md"
+    write_text(
+        task_path,
+        f"- [ ] `SP5-T001` Owner: {values['Owner']} | "
+        f"Done when: {values['Done when']} | Verify: {values['Verify']}",
+    )
+
+    errors = validate_task_plan(task_path, "5")
+
+    assert any(
+        f"task SP5-T001 {field}: must have a substantive value" in error
+        for error in errors
+    )
+
+
+def test_task_plan_allows_placeholder_word_in_substantive_values(
+    tmp_path: Path,
+) -> None:
+    task_path = tmp_path / "specs" / "GH5" / "tasks.md"
+    write_text(
+        task_path,
+        "- [ ] `SP5-T001` Owner: todo-parser | "
+        "Done when: TBD tokens are rejected | Verify: pytest -k placeholder",
+    )
+
+    assert validate_task_plan(task_path, "5") == []
+
+
 def test_task_plan_requires_per_task_covers_and_complete_product_union(
     tmp_path: Path,
 ) -> None:

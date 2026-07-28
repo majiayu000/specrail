@@ -14,7 +14,7 @@ from schema_validation import (
     load_json_schema,
     validate_instance,
 )
-from rejection_items import finalize_items, item_from_reason
+from rejection_items import finalize_items, is_substantive_text, item_from_reason
 
 
 STATUS_CONTEXT_STATES = {"SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED"}
@@ -110,7 +110,7 @@ def valid_testable_plan(value: Any) -> bool:
         value.get("source") == "issue_body_checklist"
         and isinstance(items, list)
         and bool(items)
-        and all(isinstance(item, str) and bool(item.strip()) for item in items)
+        and all(is_substantive_text(item) for item in items)
         and isinstance(digest, str)
         and len(digest) == 64
         and set(digest.lower()) <= set("0123456789abcdef")
