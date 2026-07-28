@@ -195,13 +195,27 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
                                     "id": "thread-current",
                                     "isResolved": False,
                                     "isOutdated": False,
-                                    "comments": {"nodes": [{"body": "[P1] Current defect"}]},
+                                    "comments": {
+                                        "nodes": [
+                                            {
+                                                "body": "[P1] Current defect",
+                                                "originalCommit": {"oid": "a" * 40},
+                                            }
+                                        ]
+                                    },
                                 },
                                 {
                                     "id": "thread-old",
                                     "isResolved": False,
                                     "isOutdated": True,
-                                    "comments": {"nodes": [{"body": "P1 old defect"}]},
+                                    "comments": {
+                                        "nodes": [
+                                            {
+                                                "body": "P1 old defect",
+                                                "originalCommit": {"oid": "b" * 40},
+                                            }
+                                        ]
+                                    },
                                 },
                             ],
                             "pageInfo": {
@@ -223,6 +237,8 @@ def test_hosted_findings_preserve_resolution_and_outdated_state(
         "hosted:thread-old",
     ]
     assert combined["verdict"] == "blocking"
+    assert findings[0]["_original_head_sha"] == "a" * 40
+    assert "_original_head_sha" not in combined["findings"][0]
     assert findings[1]["outdated"] is True
 
 
@@ -297,6 +313,7 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
             "summary": "Round-one blocker.",
             "origin": "hosted",
             "outdated": True,
+            "_original_head_sha": "b" * 40,
         }
     ]
 
@@ -314,6 +331,92 @@ def test_round_two_reconciles_carried_hosted_finding_by_thread_id() -> None:
     assert combined["verdict"] == "clean"
     gate = evaluate_review_gate(combined, "", verify_diff=False)
     assert gate["decision"] == "allowed", gate["reasons"]
+
+
+def test_round_two_cannot_backfill_prior_provenance_from_current_head_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prior = review(head="b" * 40)
+    prior.update(
+        {
+            "base_head_sha": "c" * 40,
+            "diff_sha256": "d" * 64,
+            "verdict": "blocking",
+            "findings": [
+                {
+                    "id": "hosted:thread-current",
+                    "severity": "P1",
+                    "status": "unresolved",
+                    "summary": "[P1] Current-head-only blocker.",
+                    "origin": "hosted",
+                    "outdated": False,
+                    "fix_paths": ["src/app.py"],
+                }
+            ],
+        }
+    )
+    current = review()
+    current.update(
+        {
+            "base_head_sha": "b" * 40,
+            "diff_sha256": "e" * 64,
+            "round": 2,
+            "mode": "diff_only",
+            "prior_review": prior,
+            "findings": [
+                {
+                    "id": "hosted:thread-current",
+                    "severity": "P1",
+                    "status": "resolved",
+                    "summary": "[P1] Current-head-only blocker.",
+                    "origin": "hosted",
+                    "outdated": False,
+                    "introduced_by_diff": False,
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.run_gh_json",
+        lambda _args: {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "headRefOid": "a" * 40,
+                        "reviewThreads": {
+                            "nodes": [
+                                {
+                                    "id": "thread-current",
+                                    "isResolved": True,
+                                    "isOutdated": False,
+                                    "comments": {
+                                        "nodes": [
+                                            {
+                                                "body": "[P1] Current-head-only blocker.",
+                                                "originalCommit": {"oid": "a" * 40},
+                                            }
+                                        ]
+                                    },
+                                }
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": False,
+                                "endCursor": None,
+                            },
+                        },
+                    }
+                }
+            }
+        },
+    )
+
+    hosted = collect_hosted_findings("acme/widgets", 42, "a" * 40)
+    assert hosted[0]["_original_head_sha"] == "a" * 40
+    combined = combine_review_findings(current, hosted)
+    gate = evaluate_review_gate(combined, "", verify_diff=False)
+
+    assert gate["decision"] == "blocked"
+    assert any("preserve prior origin" in reason for reason in gate["reasons"])
 
 
 def test_spec_registry_uses_linked_issue_artifact_references(tmp_path: Path) -> None:

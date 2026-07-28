@@ -552,8 +552,41 @@ def validate_task_plan(
         )
         if product_ids and covers is None:
             errors.append(f"{path}:{line_number}: task {task_id} missing Covers:")
-        elif covers is not None:
-            covered_ids.update(_behavior_ids(covers.group(1)))
+        elif product_ids:
+            covers_text = covers.group(1).strip()
+            task_coverage = _behavior_ids(covers_text)
+            none_match = re.fullmatch(r"none\s*\((.*?)\)", covers_text, re.IGNORECASE)
+            if none_match and not none_match.group(1).strip():
+                errors.append(
+                    f"{path}:{line_number}: task {task_id} Covers: "
+                    "must use none (<non-empty reason>)"
+                )
+            elif none_match:
+                pass
+            elif re.search(r"\bnone\b", covers_text, re.IGNORECASE):
+                expected = (
+                    "must use either defined B-IDs or none (<non-empty reason>)"
+                    if task_coverage
+                    else "must use none (<non-empty reason>)"
+                )
+                errors.append(
+                    f"{path}:{line_number}: task {task_id} Covers: {expected}"
+                )
+            elif not task_coverage:
+                errors.append(
+                    f"{path}:{line_number}: task {task_id} Covers: "
+                    "must name at least one defined B-ID"
+                )
+            else:
+                unknown = sorted(task_coverage - product_ids)
+                if unknown:
+                    errors.append(
+                        f"{path}:{line_number}: task {task_id} Covers: "
+                        "references undefined product invariants: "
+                        + ", ".join(unknown)
+                    )
+                else:
+                    covered_ids.update(task_coverage)
         for token in ["Owner:", "Done when:", "Verify:"]:
             if token not in line:
                 errors.append(f"{path}:{line_number}: task {task_id} missing {token}")
@@ -567,12 +600,6 @@ def validate_task_plan(
         errors.append(
             f"{path}: product invariants not covered by any task: "
             + ", ".join(missing_coverage)
-        )
-    unknown_coverage = sorted(covered_ids - product_ids)
-    if product_ids and unknown_coverage:
-        errors.append(
-            f"{path}: task coverage references undefined product invariants: "
-            + ", ".join(unknown_coverage)
         )
     return errors
 

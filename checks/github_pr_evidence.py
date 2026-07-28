@@ -57,7 +57,10 @@ query SpecRailHostedFindings(
           isResolved
           isOutdated
           comments(first: 1) {
-            nodes { body }
+            nodes {
+              body
+              originalCommit { oid }
+            }
           }
         }
       }
@@ -273,6 +276,17 @@ def collect_hosted_findings(
                 "origin": "hosted",
                 "outdated": outdated,
             }
+            original_commit = root.get("originalCommit")
+            if original_commit is not None:
+                if (
+                    not isinstance(original_commit, dict)
+                    or not isinstance(original_commit.get("oid"), str)
+                    or re.fullmatch(r"[0-9a-fA-F]{40}", original_commit["oid"]) is None
+                ):
+                    raise EvidenceError(
+                        f"hosted review thread {thread_id} original commit is malformed"
+                    )
+                finding["_original_head_sha"] = original_commit["oid"]
             findings.append(finding)
         has_next = page_info.get("hasNextPage")
         if not isinstance(has_next, bool):
@@ -324,10 +338,14 @@ def combine_review_findings(
             sanitized = {
                 key: value
                 for key, value in finding.items()
-                if key not in {"origin", "outdated"}
+                if key not in {"_original_head_sha", "origin", "outdated"}
             }
             canonical = hosted_by_id.get(str(sanitized.get("id")))
-            if trusted_history and canonical is not None:
+            if (
+                trusted_history
+                and canonical is not None
+                and canonical.get("_original_head_sha") == artifact.get("head_sha")
+            ):
                 sanitized.update(
                     {
                         "origin": "hosted",
@@ -358,10 +376,23 @@ def combine_review_findings(
         if canonical is None:
             merged.append(finding)
             continue
-        merged.append({**finding, **canonical})
+        merged.append(
+            {
+                **finding,
+                **{
+                    key: value
+                    for key, value in canonical.items()
+                    if key != "_original_head_sha"
+                },
+            }
+        )
         matched_hosted_ids.add(str(finding.get("id")))
     merged.extend(
-        finding
+        {
+            key: value
+            for key, value in finding.items()
+            if key != "_original_head_sha"
+        }
         for finding_id, finding in hosted_by_id.items()
         if finding_id not in matched_hosted_ids
     )

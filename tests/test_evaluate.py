@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = ROOT / "checks"
@@ -114,6 +116,48 @@ def test_task_plan_accepts_range_coverage_and_covers_none(tmp_path: Path) -> Non
     )
 
     assert validate_task_plan(task_path, "5", product_path=product_path) == []
+
+
+@pytest.mark.parametrize(
+    ("covers", "message"),
+    [
+        ("Covers:", "must name at least one defined B-ID"),
+        ("Covers: none", "must use none (<non-empty reason>)"),
+        ("Covers: none ()", "must use none (<non-empty reason>)"),
+        ("Covers: B-999", "references undefined product invariants: B-999"),
+        (
+            "Covers: none (housekeeping), B-001",
+            "must use either defined B-IDs or none (<non-empty reason>)",
+        ),
+    ],
+)
+def test_task_plan_rejects_invalid_per_task_covers(
+    tmp_path: Path,
+    covers: str,
+    message: str,
+) -> None:
+    spec_dir = tmp_path / "specs" / "GH5"
+    product_path = spec_dir / "product.md"
+    task_path = spec_dir / "tasks.md"
+    write_text(
+        product_path,
+        "## Behavior Invariants\n\n1. B-001 first behavior\n",
+    )
+    write_text(
+        task_path,
+        "\n".join(
+            [
+                f"- [ ] `SP5-T001` {covers} | Owner: docs | "
+                "Done when: done | Verify: review",
+                "- [ ] `SP5-T002` Covers: B-001 | Owner: tests | "
+                "Done when: done | Verify: pytest",
+            ]
+        ),
+    )
+
+    errors = validate_task_plan(task_path, "5", product_path=product_path)
+
+    assert any("task SP5-T001" in error and message in error for error in errors)
 
 
 def test_spec_packet_requires_tasks_md(tmp_path: Path) -> None:
