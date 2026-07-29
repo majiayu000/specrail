@@ -18,6 +18,22 @@ from pathlib import Path
 
 
 INSTALL_PROFILES = ("core", "heavy", "all")
+LEGACY_MANAGED_SKILLS = frozenset(
+    {
+        "specrail-check-impl-against-spec",
+        "specrail-diagnose-ci",
+        "specrail-implement",
+        "specrail-implement-queue",
+        "specrail-install",
+        "specrail-plan-tasks",
+        "specrail-release-note",
+        "specrail-review-pr",
+        "specrail-triage-issue",
+        "specrail-workflow",
+        "specrail-write-product-spec",
+        "specrail-write-tech-spec",
+    }
+)
 
 
 class InstallError(ValueError):
@@ -52,6 +68,9 @@ class SkillCatalog:
     def selected(self, profile: str) -> tuple[LockedSkill, ...]:
         selected_names = set(self.profiles[profile])
         return tuple(skill for skill in self.skills if skill.name in selected_names)
+
+    def managed_names(self) -> set[str]:
+        return {skill.name for skill in self.skills} | set(LEGACY_MANAGED_SKILLS)
 
 
 def read_text(path: Path) -> str:
@@ -292,10 +311,9 @@ def install_skills(
     skills = catalog.selected(profile)
     selected_names = {skill.name for skill in skills}
     stale_destinations = [
-        target_dir / skill.name
-        for skill in catalog.skills
-        if skill.name not in selected_names
-        and ((target_dir / skill.name).exists() or (target_dir / skill.name).is_symlink())
+        target_dir / name
+        for name in sorted(catalog.managed_names() - selected_names)
+        if (target_dir / name).exists() or (target_dir / name).is_symlink()
     ]
     messages: list[str] = []
 
@@ -411,15 +429,13 @@ def check_installed_skills(
         )
 
     selected_names = {skill.name for skill in skills}
-    for skill in catalog.skills:
-        if skill.name in selected_names:
-            continue
-        installed_dir = target_dir / skill.name
+    for name in sorted(catalog.managed_names() - selected_names):
+        installed_dir = target_dir / name
         if not installed_dir.exists() and not installed_dir.is_symlink():
             continue
         invalid = True
         messages.append(
-            f"{skill.name}: stale (path {installed_dir}, "
+            f"{name}: stale (path {installed_dir}, "
             f"not selected by profile {profile})"
         )
 

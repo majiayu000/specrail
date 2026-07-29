@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `core`, `heavy`, and `all` installation profiles. The default profile
+  installs one explicit `specrail` entrypoint; Heavy and `implx` stay opt-in.
+- Consolidated phase-specific top-level skills and added safe cleanup of their
+  legacy installed directories during profile changes.
 - Expanded installed-skill integrity diagnosis with explicit target status,
   expected/actual hashes, safe-path checks, and read-only coverage.
 - Removed the SpecRail gate/check execution layer, evidence schemas, dedicated

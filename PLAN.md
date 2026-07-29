@@ -2,7 +2,8 @@
 
 ## Current direction
 
-Keep SpecRail small: reusable skills, templates, installation support, and an
+Keep SpecRail small and opt-in: one default workflow entrypoint, optional
+explicit Heavy and queue entrypoints, templates, installation support, and an
 optional queue runner. Target repositories retain their own development and
 review policy.
 
@@ -12,6 +13,8 @@ review policy.
 - Removed dedicated verdict schemas, fixtures, and CI jobs.
 - Simplified skills to direct playbooks.
 - Moved earlier specs and changelog into `archive/` for provenance.
+- Separated installation profiles from activation so default installation does
+  not register every workflow phase.
 
 ## Next work
 
