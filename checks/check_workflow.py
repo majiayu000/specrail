@@ -516,7 +516,22 @@ def _product_behavior_ids(text: str) -> set[str]:
         r"(?ms)^## Behavior Invariants\s*$\n(.*?)(?=^## |\Z)",
         text,
     )
-    return _behavior_ids(section.group(1)) if section else set()
+    if not section:
+        return set()
+    body = re.sub(r"(?s)<!--.*?-->", "", section.group(1))
+    declared: set[str] = set()
+    fenced = False
+    for line in body.splitlines():
+        if re.match(r"^\s*(?:```|~~~)", line):
+            fenced = not fenced
+            continue
+        match = None if fenced else re.match(
+            r"^\s*(?:[-*+]|\d+[.)])\s+(`?B-\d{3}`?(?:\s*(?:\.\.|…|–|—)\s*`?B-\d{3}`?)?)",
+            line,
+        )
+        if match:
+            declared.update(_behavior_ids(match.group(1).replace("`", "")))
+    return declared
 
 
 BEHAVIOR_COVERAGE_ITEM = (

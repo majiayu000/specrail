@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -232,6 +233,32 @@ def test_queue_pr_gate_commands_are_split_by_profile() -> None:
     assert "--profile <standard|heavy>" in standard_heavy
     assert "--hosted-snapshot-template" in standard_heavy
     assert "--review-attestation" in standard_heavy
+
+
+def test_pr_templates_use_profile_specific_executable_gate_contract() -> None:
+    for relative_path in (
+        "templates/pull_request.md",
+        "templates/zh-CN/pull_request.md",
+    ):
+        text = (REPO / relative_path).read_text(encoding="utf-8")
+        commands = re.findall(r"`([^`]*github_pr_evidence\.py[^`]*)`", text)
+        fastlane = [command for command in commands if "--profile fastlane" in command]
+        standard_heavy = [
+            command for command in commands
+            if "--profile <standard|heavy>" in command
+        ]
+        assert len(fastlane) == 1, relative_path
+        assert "--gate-invocation-id" in fastlane[0], relative_path
+        assert "--review " in fastlane[0], relative_path
+        assert "--review-attestation" not in fastlane[0], relative_path
+        assert "--hosted-snapshot-template" not in fastlane[0], relative_path
+        assert len(standard_heavy) == 2, relative_path
+        assert all("--gate-invocation-id" in command for command in standard_heavy)
+        assert all("--review " in command for command in standard_heavy)
+        assert "--hosted-snapshot-template" in standard_heavy[0], relative_path
+        assert "--review-attestation" in standard_heavy[1], relative_path
+        assert "checks/pr_gate.py --repo . --evidence pr-evidence.json --json" in text
+        assert "skills/specrail-pr-gate/SKILL.md" in text
 
 
 def test_partial_slice_commands_are_split_by_profile() -> None:

@@ -350,7 +350,46 @@ def test_collect_pr_view_rejects_identity_drift_during_pagination(
         lambda _args: responses.pop(0),
     )
 
-    with pytest.raises(EvidenceError, match="PR identity changed"):
+    with pytest.raises(EvidenceError, match="PR snapshot changed"):
+        collect_pr_view("acme/widgets", 42)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("isDraft", True),
+        ("state", "CLOSED"),
+        ("mergeStateStatus", "BLOCKED"),
+        ("statusCheckRollup", [{"conclusion": "FAILURE"}]),
+        ("closingIssuesReferences", [{"number": 99}]),
+    ],
+)
+def test_collect_pr_view_rejects_same_head_mutable_pr_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    initial = {
+        "changedFiles": 1,
+        "headRefOid": "a" * 40,
+        "isDraft": False,
+        "state": "OPEN",
+        "mergeStateStatus": "CLEAN",
+        "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+        "closingIssuesReferences": [{"number": 42}],
+    }
+    final = {**initial, field: value}
+    responses: list[object] = [
+        initial,
+        [{"filename": "src/same.py"}],
+        final,
+    ]
+    monkeypatch.setattr(
+        "github_pr_evidence.run_gh_json",
+        lambda _args: responses.pop(0),
+    )
+
+    with pytest.raises(EvidenceError, match="PR snapshot changed"):
         collect_pr_view("acme/widgets", 42)
 
 

@@ -689,3 +689,32 @@ def test_round_two_prior_review_must_start_at_pr_base() -> None:
         "round 2 prior_review.base_head_sha must match PR evidence base_sha"
         in result["reasons"]
     )
+
+
+def test_pr_gate_blocks_non_array_prior_findings_without_crashing() -> None:
+    payload, pack = evidence()
+    review = payload["review"]
+    prior = {
+        **review,
+        "artifact_id": "review-42-round1",
+        "findings": None,
+    }
+    review.update(
+        {
+            "round": 2,
+            "mode": "diff_only",
+            "prior_review": prior,
+        }
+    )
+    payload["review_attestation"].update(
+        {
+            "prior_artifact_id": prior["artifact_id"],
+            "prior_head_sha": prior["head_sha"],
+            "review_sha256": canonical_review_sha256(review),
+        }
+    )
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert "review: prior_review: findings must be an array" in result["reasons"]

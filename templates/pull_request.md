@@ -27,8 +27,11 @@ Describe the change in 1-3 sentences.
 - [ ] Independent reviewer or merge-reviewer lane evidence is recorded when native threads are available.
 - [ ] Merge state is clean.
 - [ ] Human merge authorization is recorded before merge.
-- [ ] `python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --json > pr-evidence.json` result:
-- [ ] `python3 checks/pr_gate.py --repo . --evidence <evidence.json>` result:
+- [ ] Fastlane: `python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --issue <issue-number> --profile fastlane --gate-invocation-id <current-id> --review <review.json> --json > pr-evidence.json` result:
+- [ ] Standard/heavy snapshot: `python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --issue <issue-number> --profile <standard|heavy> --gate-invocation-id <current-id> --review <review.json> --hosted-snapshot-template --json > hosted-snapshot.json` result:
+- [ ] After the trusted host/coordinator attests that snapshot, standard/heavy final collection: `python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --issue <issue-number> --profile <standard|heavy> --gate-invocation-id <current-id> --review <review.json> --review-attestation <host-attestation.json> --json > pr-evidence.json` result:
+- [ ] `python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json` result:
+- Authoritative details: `skills/specrail-pr-gate/SKILL.md`.
 
 ## Verification
 

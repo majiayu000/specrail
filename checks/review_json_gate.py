@@ -506,7 +506,7 @@ def evaluate_review_gate(
             )
             prior_findings = {
                 str(finding.get("id")): finding
-                for finding in prior_review.get("findings", [])
+                for finding in (prior_review["findings"] if isinstance(prior_review.get("findings"), list) else [])
                 if isinstance(finding, dict)
                 and _non_empty_string(finding.get("id"))
             }
