@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install test dependencies
+        run: python3 -m pip install pytest
+      - name: Compile Python tools
+        run: python3 -m compileall -q tools
+      - name: Run tests
+        run: python3 -m pytest -q

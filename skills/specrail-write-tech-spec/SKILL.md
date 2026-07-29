@@ -1,94 +1,19 @@
 ---
 name: specrail-write-tech-spec
-description: Use when writing or updating a SpecRail technical spec for a linked issue. Produces the numbered `tech.md` spec from the locale-appropriate template, translating accepted product behavior into design, affected files, risks, verification, and rollback without starting implementation. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
+description: Translate accepted product requirements into a technical design with affected files, interfaces, data flow, risks, migration, rollback, and repository-native verification.
 ---
 
-# SpecRail Write Tech Spec
+# Write technical design
 
-Use this skill for the technical half of the `write_spec` route.
+1. Read the linked Issue, accepted product requirements, current architecture,
+   and repository instructions.
+2. Search for existing implementations and design documents.
+3. Describe components, data flow, interfaces, affected files, compatibility,
+   error handling, security, observability, migration, and rollback.
+4. Map each product requirement identifier to the responsible design and
+   verification approach.
+5. Use exact repository-native commands for planned verification.
+6. Record unresolved technical choices rather than guessing.
 
-## Steps
-
-1. Read the linked issue and `specs/GH<issue-number>/product.md`.
-2. Read the relevant tech spec template from
-   `templates/<locale>/tech_spec.md` or `templates/tech_spec.md`.
-3. Run the local gate when available:
-
-```sh
-python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
-```
-
-4. Explore the codebase first, then write `specs/GH<issue-number>/tech.md`.
-   Replace the template's `specrail-planned-changes` placeholder with exactly
-   one valid JSON manifest bound to the real issue: set `issue` to the linked
-   issue number, set `complete=true`, and exhaustively list the planned
-   repository-relative `paths` and applicable `spec_refs`. Never leave the
-   fail-closed issue `0`, `complete=false`, or empty placeholder lists in a
-   tech spec that is ready for implementation.
-5. Ground the plan in codebase context: relevant files, current behavior, and
-   why each area changes or stays unchanged, following the anchor discipline
-   below.
-6. Map every product behavior invariant to an implementation area and a
-   verification, following the full-coverage rule below.
-7. Describe the proposed design, data flow, touched components, edge cases,
-   migration or compatibility risks, verification plan, and rollback plan.
-8. Name deterministic checks that prove the design was implemented.
-
-## Anchor discipline
-
-Every file reference in Codebase Context is a claim; verify it before writing
-it down.
-
-- Write `path:line` anchors only after confirming them with Read or grep in
-  the current working tree. Do not guess paths, line numbers, function names,
-  or config keys from memory.
-- If an anchor cannot be verified, either drop the row or mark it explicitly
-  as "待定位 / to locate" — never leave a plausible-looking guess.
-- Anchors describe the tree at spec-writing time. When implementation later
-  moves the code, the implementer updates their own references; the spec is
-  not retroactively patched.
-
-## Full-coverage mapping
-
-The Product-to-Test Mapping table must enumerate every `B-xxx` from
-`product.md` — no orphan invariants.
-
-- One row per invariant (grouping several IDs in one row is acceptable only
-  when they share the same implementation area and the same verification).
-- Verification is an executable command or a concrete manual check. Empty
-  cells, "TBD", and "covered by tests" without naming the test are all
-  violations.
-- Boundary-checklist verdicts marked N/A do not receive `B-xxx` IDs and do not
-  appear in the mapping; their reason already lives in `product.md`. If an
-  item has a `B-xxx` ID, it is an invariant and must be mapped even when its
-  prose contains the text "N/A".
-
-Example rows at the expected precision:
-
-> | Behavior invariant | Implementation area | Verification |
-> | --- | --- | --- |
-> | B-006 authorized self_review with empty lane_failures is blocked | `checks/pr_gate.py` merge-claiming branch | negative fixture: `self_review + valid auth + lane_failures: []` → gate exits blocked; test names the fixture |
-> | B-009 negative fixtures are schema-valid | `examples/fixtures/` | `pytest tests/test_specrail_schema.py` passes on the new fixtures |
-
-## Boundaries
-
-- Do not start implementation from the tech spec step.
-- Do not claim spec approval; report missing approval as a human gate.
-- Preserve dry-run and advisory defaults for automation.
-- Keep stable machine-facing IDs in English.
-
-## Rejection Persistence And Retry
-
-When a gate command in this skill (`checks/route_gate.py`,
-`checks/review_json_gate.py`, or `checks/pr_gate.py`) rejects with a decision
-other than `allowed`, the caller persists the gate's JSON output to
-`.specrail/runtime/rejections/<gate>-<issue|pr>.json` (create the directory if
-missing). This write is orchestrator behavior; the gate itself stays
-read-only. Use the `rejection_items[]` list to fix every defect in a single
-round instead of guessing one item per retry.
-
-On the next retry of the same gate for the same issue or PR, pass
-`--prior-rejection .specrail/runtime/rejections/<gate>-<issue|pr>.json`. If
-the new output contains a `repeat_rejection` section, the same item was
-rejected verbatim twice: stop retrying and report the contract violation to a
-human instead of starting another round.
+Do not implement the design unless the caller separately requests
+implementation.
