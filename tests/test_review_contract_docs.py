@@ -234,6 +234,26 @@ def test_queue_pr_gate_commands_are_split_by_profile() -> None:
     assert "--review-attestation" in standard_heavy
 
 
+def test_partial_slice_commands_are_split_by_profile() -> None:
+    text = (REPO / "AGENT_USAGE.md").read_text(encoding="utf-8")
+    partial = text.split("For a partial implementation slice", 1)[1].split(
+        "The adapter verifies", 1
+    )[0]
+    fastlane = partial.split("Fastlane uses", 1)[1].split(
+        "Standard/heavy keeps", 1
+    )[0]
+    standard_heavy = partial.split("Standard/heavy keeps", 1)[1]
+
+    assert "--issue <issue-number>" in fastlane
+    assert "--profile fastlane" in fastlane
+    assert "--review-attestation" not in fastlane
+    assert "--hosted-snapshot-template" not in fastlane
+    assert standard_heavy.count("--issue <issue-number>") == 2
+    assert standard_heavy.count("--profile <standard|heavy>") == 2
+    assert "--hosted-snapshot-template" in standard_heavy
+    assert "--review-attestation" in standard_heavy
+
+
 def test_active_review_guidance_uses_canonical_independence_policy() -> None:
     for relative_path in (
         "README.md",
