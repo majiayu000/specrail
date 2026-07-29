@@ -254,6 +254,37 @@ def test_partial_slice_commands_are_split_by_profile() -> None:
     assert "--review-attestation" in standard_heavy
 
 
+def test_standalone_review_gate_commands_are_split_by_profile() -> None:
+    sections = {
+        "README.md": (
+            "Validate an advisory review artifact",
+            "Review artifacts are advisory evidence",
+        ),
+        "AGENT_USAGE.md": (
+            "10. Before treating an agent review artifact",
+            "The review gate validates advisory review JSON",
+        ),
+        "skills/specrail-review-pr/SKILL.md": (
+            "## Verify",
+            "Report every rejection in one response",
+        ),
+    }
+    for relative_path, (start, end) in sections.items():
+        text = (REPO / relative_path).read_text(encoding="utf-8")
+        section = text.split(start, 1)[1].split(end, 1)[0]
+        fastlane = section.split("Fastlane `self_review`", 1)[1].split(
+            "Standard/heavy `independent_lane`", 1
+        )[0]
+        standard_heavy = section.split(
+            "Standard/heavy `independent_lane`", 1
+        )[1]
+        assert "checks/review_json_gate.py" in fastlane, relative_path
+        assert "--review-attestation" not in fastlane, relative_path
+        assert "checks/review_json_gate.py" in standard_heavy, relative_path
+        assert "--review-attestation" in standard_heavy, relative_path
+        assert "--gate-invocation-id" in standard_heavy, relative_path
+
+
 def test_active_review_guidance_uses_canonical_independence_policy() -> None:
     for relative_path in (
         "README.md",

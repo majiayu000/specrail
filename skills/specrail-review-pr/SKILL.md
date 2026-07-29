@@ -73,6 +73,16 @@ triggers; only a trusted collector declaration for
 
 ## Verify
 
+Fastlane `self_review` never supplies an attestation:
+
+```sh
+python3 checks/review_json_gate.py --repo . \
+  --review artifacts/review.json --diff artifacts/review.patch \
+  --json
+```
+
+Standard/heavy `independent_lane` requires the trusted host attestation:
+
 ```sh
 python3 checks/review_json_gate.py --repo . \
   --review artifacts/review.json --diff artifacts/review.patch \
