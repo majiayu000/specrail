@@ -1,6 +1,40 @@
 {
   "version": 1,
   "algorithm": "sha256",
+  "profiles": {
+    "core": [
+      "specrail-workflow"
+    ],
+    "heavy": [
+      "specrail-check-impl-against-spec",
+      "specrail-diagnose-ci",
+      "specrail-implement",
+      "specrail-implement-queue",
+      "specrail-install",
+      "specrail-plan-tasks",
+      "specrail-release-note",
+      "specrail-review-pr",
+      "specrail-triage-issue",
+      "specrail-workflow",
+      "specrail-write-product-spec",
+      "specrail-write-tech-spec"
+    ],
+    "all": [
+      "implx",
+      "specrail-check-impl-against-spec",
+      "specrail-diagnose-ci",
+      "specrail-implement",
+      "specrail-implement-queue",
+      "specrail-install",
+      "specrail-plan-tasks",
+      "specrail-release-note",
+      "specrail-review-pr",
+      "specrail-triage-issue",
+      "specrail-workflow",
+      "specrail-write-product-spec",
+      "specrail-write-tech-spec"
+    ]
+  },
   "skills": [
     {
       "name": "implx",
