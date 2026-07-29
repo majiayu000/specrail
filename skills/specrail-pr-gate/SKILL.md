@@ -26,7 +26,12 @@ binds `lane_id`, `reviewer_actor`, current artifact ID, current head, and curren
 gate invocation; round 2 also binds the prior artifact ID and prior head.
 `review_sha256` is the SHA-256 of the complete canonical raw review JSON, so
 finding, verdict, and embedded-prior changes invalidate the attestation.
-Fastlane `self_review` omits this input.
+Hash exactly the file passed to `--review`; do not add or predict hosted
+findings before hashing. The collector preserves raw `review` unchanged and
+stores current server-canonical threads in the separate top-level
+`hosted_findings` layer. The PR gate verifies the raw attestation first and
+only then combines both layers in memory. Fastlane `self_review` omits this
+input.
 
 For heavy work, a trusted host or coordinator may inject
 `--authorization <authorization.json>` only from a current real-human
@@ -54,6 +59,11 @@ and sensitive classification. Every profile requires an exact current-head
 checkout; sensitive changes must also be heavy. Old runtime, tier,
 content-binding, or review-manifest fields are unsupported and require fresh
 GitHub evidence.
+
+For round 2, embedded prior findings with local origin remain complete review
+evidence. Only findings explicitly claiming hosted origin may be reconciled
+against authenticated server history; a current, non-outdated hosted P0/P1
+still blocks.
 
 - `allowed`: deterministic evidence is green; human merge boundary remains.
 - `needs_human`: review cap or heavy authorization is missing.

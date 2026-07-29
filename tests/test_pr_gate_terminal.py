@@ -49,12 +49,15 @@ def test_p2_follow_up_does_not_block_terminal_gate() -> None:
 
 def test_outdated_hosted_p0_does_not_block_terminal_gate() -> None:
     payload, pack = evidence()
-    payload["review"]["findings"] = [
+    payload["review"]["findings"] = []
+    payload["review"]["verdict"] = "clean"
+    payload["hosted_findings"] = [
         {
             "id": "P0-outdated",
             "severity": "P0",
             "status": "unresolved",
             "summary": "The comment targets an obsolete commit.",
+            "fix_paths": ["src/app.py"],
             "origin": "hosted",
             "outdated": True,
         }
@@ -64,6 +67,26 @@ def test_outdated_hosted_p0_does_not_block_terminal_gate() -> None:
     result = evaluate_pr_gate(payload, ROOT, pack)
 
     assert result["decision"] == "allowed", result["reasons"]
+
+
+def test_current_hosted_p1_blocks_terminal_gate() -> None:
+    payload, pack = evidence()
+    payload["hosted_findings"] = [
+        {
+            "id": "P1-current",
+            "severity": "P1",
+            "status": "unresolved",
+            "summary": "The current hosted review found a blocker.",
+            "fix_paths": ["src/app.py"],
+            "origin": "hosted",
+            "outdated": False,
+        }
+    ]
+
+    result = evaluate_pr_gate(payload, ROOT, pack)
+
+    assert result["decision"] == "blocked"
+    assert "current unresolved P0/P1 findings: P1-current" in result["reasons"]
 
 
 def test_gate_never_grants_final_approval_or_merge_authority() -> None:

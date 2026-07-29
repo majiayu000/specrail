@@ -154,7 +154,11 @@ head-and-invocation-bound `--review-attestation`; agents must not mint or edit
 it. The raw current and embedded prior review JSON never contains the
 attestation; round 2's single current attestation also binds the prior artifact
 ID and head. Its `review_sha256` binds the complete canonical raw review JSON,
-including the embedded prior review. Fastlane self-review omits the flag.
+including the embedded prior review. Hash exactly the review file passed with
+`--review`: the collector keeps that raw value unchanged, records live
+server-canonical threads in top-level `hosted_findings`, and the PR gate
+combines the layers only after validating the raw attestation. Fastlane
+self-review omits the flag.
 Round 1 is
 full and binds the exact PR base-to-head diff with `base_head_sha` and
 `diff_sha256`; round 2 is diff-only after P0/P1 fixes. P2/P3 are

@@ -21,7 +21,7 @@ from github_evidence_common import (
     normalize_checks,
 )
 from github_issue_reference import normalize_issue_reference, relation_snapshot
-from rejection_items import validate_review_attestation
+from rejection_items import validate_hosted_findings, validate_review_attestation
 from sensitive_enforcement import classify_sensitive_changes, sensitive_registry
 from specrail_lib import (
     PackConfig,
@@ -399,6 +399,8 @@ def build_evidence(
     authorization: dict[str, Any] | None = None,
     checks_unavailable: dict[str, Any] | None = None,
     review_attestation: dict[str, Any] | None = None,
+    hosted_findings: list[dict[str, Any]] | None = None,
+    prior_review_boundary: str | None = None,
 ) -> dict[str, Any]:
     """Normalize a single trusted PR snapshot into the compact contract."""
 
@@ -440,6 +442,15 @@ def build_evidence(
         invocation_id=gate_invocation_id.strip(),
         required=profile in {"standard", "heavy"},
     )
+    if hosted_findings is not None:
+        hosted_errors = validate_hosted_findings(hosted_findings)
+        if hosted_errors:
+            raise EvidenceError("; ".join(hosted_errors))
+    if prior_review_boundary is not None and (
+        not isinstance(prior_review_boundary, str)
+        or not prior_review_boundary.strip()
+    ):
+        raise EvidenceError("prior_review_boundary must be a non-empty string")
     evidence: dict[str, Any] = {
         "contract_version": 3,
         "repository": repository,
@@ -467,6 +478,12 @@ def build_evidence(
         evidence["human_merge_authorization"] = authorization
     if review_attestation is not None:
         evidence["review_attestation"] = dict(review_attestation)
+    if hosted_findings is not None:
+        evidence["hosted_findings"] = [
+            dict(finding) for finding in hosted_findings
+        ]
+    if prior_review_boundary is not None:
+        evidence["prior_review_boundary"] = prior_review_boundary
     if checks_unavailable is not None:
         evidence["checks_unavailable"] = checks_unavailable
         default_base_ref = checks_unavailable.get("default_base_ref")
@@ -593,11 +610,7 @@ def collect_evidence(
         repository=github_repo,
         profile=profile,
         gate_invocation_id=gate_invocation_id,
-        review=combine_review_findings(
-            review,
-            after_hosted,
-            prior_review_boundary=prior_review_boundary,
-        ),
+        review=review,
         expected_issue=expected_issue,
         issue_payload=issue_payload,
         repo=repo,
@@ -605,6 +618,8 @@ def collect_evidence(
         authorization=authorization,
         checks_unavailable=checks_unavailable,
         review_attestation=review_attestation,
+        hosted_findings=after_hosted,
+        prior_review_boundary=prior_review_boundary,
     )
 
 

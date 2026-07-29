@@ -355,6 +355,7 @@ def evaluate_review_gate(
     gate_invocation_id: str | None = None,
     attestation: dict[str, Any] | None = None,
     _embedded_review: bool = False,
+    _attestation_validated: bool = False,
 ) -> dict[str, Any]:
     """Validate a v3 review artifact and return all failures in one result."""
 
@@ -416,7 +417,7 @@ def evaluate_review_gate(
         reasons.append(f"{profile} profile requires an independent_lane review")
     if not independent_required and source != "self_review":
         reasons.append(f"{profile} profile requires a self_review")
-    if not _embedded_review:
+    if not (_embedded_review or _attestation_validated):
         att_missing, att_reasons = validate_review_attestation(
             review,
             attestation,

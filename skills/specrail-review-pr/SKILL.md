@@ -27,7 +27,9 @@ content, using UTF-8 SHA-256 over
 `json.dumps(review, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`.
 Raw current and embedded prior review artifacts never contain an attestation.
 The implementation or review agent must not mint, edit, copy, persist, or reuse
-it. `self_review` omits it.
+it. Hash the raw review exactly as produced; hosted threads are collector-owned
+top-level PR evidence and must not be inserted into the review before hashing.
+`self_review` omits it.
 
 ## Contract
 
@@ -50,6 +52,10 @@ Compact review contract (`contract_version: 3`):
   `requires_independent_review` policy; noncanonical profile overrides block.
 - The artifact is advisory and cannot grant final approval or merge authority.
 <!-- specrail-bounded-review-contract-v1:end -->
+
+Embedded prior local findings retain their complete fields in round 2. Server
+history may override only findings that explicitly claim hosted origin and
+match authenticated hosted evidence.
 
 Artifact fields are the closed set declared by
 `schemas/review_result.schema.json`. `body` includes `## Summary` and

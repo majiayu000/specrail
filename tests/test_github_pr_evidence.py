@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from github_pr_evidence import (
     collect_pr_view,
     combine_review_findings,
 )
+from pr_gate import evaluate_pr_gate
 from review_json_gate import evaluate_review_gate
 from rejection_items import canonical_review_sha256
 from specrail_lib import PackConfig
@@ -860,6 +863,7 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
         "severity": "P2",
         "status": "unresolved",
         "summary": "Sensitive follow-up.",
+        "fix_paths": ["src/app.py"],
         "origin": "hosted",
         "outdated": False,
     }
@@ -874,9 +878,6 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
 
     monkeypatch.setattr("github_pr_evidence.collect_hosted_findings", hosted)
     current_review = review(profile="heavy")
-    collected_review = combine_review_findings(
-        current_review, [dict(hosted_finding)]
-    )
 
     result = collect_evidence(
         "acme/widgets",
@@ -885,7 +886,7 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
         gate_invocation_id="gate-1",
         review=current_review,
         review_attestation=review_attestation(
-            review_payload=collected_review
+            review_payload=current_review
         ),
         repo=tmp_path,
         config=config(tmp_path, ["src/**"]),
@@ -893,7 +894,145 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
 
     assert result["profile"] == "heavy"
     assert hosted_calls == ["a" * 40, "a" * 40]
-    assert result["review"]["verdict"] == "non_blocking"
+    assert result["review"] == current_review
+    assert result["hosted_findings"] == [hosted_finding]
+
+
+def test_round_two_local_finding_collects_and_passes_pr_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+
+    def commit(contents: str, message: str) -> str:
+        source = repo / "src" / "app.py"
+        source.parent.mkdir(exist_ok=True)
+        source.write_text(contents, encoding="utf-8")
+        subprocess.run(["git", "add", "src/app.py"], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=SpecRail Test",
+                "-c",
+                "user.email=specrail@example.invalid",
+                "commit",
+                "-qm",
+                message,
+            ],
+            cwd=repo,
+            check=True,
+        )
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    base_head = commit("value = 'safe'\n", "base")
+    prior_head = commit("value = 'broken'\n", "introduce defect")
+    current_head = commit("value = 'fixed'\n", "fix defect")
+
+    def diff_bytes(start: str, end: str, *, merge_base: bool) -> bytes:
+        separator = "..." if merge_base else ".."
+        return subprocess.run(
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--binary",
+                f"{start}{separator}{end}",
+                "--",
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        ).stdout
+
+    prior = review(head=prior_head)
+    prior.update(
+        {
+            "artifact_id": "review-42-round1",
+            "base_head_sha": base_head,
+            "diff_sha256": hashlib.sha256(
+                diff_bytes(base_head, prior_head, merge_base=True)
+            ).hexdigest(),
+            "verdict": "blocking",
+            "findings": [
+                {
+                    "id": "local:P1-value",
+                    "severity": "P1",
+                    "status": "unresolved",
+                    "summary": "The value is unsafe.",
+                    "fix_paths": ["src/app.py"],
+                    "origin": "local",
+                }
+            ],
+        }
+    )
+    current = review(head=current_head)
+    current.update(
+        {
+            "artifact_id": "review-42-round2",
+            "base_head_sha": prior_head,
+            "diff_sha256": hashlib.sha256(
+                diff_bytes(prior_head, current_head, merge_base=False)
+            ).hexdigest(),
+            "round": 2,
+            "mode": "diff_only",
+            "prior_review": prior,
+            "findings": [
+                {
+                    "id": "local:P1-value",
+                    "severity": "P1",
+                    "status": "resolved",
+                    "summary": "The value is unsafe.",
+                    "fix_paths": ["src/app.py"],
+                    "origin": "local",
+                    "introduced_by_diff": False,
+                }
+            ],
+        }
+    )
+    snapshot = pr_payload(head=current_head)
+    snapshot["baseRefOid"] = base_head
+    snapshot["files"] = [{"path": "src/app.py"}]
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_pr_view",
+        lambda _repo, _pr: snapshot,
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_head_push_boundary",
+        lambda _repo, _ref, _head: "2026-07-29T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_hosted_findings",
+        lambda _repo, _pr, _head: [],
+    )
+
+    collected = collect_evidence(
+        "acme/widgets",
+        42,
+        profile="standard",
+        gate_invocation_id="gate-1",
+        review=current,
+        review_attestation=review_attestation(
+            head=current_head,
+            review_payload=current,
+        ),
+        repo=repo,
+        config=config(repo),
+    )
+    result = evaluate_pr_gate(collected, repo, config(repo))
+
+    assert collected["review"] == current
+    assert collected["review"]["prior_review"]["findings"] == prior["findings"]
+    assert collected["hosted_findings"] == []
+    assert result["decision"] == "allowed", result["reasons"]
 
 
 def test_noncanonical_fastlane_independent_review_is_rejected(
