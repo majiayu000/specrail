@@ -27,8 +27,11 @@
 - [ ] native threads 可用时，已记录独立 reviewer 或 merge-reviewer lane evidence。
 - [ ] merge state 为 clean。
 - [ ] merge 前已记录 human merge authorization。
-- [ ] `python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --json > pr-evidence.json` 结果：
-- [ ] `python3 checks/pr_gate.py --repo . --evidence <evidence.json>` 结果：
+- [ ] Fastlane：`python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --issue <issue-number> --profile fastlane --gate-invocation-id <current-id> --review <review.json> --json > pr-evidence.json` 结果：
+- [ ] Standard/heavy snapshot：`python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --issue <issue-number> --profile <standard|heavy> --gate-invocation-id <current-id> --review <review.json> --hosted-snapshot-template --json > hosted-snapshot.json` 结果：
+- [ ] 由 trusted host/coordinator 对 snapshot 出具 attestation 后，执行 standard/heavy final collection：`python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr-number> --issue <issue-number> --profile <standard|heavy> --gate-invocation-id <current-id> --review <review.json> --review-attestation <host-attestation.json> --json > pr-evidence.json` 结果：
+- [ ] `python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json` 结果：
+- 权威细节：`skills/specrail-pr-gate/SKILL.md`。
 
 ## Verification
 

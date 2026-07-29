@@ -248,6 +248,31 @@ def test_route_gate_uses_shared_label_exclusivity(
     assert any("conflicting" in reason for reason in payload["reasons"])
 
 
+def test_route_gate_aggregates_label_conflict_and_missing_plan(
+    tmp_path: Path,
+) -> None:
+    evidence_path = write_issue_evidence(
+        tmp_path,
+        labels=["ready_to_implement", "ready_to_spec"],
+    )
+
+    _result, payload = run_route_gate(
+        "--route", "implement",
+        "--issue", "999",
+        "--github-repo", "example/consumer",
+        "--profile", "standard",
+        "--mode", "required",
+        "--evidence", str(evidence_path),
+    )
+
+    assert payload["decision"] == "blocked"
+    assert any("conflicting state labels" in reason for reason in payload["reasons"])
+    assert "testable_plan" in payload["missing"]
+    rejection_items = payload["rejection_items"]
+    assert any("conflicting state labels" in item["found"] for item in rejection_items)
+    assert any(item["item_id"].endswith(":testable_plan") for item in rejection_items)
+
+
 def test_release_note_allows_done_lifecycle_state(tmp_path: Path) -> None:
     evidence_path = tmp_path / "issue-evidence.json"
     evidence_path.write_text(

@@ -141,10 +141,8 @@ def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
     count = payload.get("changedFiles")
     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
         raise EvidenceError("changedFiles must be a non-negative integer")
-    identity = {
-        "changedFiles": count,
-        "headRefOid": _require_string(payload, "headRefOid"),
-    }
+    _require_string(payload, "headRefOid")
+    snapshot = dict(payload)
     payload["files"] = [
         {"path": path}
         for path in collect_changed_files(github_repo, pr_number, count)
@@ -152,12 +150,12 @@ def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
     final = json_object(
         run_gh_json([
             "pr", "view", str(pr_number), "--repo", github_repo,
-            "--json", "headRefOid,changedFiles",
+            "--json", ",".join(PR_VIEW_FIELDS),
         ]),
         "final gh pr view response",
     )
-    if final != identity:
-        raise EvidenceError("PR identity changed while collecting changed files")
+    if final != snapshot:
+        raise EvidenceError("PR snapshot changed while collecting changed files")
     return payload
 
 

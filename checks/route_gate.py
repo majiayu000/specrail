@@ -252,9 +252,10 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     try:
         _label_state, outcome_labels = validate_issue_labels(config, labels)
     except SpecRailError as exc:
-        return blocked_result(
-            route, explicit_state, args, [*reasons, str(exc)]
-        )
+        evidence_errors.append(str(exc))
+        reasons.append(str(exc))
+        items.append(item_from_reason(str(exc), "invalid_evidence_value"))
+        outcome_labels = []
     blocking_outcomes = sorted(set(outcome_labels) - {"parked"})
     if blocking_outcomes:
         return blocked_result(

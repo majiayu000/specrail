@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(CHECKS))
 
 from check_workflow import (  # noqa: E402
+    _product_behavior_ids,
     discover_spec_packet_dirs,
     select_spec_packet_dirs,
     validate_spec_packet,
@@ -27,6 +28,32 @@ from specrail_lib import validate_skills_lock  # noqa: E402
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "template",
+    [ROOT / "templates/product_spec.md", ROOT / "templates/zh-CN/product_spec.md"],
+)
+def test_product_behavior_ids_ignore_template_guidance(template: Path) -> None:
+    assert _product_behavior_ids(template.read_text(encoding="utf-8")) == {"B-001"}
+
+
+def test_product_behavior_ids_only_parse_real_declarations_and_ranges() -> None:
+    product = (
+        "## Behavior Invariants\n\n"
+        "<!-- 9. B-099 hidden -->\n"
+        "```md\n8. B-088 example\n```\n"
+        "Guidance mentions B-077.\n"
+        "1. `B-001`..`B-003` declared range\n"
+        "- B-004 declared bullet\n"
+    )
+
+    assert _product_behavior_ids(product) == {
+        "B-001",
+        "B-002",
+        "B-003",
+        "B-004",
+    }
 
 
 def test_task_plan_rejects_duplicate_ids(tmp_path: Path) -> None:

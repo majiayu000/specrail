@@ -392,6 +392,37 @@ def test_round_two_digest_can_be_checked_without_git_repo() -> None:
     assert result["decision"] == "allowed", result["reasons"]
 
 
+@pytest.mark.parametrize("malformed_findings", [None, {"id": "P1-not-an-array"}])
+def test_round_two_rejects_non_array_prior_findings_without_crashing(
+    malformed_findings: object,
+) -> None:
+    diff = load_diff()
+    review = valid_review()
+    prior = copy.deepcopy(review)
+    prior.update(
+        {
+            "base_head_sha": "c" * 40,
+            "head_sha": "b" * 40,
+            "diff_sha256": hashlib.sha256(diff.encode()).hexdigest(),
+            "verdict": "blocking",
+            "findings": malformed_findings,
+        }
+    )
+    review.update(
+        {
+            "round": 2,
+            "mode": "diff_only",
+            "base_head_sha": "b" * 40,
+            "prior_review": prior,
+        }
+    )
+
+    result = evaluate_review_gate(review, diff)
+
+    assert result["decision"] == "blocked"
+    assert "prior_review: findings must be an array" in result["reasons"]
+
+
 def test_round_two_rejects_paths_outside_prior_blocker_fix_scope() -> None:
     diff = load_diff() + (
         "diff --git a/docs/extra.md b/docs/extra.md\n"
