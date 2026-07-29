@@ -135,11 +135,26 @@ packet, run the exact configured command returned by `route_gate.py` in
 
 9. Before reporting a PR as merge-ready, collect PR evidence and run:
 
+For fastlane self-review:
+
 ```sh
 python3 checks/github_pr_evidence.py \
   --github-repo OWNER/REPO \
   --pr <pr-number> \
-  --profile <profile> \
+  --profile fastlane \
+  --gate-invocation-id <id> \
+  --review <review.json> \
+  --json > pr-evidence.json
+python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
+```
+
+For standard/heavy independent review:
+
+```sh
+python3 checks/github_pr_evidence.py \
+  --github-repo OWNER/REPO \
+  --pr <pr-number> \
+  --profile <standard|heavy> \
   --gate-invocation-id <id> \
   --review <review.json> \
   --hosted-snapshot-template \
@@ -148,7 +163,7 @@ python3 checks/github_pr_evidence.py \
 python3 checks/github_pr_evidence.py \
   --github-repo OWNER/REPO \
   --pr <pr-number> \
-  --profile <profile> \
+  --profile <standard|heavy> \
   --gate-invocation-id <id> \
   --review <review.json> \
   --review-attestation <host-attestation.json> \

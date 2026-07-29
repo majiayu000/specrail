@@ -18,6 +18,7 @@ from github_pr_evidence import (
     collect_hosted_snapshot_template,
     collect_hosted_findings,
     collect_pr_view,
+    collect_snapshot,
     combine_review_findings,
 )
 from pr_gate import evaluate_pr_gate
@@ -308,7 +309,7 @@ def test_collect_pr_view_uses_complete_rest_file_set(
     def fake_run(args: list[str]) -> object:
         calls.append(args)
         if args[:2] == ["pr", "view"]:
-            return {"changedFiles": 101}
+            return {"changedFiles": 101, "headRefOid": "a" * 40}
         page = int(
             next(value for value in args if value.startswith("page=")).split("=", 1)[1]
         )
@@ -325,14 +326,39 @@ def test_collect_pr_view_uses_complete_rest_file_set(
 
     assert len(payload["files"]) == 101
     assert payload["files"][-1]["path"] == "src/file-100.py"
-    assert len(calls) == 3
+    assert len(calls) == 4
+
+
+@pytest.mark.parametrize(
+    "final_identity",
+    [
+        {"changedFiles": 1, "headRefOid": "b" * 40},
+        {"changedFiles": 2, "headRefOid": "a" * 40},
+    ],
+)
+def test_collect_pr_view_rejects_identity_drift_during_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+    final_identity: dict[str, object],
+) -> None:
+    responses: list[object] = [
+        {"changedFiles": 1, "headRefOid": "a" * 40},
+        [{"filename": "src/same.py"}],
+        final_identity,
+    ]
+    monkeypatch.setattr(
+        "github_pr_evidence.run_gh_json",
+        lambda _args: responses.pop(0),
+    )
+
+    with pytest.raises(EvidenceError, match="PR identity changed"):
+        collect_pr_view("acme/widgets", 42)
 
 
 def test_collect_pr_view_rejects_incomplete_rest_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     responses: list[object] = [
-        {"changedFiles": 101},
+        {"changedFiles": 101, "headRefOid": "a" * 40},
         [{"filename": "src/only.py"}],
     ]
     monkeypatch.setattr(
@@ -1330,4 +1356,43 @@ def test_collect_evidence_rejects_file_set_drift(
             gate_invocation_id="gate-1",
             review=review(),
             review_attestation=review_attestation(),
+        )
+
+
+@pytest.mark.parametrize(
+    "final_issue",
+    [
+        {"number": 208, "state": "CLOSED", "url": "https://example/208"},
+        {"number": 208, "state": "OPEN", "url": "https://example/moved"},
+        {"number": 209, "state": "OPEN", "url": "https://example/208"},
+    ],
+)
+def test_partial_issue_drift_is_rejected_at_collection_end(
+    monkeypatch: pytest.MonkeyPatch,
+    final_issue: dict[str, object],
+) -> None:
+    snapshot = pr_payload()
+    snapshot["body"] = "Refs #208"
+    snapshot["closingIssuesReferences"] = []
+    issue_snapshots = [
+        {"number": 208, "state": "OPEN", "url": "https://example/208"},
+        final_issue,
+    ]
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_pr_view",
+        lambda _repo, _pr: snapshot,
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_issue_view",
+        lambda _repo, _issue: issue_snapshots.pop(0),
+    )
+
+    with pytest.raises(EvidenceError, match="partial issue changed"):
+        collect_snapshot(
+            "acme/widgets",
+            42,
+            profile="fastlane",
+            gate_invocation_id="gate-1",
+            review=review(profile="fastlane"),
+            expected_issue=208,
         )
