@@ -16,6 +16,19 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def skill_metadata(name: str) -> str:
+    return "\n".join(
+        [
+            "interface:",
+            f'  display_name: "{name}"',
+            '  short_description: "Explicit test skill."',
+            "policy:",
+            "  allow_implicit_invocation: false",
+            "",
+        ]
+    )
+
+
 def write_skill_repo(repo: Path, name: str = "specrail-example") -> None:
     skill_text = "\n".join(
         [
@@ -29,13 +42,16 @@ def write_skill_repo(repo: Path, name: str = "specrail-example") -> None:
         ]
     )
     skill_path = repo / "skills" / name / "SKILL.md"
+    metadata_path = repo / "skills" / name / "agents" / "openai.yaml"
     write_text(skill_path, skill_text)
+    write_text(metadata_path, skill_metadata(name))
     digest = hashlib.sha256(skill_text.encode("utf-8")).hexdigest()
+    metadata_digest = hashlib.sha256(metadata_path.read_bytes()).hexdigest()
     write_text(
         repo / "skills-lock.json",
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "algorithm": "sha256",
                 "profiles": {
                     "core": [name],
@@ -47,6 +63,10 @@ def write_skill_repo(repo: Path, name: str = "specrail-example") -> None:
                         "name": name,
                         "path": f"skills/{name}/SKILL.md",
                         "computedHash": f"sha256:{digest}",
+                        "agentMetadataPath": (
+                            f"skills/{name}/agents/openai.yaml"
+                        ),
+                        "agentMetadataHash": f"sha256:{metadata_digest}",
                     }
                 ],
             }
@@ -67,15 +87,20 @@ def add_locked_skill(repo: Path, name: str) -> None:
         ]
     )
     skill_path = repo / "skills" / name / "SKILL.md"
+    metadata_path = repo / "skills" / name / "agents" / "openai.yaml"
     write_text(skill_path, skill_text)
+    write_text(metadata_path, skill_metadata(name))
     lock_path = repo / "skills-lock.json"
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     digest = hashlib.sha256(skill_text.encode("utf-8")).hexdigest()
+    metadata_digest = hashlib.sha256(metadata_path.read_bytes()).hexdigest()
     lock["skills"].append(
         {
             "name": name,
             "path": f"skills/{name}/SKILL.md",
             "computedHash": f"sha256:{digest}",
+            "agentMetadataPath": f"skills/{name}/agents/openai.yaml",
+            "agentMetadataHash": f"sha256:{metadata_digest}",
         }
     )
     lock["skills"].sort(key=lambda item: item["path"])
@@ -156,6 +181,13 @@ def test_repository_catalog_exposes_only_three_explicit_entrypoints() -> None:
             line for line in text.splitlines() if line.startswith("description:")
         )
         assert description.startswith("description: Use only when the user explicitly")
+        metadata = (
+            ROOT / "skills" / name / "agents" / "openai.yaml"
+        ).read_text(encoding="utf-8")
+        assert "interface:" in metadata
+        assert "display_name:" in metadata
+        assert "short_description:" in metadata
+        assert "policy:\n  allow_implicit_invocation: false\n" in metadata
     core = (ROOT / "skills" / "specrail" / "SKILL.md").read_text(encoding="utf-8")
     assert "Never use for SpecRail Heavy, implx, or ordinary coding tasks" in core
 
@@ -170,6 +202,7 @@ def test_repository_default_install_registers_only_specrail(
     assert result.returncode == 0
     assert "profile: core" in result.stdout
     assert {path.name for path in target.iterdir()} == {"specrail"}
+    assert (target / "specrail" / "agents" / "openai.yaml").is_file()
 
 
 def test_install_codex_skills_apply_syncs_locked_skill(tmp_path: Path) -> None:
@@ -260,15 +293,61 @@ def test_apply_removes_legacy_managed_skill_directories(tmp_path: Path) -> None:
     write_profiled_skill_repo(repo)
     write_text(target / "specrail-workflow" / "SKILL.md", "legacy router\n")
     write_text(target / "specrail-install" / "SKILL.md", "legacy installer\n")
+    write_text(target / "specrail-pr-gate" / "SKILL.md", "legacy PR gate\n")
+    write_text(
+        target / "implement-specrail-issues" / "SKILL.md",
+        "legacy broad queue skill\n",
+    )
     write_text(target / "user-owned" / "SKILL.md", "keep me\n")
 
     result = run_installer(repo, target, "--profile", "core", "--apply")
 
     assert result.returncode == 0
-    assert "removed 2 stale managed skills" in result.stdout
+    assert "removed 4 stale managed skills" in result.stdout
     assert not (target / "specrail-workflow").exists()
     assert not (target / "specrail-install").exists()
+    assert not (target / "specrail-pr-gate").exists()
+    assert not (target / "implement-specrail-issues").exists()
     assert (target / "user-owned" / "SKILL.md").read_text() == "keep me\n"
+
+
+def test_migration_cleans_separate_legacy_target(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "user-home" / ".agents" / "skills"
+    legacy_target = tmp_path / "user-home" / ".codex" / "skills"
+    legacy_archive = tmp_path / "user-home" / ".codex" / "skills-archive"
+    write_profiled_skill_repo(repo)
+    write_text(
+        legacy_target / "implement-specrail-issues" / "SKILL.md",
+        "legacy broad queue skill\n",
+    )
+    write_text(
+        legacy_target / "specrail-pr-gate" / "SKILL.md",
+        "legacy PR gate\n",
+    )
+    write_text(legacy_target / "user-owned" / "SKILL.md", "keep me\n")
+
+    result = run_installer(
+        repo,
+        target,
+        "--profile",
+        "core",
+        "--legacy-target-dir",
+        str(legacy_target),
+        "--legacy-archive-dir",
+        str(legacy_archive),
+        "--apply",
+    )
+
+    assert result.returncode == 0
+    assert (target / "specrail" / "agents" / "openai.yaml").is_file()
+    assert not (legacy_target / "implement-specrail-issues").exists()
+    assert not (legacy_target / "specrail-pr-gate").exists()
+    assert (legacy_archive / "implement-specrail-issues" / "SKILL.md").is_file()
+    assert (legacy_archive / "specrail-pr-gate" / "SKILL.md").is_file()
+    assert (
+        legacy_target / "user-owned" / "SKILL.md"
+    ).read_text() == "keep me\n"
 
 
 def test_profile_switch_dry_run_does_not_remove_stale_skills(
@@ -417,15 +496,34 @@ def test_check_installed_reports_multiple_drift(tmp_path: Path) -> None:
     assert result.stdout.count("actual sha256:") == 2
 
 
-def test_check_installed_uses_codex_home_when_target_is_not_explicit(
+def test_check_installed_reports_agent_metadata_drift(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_skill_repo(repo)
+    assert run_installer(repo, target, "--apply").returncode == 0
+    write_text(
+        target / "specrail-example" / "agents" / "openai.yaml",
+        "policy:\n  allow_implicit_invocation: true\n",
+    )
+
+    result = run_installer(repo, target, "--check-installed")
+
+    assert result.returncode == 1
+    assert "specrail-example: drift" in result.stdout
+    assert "agents/openai.yaml" in result.stdout
+
+
+def test_check_installed_uses_user_agents_dir_when_target_is_not_explicit(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
+    user_home = tmp_path / "user-home"
     codex_home = tmp_path / "codex-home"
-    target = codex_home / "skills"
+    target = user_home / ".agents" / "skills"
     write_skill_repo(repo)
     assert run_installer(repo, target, "--apply").returncode == 0
     environment = dict(os.environ)
+    environment["HOME"] = str(user_home)
     environment["CODEX_HOME"] = str(codex_home)
 
     result = subprocess.run(
@@ -448,30 +546,21 @@ def test_check_installed_uses_codex_home_when_target_is_not_explicit(
     assert "specrail-example: match" in result.stdout
 
 
-def test_check_installed_uses_home_fallback_when_codex_home_is_unset(
+def test_explicit_target_dir_overrides_user_agents_default(
     tmp_path: Path,
 ) -> None:
     repo = tmp_path / "repo"
     user_home = tmp_path / "user-home"
-    target = user_home / ".codex" / "skills"
+    target = tmp_path / "explicit-target"
     write_skill_repo(repo)
     assert run_installer(repo, target, "--apply").returncode == 0
     environment = dict(os.environ)
-    environment.pop("CODEX_HOME", None)
     environment["HOME"] = str(user_home)
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "tools" / "install_codex_skills.py"),
-            "--repo",
-            str(repo),
-            "--check-installed",
-        ],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+    result = run_installer(
+        repo,
+        target,
+        "--check-installed",
         env=environment,
     )
 

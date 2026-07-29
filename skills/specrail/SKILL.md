@@ -43,6 +43,9 @@ policy, or produce an authoritative merge verdict.
 
 ## Installation profiles
 
+User-level installation defaults to `~/.agents/skills`. The installed bundle
+includes machine-readable metadata that disables implicit invocation.
+
 Preview the default single-entry installation:
 
 ```sh
@@ -73,3 +76,13 @@ must preserve unrelated user-owned skills. Diagnose without writing:
 ```sh
 python3 tools/install_codex_skills.py --repo . --profile core --check-installed
 ```
+
+Migrate an older global installation by previewing, then applying:
+
+```sh
+python3 tools/install_codex_skills.py --repo . --profile core \
+  --legacy-target-dir ~/.codex/skills \
+  --legacy-archive-dir ~/.codex/specrail-skills-v1
+```
+
+Add `--apply` only after reviewing the exact install and cleanup paths.

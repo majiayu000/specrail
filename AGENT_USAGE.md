@@ -23,6 +23,8 @@ engines.
 
 The default installation exposes only the `specrail` entrypoint. Heavy and
 queue behavior require their explicit profiles and explicit user invocation.
+User-level installation defaults to `~/.agents/skills`; every entrypoint also
+sets `policy.allow_implicit_invocation: false` in `agents/openai.yaml`.
 SpecRail adds no extra preflight or merge decision. Repository-native tests,
 CI, review rules, and the caller's authorization determine what may happen.
 

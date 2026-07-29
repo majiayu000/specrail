@@ -1,0 +1,6 @@
+interface:
+  display_name: "SpecRail"
+  short_description: "Explicit opt-in workflow for one development task."
+  default_prompt: "Use $specrail for this task."
+policy:
+  allow_implicit_invocation: false

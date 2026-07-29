@@ -1,0 +1,6 @@
+interface:
+  display_name: "SpecRail Heavy"
+  short_description: "Explicit deep planning and verification profile."
+  default_prompt: "Use $specrail-heavy for this task."
+policy:
+  allow_implicit_invocation: false
