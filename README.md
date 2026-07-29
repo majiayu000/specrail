@@ -32,6 +32,10 @@ say `SpecRail`, `SpecRail Heavy`, or `implx`.
 
 ## Install profiles
 
+The user-level default target is `~/.agents/skills`. Every installed entrypoint
+includes `agents/openai.yaml` with implicit invocation disabled; installation
+alone does not activate SpecRail.
+
 Preview the default `core` profile:
 
 ```sh
@@ -62,6 +66,28 @@ unrelated user skills. Verify the selected profile without writing:
 ```sh
 python3 tools/install_codex_skills.py --repo . --profile core --check-installed
 ```
+
+To migrate an older global installation, preview both the new install and old
+directory cleanup:
+
+```sh
+python3 tools/install_codex_skills.py --repo . --profile core \
+  --legacy-target-dir ~/.codex/skills \
+  --legacy-archive-dir ~/.codex/specrail-skills-v1
+```
+
+After reviewing the exact paths, apply the same command with `--apply`. Only
+known SpecRail-managed skill directories are moved out of the legacy target;
+unrelated skills are preserved and the archived copies remain recoverable.
+
+For a repository-scoped install, pass its official skill directory explicitly:
+
+```sh
+python3 tools/install_codex_skills.py --repo . --profile core \
+  --target-dir /path/to/consumer/.agents/skills --apply
+```
+
+This does not modify the consumer's `AGENTS.md`, checks, or CI workflows.
 
 ## Historical archive
 

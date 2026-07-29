@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "algorithm": "sha256",
   "profiles": {
     "core": [
@@ -19,17 +19,23 @@
     {
       "name": "implx",
       "path": "skills/implx/SKILL.md",
-      "computedHash": "sha256:4812fb26b60d40e1c006efb7be3071f459ccf2261a94f602ffe913aae42a1af4"
+      "computedHash": "sha256:4812fb26b60d40e1c006efb7be3071f459ccf2261a94f602ffe913aae42a1af4",
+      "agentMetadataPath": "skills/implx/agents/openai.yaml",
+      "agentMetadataHash": "sha256:a15ea44b1a0f1a35a9daf182946a5ff7de6d2f5e7a23a60df5dec97786aed929"
     },
     {
       "name": "specrail-heavy",
       "path": "skills/specrail-heavy/SKILL.md",
-      "computedHash": "sha256:081446cf661a655d050f3a0fc92f053681504e4dc9d8abf8b44d852ddbd33adb"
+      "computedHash": "sha256:081446cf661a655d050f3a0fc92f053681504e4dc9d8abf8b44d852ddbd33adb",
+      "agentMetadataPath": "skills/specrail-heavy/agents/openai.yaml",
+      "agentMetadataHash": "sha256:1795c8a482cede1234dfa06c4c23815a96992b51c56438cc442591ec66e8b25b"
     },
     {
       "name": "specrail",
       "path": "skills/specrail/SKILL.md",
-      "computedHash": "sha256:9e8823c63c307ecc8d6828233750c475bd40b773545aae26bd417058c4d12ec7"
+      "computedHash": "sha256:2405c017171172aad423525fdc61ccd325698d95c52352c0b592276d6f2abdda",
+      "agentMetadataPath": "skills/specrail/agents/openai.yaml",
+      "agentMetadataHash": "sha256:43f5adbaba20873b80a2c13a01ba9f9b5f9216d3bf304f7ccd905a8026398598"
     }
   ]
 }
