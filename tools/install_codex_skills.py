@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import sys
 from dataclasses import dataclass
@@ -20,12 +19,14 @@ from pathlib import Path
 INSTALL_PROFILES = ("core", "heavy", "all")
 LEGACY_MANAGED_SKILLS = frozenset(
     {
+        "implement-specrail-issues",
         "specrail-check-impl-against-spec",
         "specrail-diagnose-ci",
         "specrail-implement",
         "specrail-implement-queue",
         "specrail-install",
         "specrail-plan-tasks",
+        "specrail-pr-gate",
         "specrail-release-note",
         "specrail-review-pr",
         "specrail-triage-issue",
@@ -41,10 +42,16 @@ class InstallError(ValueError):
 
 
 @dataclass(frozen=True)
+class LockedFile:
+    relative_path: Path
+    expected_hash: str
+
+
+@dataclass(frozen=True)
 class LockedSkill:
     name: str
     source_dir: Path
-    expected_hash: str
+    files: tuple[LockedFile, ...]
 
 
 @dataclass(frozen=True)
@@ -58,6 +65,7 @@ class InstallResult:
     messages: tuple[str, ...]
     installed_count: int
     removed_count: int
+    archived_count: int
 
 
 @dataclass(frozen=True)
@@ -108,8 +116,8 @@ def validate_skills_lock(repo: Path) -> list[str]:
         return ["skills-lock.json: top-level value must be an object"]
 
     errors: list[str] = []
-    if lock.get("version") != 1:
-        errors.append("skills-lock.json: version must be 1")
+    if lock.get("version") != 2:
+        errors.append("skills-lock.json: version must be 2")
     if lock.get("algorithm") != "sha256":
         errors.append("skills-lock.json: algorithm must be sha256")
 
@@ -128,18 +136,28 @@ def validate_skills_lock(repo: Path) -> list[str]:
         name = item.get("name")
         relative = item.get("path")
         expected_hash = item.get("computedHash")
+        metadata_relative = item.get("agentMetadataPath")
+        metadata_expected_hash = item.get("agentMetadataHash")
         if not isinstance(name, str) or not name.strip():
             errors.append(f"skills-lock.json: skill #{index} missing name")
             continue
         if not isinstance(relative, str) or not relative.strip():
             errors.append(f"skills-lock.json: skill {name} missing path")
             continue
+        if not isinstance(metadata_relative, str) or not metadata_relative.strip():
+            errors.append(
+                f"skills-lock.json: skill {name} missing agentMetadataPath"
+            )
+            continue
         if name in seen_names:
             errors.append(f"skills-lock.json: duplicate skill name {name}")
-        if relative in seen_paths:
-            errors.append(f"skills-lock.json: duplicate skill path {relative}")
+        for declared_path in (relative, metadata_relative):
+            if declared_path in seen_paths:
+                errors.append(
+                    f"skills-lock.json: duplicate skill path {declared_path}"
+                )
+            seen_paths.add(declared_path)
         seen_names.add(name)
-        seen_paths.add(relative)
         ordered_paths.append(relative)
 
         path = Path(relative)
@@ -184,17 +202,67 @@ def validate_skills_lock(repo: Path) -> list[str]:
         elif expected_hash[7:] != actual_hash:
             errors.append(f"skills-lock.json: skill {name} computedHash mismatch")
 
+        metadata_path = Path(metadata_relative)
+        if (
+            metadata_path.is_absolute()
+            or ".." in metadata_path.parts
+            or metadata_path.parts
+            != ("skills", name, "agents", "openai.yaml")
+        ):
+            errors.append(
+                f"skills-lock.json: skill {name} agentMetadataPath must be "
+                f"skills/{name}/agents/openai.yaml"
+            )
+            continue
+
+        metadata_file = repo / metadata_path
+        if not metadata_file.is_file():
+            errors.append(
+                "skills-lock.json: agent metadata file does not exist: "
+                f"{metadata_relative}"
+            )
+            continue
+        metadata_text = read_text(metadata_file)
+        if "interface:\n" not in metadata_text:
+            errors.append(f"{metadata_relative}: interface mapping is required")
+        if "  display_name:" not in metadata_text:
+            errors.append(f"{metadata_relative}: interface.display_name is required")
+        if "  short_description:" not in metadata_text:
+            errors.append(
+                f"{metadata_relative}: interface.short_description is required"
+            )
+        if "policy:\n  allow_implicit_invocation: false\n" not in metadata_text:
+            errors.append(
+                f"{metadata_relative}: implicit invocation must be disabled"
+            )
+        metadata_actual_hash = hashlib.sha256(metadata_file.read_bytes()).hexdigest()
+        if not isinstance(
+            metadata_expected_hash, str
+        ) or not metadata_expected_hash.startswith("sha256:"):
+            errors.append(
+                f"skills-lock.json: skill {name} agentMetadataHash must start "
+                "with sha256:"
+            )
+        elif metadata_expected_hash[7:] != metadata_actual_hash:
+            errors.append(
+                f"skills-lock.json: skill {name} agentMetadataHash mismatch"
+            )
+
     if ordered_paths != sorted(ordered_paths):
         errors.append("skills-lock.json: skills must be sorted by path")
 
-    skill_files = {
+    source_files = {
         str(path.relative_to(repo))
         for path in sorted((repo / "skills").glob("*/SKILL.md"))
     }
-    for relative in sorted(skill_files - seen_paths):
-        errors.append(f"skills-lock.json: missing skill file {relative}")
-    for relative in sorted(seen_paths - skill_files):
-        errors.append(f"skills-lock.json: locked skill file missing from repo {relative}")
+    source_files.update(
+        str(path.relative_to(repo))
+        for path in sorted((repo / "skills").glob("*/agents/openai.yaml"))
+    )
+    for relative in sorted(source_files - seen_paths):
+        errors.append(f"skills-lock.json: missing locked file {relative}")
+    for relative in sorted(seen_paths - source_files):
+        errors.append(f"skills-lock.json: locked file missing from repo {relative}")
 
     profiles = lock.get("profiles")
     if not isinstance(profiles, dict):
@@ -248,10 +316,8 @@ def validate_skills_lock(repo: Path) -> list[str]:
     return errors
 
 
-def default_codex_skills_dir() -> Path:
-    codex_home = os.environ.get("CODEX_HOME")
-    base = Path(codex_home).expanduser() if codex_home else Path.home() / ".codex"
-    return base / "skills"
+def default_user_skills_dir() -> Path:
+    return Path.home() / ".agents" / "skills"
 
 
 def load_skill_catalog(repo: Path) -> SkillCatalog:
@@ -264,11 +330,22 @@ def load_skill_catalog(repo: Path) -> SkillCatalog:
     skills: list[LockedSkill] = []
     for item in lock["skills"]:
         rel_path = Path(item["path"])
+        metadata_path = Path(item["agentMetadataPath"])
+        skill_root = Path("skills") / item["name"]
         skills.append(
             LockedSkill(
                 name=item["name"],
-                source_dir=repo / rel_path.parent,
-                expected_hash=item["computedHash"],
+                source_dir=repo / skill_root,
+                files=(
+                    LockedFile(
+                        relative_path=rel_path.relative_to(skill_root),
+                        expected_hash=item["computedHash"],
+                    ),
+                    LockedFile(
+                        relative_path=metadata_path.relative_to(skill_root),
+                        expected_hash=item["agentMetadataHash"],
+                    ),
+                ),
             )
         )
     return SkillCatalog(
@@ -304,6 +381,8 @@ def install_skills(
     target_dir: Path,
     apply: bool,
     profile: str,
+    legacy_target_dirs: tuple[Path, ...] = (),
+    legacy_archive_dir: Path | None = None,
 ) -> InstallResult:
     repo = repo.resolve()
     target_dir = target_dir.expanduser()
@@ -315,6 +394,39 @@ def install_skills(
         for name in sorted(catalog.managed_names() - selected_names)
         if (target_dir / name).exists() or (target_dir / name).is_symlink()
     ]
+    legacy_destinations: list[Path] = []
+    target_root = target_dir.resolve()
+    for legacy_target_dir in legacy_target_dirs:
+        legacy_target_dir = legacy_target_dir.expanduser()
+        if legacy_target_dir.resolve() == target_root:
+            raise InstallError(
+                "legacy target directory must differ from install target: "
+                f"{legacy_target_dir}"
+            )
+        if legacy_target_dir.is_symlink():
+            raise InstallError(
+                f"refusing symbolic-link legacy target: {legacy_target_dir}"
+            )
+        legacy_destinations.extend(
+            legacy_target_dir / name
+            for name in sorted(catalog.managed_names())
+            if (legacy_target_dir / name).exists()
+            or (legacy_target_dir / name).is_symlink()
+        )
+    archive_destinations: dict[Path, Path] = {}
+    if legacy_archive_dir is not None:
+        legacy_archive_dir = legacy_archive_dir.expanduser()
+        if legacy_archive_dir.is_symlink():
+            raise InstallError(
+                f"refusing symbolic-link legacy archive: {legacy_archive_dir}"
+            )
+        for destination in legacy_destinations:
+            archive_destination = legacy_archive_dir / destination.name
+            if archive_destination.exists() or archive_destination.is_symlink():
+                raise InstallError(
+                    f"refusing to overwrite legacy archive: {archive_destination}"
+                )
+            archive_destinations[destination] = archive_destination
     messages: list[str] = []
 
     for skill in skills:
@@ -327,6 +439,19 @@ def install_skills(
                 f"refusing unsafe stale managed skill destination: {destination}"
             )
         messages.append(f"remove stale managed skill: {destination}")
+    for destination in legacy_destinations:
+        if destination.is_symlink() or not destination.is_dir():
+            raise InstallError(
+                f"refusing unsafe legacy managed skill destination: {destination}"
+            )
+        archive_destination = archive_destinations.get(destination)
+        if archive_destination is None:
+            messages.append(f"remove legacy managed skill: {destination}")
+        else:
+            messages.append(
+                f"archive legacy managed skill: {destination} -> "
+                f"{archive_destination}"
+            )
 
     if apply:
         try:
@@ -338,23 +463,34 @@ def install_skills(
                 shutil.copytree(skill.source_dir, destination)
 
             for skill in skills:
-                installed_file = target_dir / skill.name / "SKILL.md"
-                if not installed_file.is_file():
-                    raise InstallError(
-                        f"installed skill missing SKILL.md: {installed_file}"
+                for locked_file in skill.files:
+                    installed_file = (
+                        target_dir / skill.name / locked_file.relative_path
                     )
-                digest = (
-                    "sha256:"
-                    + hashlib.sha256(installed_file.read_bytes()).hexdigest()
-                )
-                if digest != skill.expected_hash:
-                    raise InstallError(
-                        f"installed skill hash mismatch for {skill.name}: "
-                        f"expected {skill.expected_hash}, got {digest}"
+                    if not installed_file.is_file():
+                        raise InstallError(
+                            f"installed skill file missing: {installed_file}"
+                        )
+                    digest = (
+                        "sha256:"
+                        + hashlib.sha256(installed_file.read_bytes()).hexdigest()
                     )
+                    if digest != locked_file.expected_hash:
+                        raise InstallError(
+                            f"installed file hash mismatch for {skill.name}/"
+                            f"{locked_file.relative_path}: expected "
+                            f"{locked_file.expected_hash}, got {digest}"
+                        )
 
             for destination in stale_destinations:
                 shutil.rmtree(destination)
+            for destination in legacy_destinations:
+                archive_destination = archive_destinations.get(destination)
+                if archive_destination is None:
+                    shutil.rmtree(destination)
+                else:
+                    archive_destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(destination, archive_destination)
         except OSError as exc:
             raise InstallError(
                 f"cannot apply profile {profile} to {target_dir}: {exc}"
@@ -362,7 +498,12 @@ def install_skills(
     return InstallResult(
         messages=tuple(messages),
         installed_count=len(skills),
-        removed_count=len(stale_destinations),
+        removed_count=(
+            len(stale_destinations)
+            + len(legacy_destinations)
+            - len(archive_destinations)
+        ),
+        archived_count=len(archive_destinations),
     )
 
 
@@ -370,6 +511,7 @@ def check_installed_skills(
     repo: Path,
     target_dir: Path,
     profile: str,
+    legacy_target_dirs: tuple[Path, ...] = (),
 ) -> InstalledCheck:
     """Compare installed skills with the lock without following unsafe links."""
     catalog = load_skill_catalog(repo.resolve())
@@ -386,11 +528,9 @@ def check_installed_skills(
 
     for skill in skills:
         skill_dir = target_dir / skill.name
-        installed_file = skill_dir / "SKILL.md"
-        common = (
-            f"expected {skill.expected_hash}, "
-            f"path {installed_file}"
-        )
+        primary = skill.files[0]
+        primary_file = skill_dir / primary.relative_path
+        common = f"expected {primary.expected_hash}, path {primary_file}"
 
         if target_is_unsafe:
             invalid = True
@@ -399,45 +539,72 @@ def check_installed_skills(
                 "target root must be a real directory)"
             )
             continue
-        if skill_dir.is_symlink() or installed_file.is_symlink():
+        if skill_dir.is_symlink():
             invalid = True
             messages.append(
                 f"{skill.name}: unsafe ({common}, actual unavailable, "
                 "symbolic links are not accepted)"
             )
             continue
-        if not installed_file.is_file():
-            invalid = True
-            messages.append(
-                f"{skill.name}: missing ({common}, actual missing)"
-            )
-            continue
 
-        try:
-            resolved_file = installed_file.resolve(strict=True)
-            resolved_file.relative_to(target_root)
-            resolved_file.relative_to(skill_dir.resolve(strict=True))
-            digest = (
-                "sha256:"
-                + hashlib.sha256(installed_file.read_bytes()).hexdigest()
+        skill_invalid = False
+        matched: list[str] = []
+        for locked_file in skill.files:
+            installed_file = skill_dir / locked_file.relative_path
+            file_common = (
+                f"file {locked_file.relative_path}, "
+                f"expected {locked_file.expected_hash}, path {installed_file}"
             )
-        except (OSError, ValueError) as exc:
-            invalid = True
-            messages.append(
-                f"{skill.name}: unsafe ({common}, actual unavailable, "
-                f"cannot safely read installed file: {exc})"
-            )
-            continue
+            if installed_file.is_symlink() or installed_file.parent.is_symlink():
+                invalid = True
+                skill_invalid = True
+                messages.append(
+                    f"{skill.name}: unsafe ({file_common}, actual unavailable, "
+                    "symbolic links are not accepted)"
+                )
+                continue
+            if not installed_file.is_file():
+                invalid = True
+                skill_invalid = True
+                messages.append(
+                    f"{skill.name}: missing ({file_common}, actual missing)"
+                )
+                continue
 
-        if digest != skill.expected_hash:
-            invalid = True
-            messages.append(
-                f"{skill.name}: drift ({common}, actual {digest})"
+            try:
+                resolved_file = installed_file.resolve(strict=True)
+                resolved_file.relative_to(target_root)
+                resolved_file.relative_to(skill_dir.resolve(strict=True))
+                digest = (
+                    "sha256:"
+                    + hashlib.sha256(installed_file.read_bytes()).hexdigest()
+                )
+            except (OSError, ValueError) as exc:
+                invalid = True
+                skill_invalid = True
+                messages.append(
+                    f"{skill.name}: unsafe ({file_common}, actual unavailable, "
+                    f"cannot safely read installed file: {exc})"
+                )
+                continue
+
+            if digest != locked_file.expected_hash:
+                invalid = True
+                skill_invalid = True
+                messages.append(
+                    f"{skill.name}: drift ({file_common}, actual {digest})"
+                )
+                continue
+            matched.append(
+                f"{locked_file.relative_path}: expected "
+                f"{locked_file.expected_hash}, actual {digest}, "
+                f"path {installed_file}"
             )
-            continue
-        messages.append(
-            f"{skill.name}: match ({common}, actual {digest})"
-        )
+
+        if not skill_invalid:
+            messages.append(
+                f"{skill.name}: match ({'; '.join(matched)})"
+            )
 
     selected_names = {skill.name for skill in skills}
     for name in sorted(catalog.managed_names() - selected_names):
@@ -449,6 +616,17 @@ def check_installed_skills(
             f"{name}: stale (path {installed_dir}, "
             f"not selected by profile {profile})"
         )
+    for legacy_target_dir in legacy_target_dirs:
+        legacy_target_dir = legacy_target_dir.expanduser()
+        for name in sorted(catalog.managed_names()):
+            installed_dir = legacy_target_dir / name
+            if not installed_dir.exists() and not installed_dir.is_symlink():
+                continue
+            invalid = True
+            messages.append(
+                f"{name}: legacy stale (path {installed_dir}, "
+                f"migrate to {target_dir})"
+            )
 
     return InstalledCheck(
         messages=tuple(messages),
@@ -467,8 +645,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--target-dir",
-        default=str(default_codex_skills_dir()),
-        help="Codex skills directory. Defaults to $CODEX_HOME/skills or ~/.codex/skills.",
+        default=str(default_user_skills_dir()),
+        help="Codex skills directory. Defaults to ~/.agents/skills.",
+    )
+    parser.add_argument(
+        "--legacy-target-dir",
+        action="append",
+        default=[],
+        help=(
+            "Old skill directory to inspect or clean while migrating. "
+            "Repeat for multiple directories."
+        ),
+    )
+    parser.add_argument(
+        "--legacy-archive-dir",
+        help=(
+            "Move managed skills from legacy targets into this archive "
+            "instead of deleting them."
+        ),
     )
     parser.add_argument(
         "--profile",
@@ -495,6 +689,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     repo = Path(args.repo).expanduser()
     target_dir = Path(args.target_dir).expanduser()
+    legacy_target_dirs = tuple(
+        Path(path).expanduser() for path in args.legacy_target_dir
+    )
+    legacy_archive_dir = (
+        Path(args.legacy_archive_dir).expanduser()
+        if args.legacy_archive_dir
+        else None
+    )
 
     try:
         if args.check_installed:
@@ -502,6 +704,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo,
                 target_dir,
                 args.profile,
+                legacy_target_dirs,
             )
         else:
             install_result = install_skills(
@@ -509,6 +712,8 @@ def main(argv: list[str] | None = None) -> int:
                 target_dir,
                 args.apply,
                 args.profile,
+                legacy_target_dirs,
+                legacy_archive_dir,
             )
     except InstallError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -549,6 +754,11 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"removed {install_result.removed_count} "
                 "stale managed skills"
+            )
+        if install_result.archived_count:
+            print(
+                f"archived {install_result.archived_count} "
+                "legacy managed skills"
             )
     else:
         print("no files written; rerun with --apply to install")
