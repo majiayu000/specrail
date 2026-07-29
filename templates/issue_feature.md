@@ -28,5 +28,4 @@ Maintainers choose one:
 - `needs_info`
 - `ready_to_spec`
 - `ready_to_implement`
-- `reserved_internal`
-
+- `parked`
