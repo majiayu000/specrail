@@ -3,6 +3,9 @@
 SpecRail is a lightweight, non-enforcing workflow kit. Repository-native
 instructions, tests, CI, and maintainer decisions remain authoritative.
 
+SpecRail is opt-in. Do not activate it for an ordinary coding request; require
+the user to explicitly say `SpecRail`, `SpecRail Heavy`, or `implx`.
+
 ## Working rules
 
 - Search existing Issues, PRs, branches, docs, and code before creating work.

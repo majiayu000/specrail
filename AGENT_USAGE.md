@@ -9,7 +9,8 @@ engines.
 2. Inspect current GitHub Issues, PRs, reviews, branches, and CI.
 3. Search before creating a new artifact.
 4. Confirm goal, context, constraints, and done-when for non-trivial work.
-5. Select only the focused skill needed for the current phase.
+5. Activate SpecRail only after the user explicitly says `SpecRail`,
+   `SpecRail Heavy`, or `implx`.
 
 ## Execute
 
@@ -20,6 +21,8 @@ engines.
 - Diagnose CI: reproduce the failing command, identify root cause, fix, rerun.
 - Finish: run native verification, address threads, and report current status.
 
+The default installation exposes only the `specrail` entrypoint. Heavy and
+queue behavior require their explicit profiles and explicit user invocation.
 SpecRail adds no extra preflight or merge decision. Repository-native tests,
 CI, review rules, and the caller's authorization determine what may happen.
 
