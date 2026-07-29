@@ -72,6 +72,7 @@ def test_main_prints_compact_collector_result(
         "lane_id": "review-lane-1",
         "reviewer_actor": "reviewer-agent-1",
         "review_sha256": "c" * 64,
+        "hosted_snapshot_sha256": "d" * 64,
         "head_sha": "a" * 40,
         "invocation_id": "gate-1",
     }
@@ -123,4 +124,50 @@ def test_main_prints_compact_collector_result(
     assert observed["authorization"] == authorization
     assert observed["review_attestation"] == attestation
     assert observed["checks_unavailable"] == unavailable
+    assert observed["gate_invocation_id"] == "gate-1"
+
+
+def test_main_prints_hosted_snapshot_template_without_attestation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    review_path = tmp_path / "review.json"
+    review_path.write_text("{}", encoding="utf-8")
+    expected = {
+        "head_sha": "a" * 40,
+        "hosted_findings": [],
+        "invocation_id": "gate-1",
+        "prior_review_boundary": None,
+        "hosted_snapshot_sha256": "c" * 64,
+    }
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(github_pr_evidence, "load_pack", lambda _repo: object())
+    monkeypatch.setattr(
+        github_pr_evidence,
+        "collect_hosted_snapshot_template",
+        lambda *_args, **kwargs: observed.update(kwargs) or expected,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "github_pr_evidence.py",
+            "--github-repo",
+            "acme/widgets",
+            "--repo",
+            str(tmp_path),
+            "--pr",
+            "4",
+            "--gate-invocation-id",
+            "gate-1",
+            "--review",
+            str(review_path),
+            "--hosted-snapshot-template",
+            "--json",
+        ],
+    )
+
+    assert github_pr_evidence.main() == 0
+    assert json.loads(capsys.readouterr().out) == expected
+    assert observed["review"] == {}
     assert observed["gate_invocation_id"] == "gate-1"

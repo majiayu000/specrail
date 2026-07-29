@@ -14,6 +14,11 @@ approves or merges.
 python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr> \
   --issue <issue> --profile <fastlane|standard|heavy> \
   --gate-invocation-id <current-id> --review <review.json> \
+  --hosted-snapshot-template --json > hosted-snapshot.json
+# Trusted host/coordinator confirms the template and injects its digest.
+python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr> \
+  --issue <issue> --profile <fastlane|standard|heavy> \
+  --gate-invocation-id <current-id> --review <review.json> \
   --review-attestation <host-attestation.json> \
   --json > pr-evidence.json
 ```
@@ -32,6 +37,14 @@ stores current server-canonical threads in the separate top-level
 `hosted_findings` layer. The PR gate verifies the raw attestation first and
 only then combines both layers in memory. Fastlane `self_review` omits this
 input.
+
+For standard/heavy, the same ephemeral attestation must contain
+`hosted_snapshot_sha256`: SHA-256 of canonical JSON containing exactly
+`head_sha`, `invocation_id`, `hosted_findings`, and
+`prior_review_boundary`. The first command only acquires a read-only template.
+A trusted host/coordinator confirms it and injects the digest; the second
+command recollects and requires an exact match. Implementation and review
+agents must not mint or edit the digest.
 
 For heavy work, a trusted host or coordinator may inject
 `--authorization <authorization.json>` only from a current real-human

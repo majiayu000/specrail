@@ -12,7 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "checks"))
 
 from schema_validation import SpecRailError, load_json_schema, validate_instance  # noqa: E402
-from rejection_items import canonical_review_sha256  # noqa: E402
+from rejection_items import (  # noqa: E402
+    canonical_hosted_snapshot_sha256,
+    canonical_review_sha256,
+)
 from pr_gate import evaluate_pr_gate  # noqa: E402
 from review_json_gate import evaluate_review_gate  # noqa: E402
 
@@ -50,6 +53,8 @@ def valid_review() -> dict[str, object]:
 
 def valid_attestation(
     review: dict[str, object],
+    hosted_findings: list[dict[str, object]] | None = None,
+    prior_review_boundary: str | None = None,
 ) -> dict[str, object]:
     attestation: dict[str, object] = {
         "artifact_id": review["artifact_id"],
@@ -58,6 +63,12 @@ def valid_attestation(
         "review_sha256": canonical_review_sha256(review),
         "head_sha": review["head_sha"],
         "invocation_id": "gate-1",
+        "hosted_snapshot_sha256": canonical_hosted_snapshot_sha256(
+            review["head_sha"],
+            "gate-1",
+            hosted_findings or [],
+            prior_review_boundary,
+        ),
     }
     prior = review.get("prior_review")
     if review.get("round") == 2 and isinstance(prior, dict):
@@ -102,6 +113,8 @@ def valid_pr_evidence() -> dict[str, object]:
             "enforcement_sensitive": False,
         },
         "review": review,
+        "hosted_findings": [],
+        "prior_review_boundary": None,
         "review_attestation": valid_attestation(review),
         "gate_invocation_id": "gate-1",
         "human_merge_authorization": {
@@ -392,13 +405,8 @@ def test_hosted_findings_schema_runtime_parity_matrix() -> None:
         ),
         (
             ("prior_review_boundary",),
-            None,
-            "prior_review_boundary must be a non-empty string",
-        ),
-        (
-            ("prior_review_boundary",),
             " ",
-            "prior_review_boundary must be a non-empty string",
+            "round 1 prior_review_boundary must be null",
         ),
     ]
     for path, value, expected_reason in cases:
@@ -424,6 +432,42 @@ def test_hosted_findings_schema_runtime_parity_matrix() -> None:
     assert "hosted finding #1 contains unsupported fields: caller_claim" in " ".join(
         runtime["reasons"]
     )
+
+
+def test_hosted_snapshot_binding_schema_runtime_parity() -> None:
+    schema = load_json_schema(ROOT / "schemas" / "pr_review_gate.schema.json")
+    cases = [
+        (
+            ("hosted_findings",),
+            "hosted_findings",
+        ),
+        (
+            ("prior_review_boundary",),
+            "prior_review_boundary",
+        ),
+        (
+            ("review_attestation", "hosted_snapshot_sha256"),
+            "review_attestation.hosted_snapshot_sha256",
+        ),
+    ]
+    for path, expected in cases:
+        payload = valid_pr_evidence()
+        current = payload
+        for part in path[:-1]:
+            current = current[part]
+        current.pop(path[-1])
+        with pytest.raises(SpecRailError):
+            validate_instance(schema, payload, ".".join(path))
+        runtime = evaluate_pr_gate(payload, None, None)
+        assert runtime["decision"] == "blocked"
+        assert expected in " ".join([*runtime["missing"], *runtime["reasons"]])
+
+    malformed = valid_pr_evidence()
+    malformed["review_attestation"]["hosted_snapshot_sha256"] = " "
+    with pytest.raises(SpecRailError):
+        validate_instance(schema, malformed, "malformed snapshot digest")
+    runtime = evaluate_pr_gate(malformed, None, None)
+    assert "must be a 64-character hex digest" in " ".join(runtime["reasons"])
 
 
 def test_round_two_attestation_binds_current_and_prior_artifacts() -> None:
@@ -456,7 +500,11 @@ def test_round_two_attestation_binds_current_and_prior_artifacts() -> None:
             "introduced_by_diff": False,
         }],
     })
-    payload["review_attestation"] = valid_attestation(payload["review"])
+    payload["prior_review_boundary"] = "2026-07-29T00:00:00Z"
+    payload["review_attestation"] = valid_attestation(
+        payload["review"],
+        prior_review_boundary=payload["prior_review_boundary"],
+    )
 
     validate_instance(schema, payload, "round2")
     runtime = evaluate_review_gate(
@@ -469,13 +517,27 @@ def test_round_two_attestation_binds_current_and_prior_artifacts() -> None:
     )
     assert runtime["decision"] == "allowed", runtime["reasons"]
 
+    for boundary in (None, " "):
+        invalid = copy.deepcopy(payload)
+        invalid["prior_review_boundary"] = boundary
+        with pytest.raises(SpecRailError):
+            validate_instance(schema, invalid, "round2 boundary")
+        blocked = evaluate_pr_gate(invalid, None, None)
+        assert blocked["decision"] == "blocked"
+        assert "round 2 prior_review_boundary must be non-empty" in " ".join(
+            blocked["reasons"]
+        )
+
     for path in (
         ("review", "prior_review", "body"),
         ("review", "prior_review", "findings", 0, "summary"),
     ):
         invalid = copy.deepcopy(payload)
         set_path(invalid, path, " ")
-        invalid["review_attestation"] = valid_attestation(invalid["review"])
+        invalid["review_attestation"] = valid_attestation(
+            invalid["review"],
+            prior_review_boundary=invalid["prior_review_boundary"],
+        )
         with pytest.raises(SpecRailError):
             validate_instance(schema, invalid, "round2 prior nonblank")
         blocked = evaluate_review_gate(

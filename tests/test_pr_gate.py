@@ -10,7 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "checks"))
 
 from pr_gate import LEGACY_EVIDENCE_FIELDS, evaluate_pr_gate
-from rejection_items import canonical_review_sha256
+from rejection_items import (
+    canonical_hosted_snapshot_sha256,
+    canonical_review_sha256,
+)
 from sensitive_enforcement import classify_sensitive_changes
 from specrail_lib import PackConfig, spec_packet_artifact_paths
 
@@ -141,6 +144,8 @@ def evidence(
         "enforcement_sensitive": classification["enforcement_sensitive"],
         "sensitive_classification": classification,
         "review": review,
+        "hosted_findings": [],
+        "prior_review_boundary": None,
         "gate_invocation_id": "gate-1",
     }
     if profile != "fastlane":
@@ -149,6 +154,12 @@ def evidence(
             "lane_id": "review-lane-1",
             "reviewer_actor": "reviewer-agent-1",
             "review_sha256": canonical_review_sha256(review),
+            "hosted_snapshot_sha256": canonical_hosted_snapshot_sha256(
+                head,
+                "gate-1",
+                [],
+                None,
+            ),
             "head_sha": head,
             "invocation_id": "gate-1",
         }

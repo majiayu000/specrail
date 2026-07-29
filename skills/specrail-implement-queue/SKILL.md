@@ -121,6 +121,12 @@ keeps it unchanged, stores live server threads in top-level `hosted_findings`,
 and the PR gate combines those layers only after attestation validation.
 Round-2 embedded local findings remain complete; only authenticated
 hosted-origin history is eligible for server reconciliation.
+For standard/heavy, first run the collector with
+`--hosted-snapshot-template`; a trusted host/coordinator confirms that
+read-only snapshot and injects its `hosted_snapshot_sha256` into the ephemeral
+attestation. Then recollect full PR evidence, which must reproduce the signed
+head, invocation, hosted findings, and prior-review boundary exactly.
+Implementation and review agents must not mint or edit this digest.
 
 ## PR Gate
 

@@ -22,6 +22,7 @@ from rejection_items import (
     finalize_items,
     item_from_reason,
     items_from_legacy,
+    validate_hosted_snapshot_attestation,
     validate_review_attestation,
 )
 from review_json_gate import evaluate_review_gate
@@ -466,11 +467,13 @@ def evaluate_pr_gate(
         "gate_invocation_id",
         "gate_query_head_sha",
         "head_sha",
+        "hosted_findings",
         "is_draft",
         "linked_issue",
         "merge_state",
         "pr",
         "profile",
+        "prior_review_boundary",
         "repository",
         "review",
         "sensitive_classification",
@@ -586,8 +589,25 @@ def evaluate_pr_gate(
         missing.extend(f"review: {field}" for field in att_missing)
         reasons.extend(f"review: {reason}" for reason in att_reasons)
         boundary = evidence.get("prior_review_boundary")
-        if "prior_review_boundary" in evidence and not _non_empty_string(boundary):
-            reasons.append("prior_review_boundary must be a non-empty string")
+        if review.get("round") == 2:
+            if not _non_empty_string(boundary):
+                reasons.append("round 2 prior_review_boundary must be non-empty")
+        elif boundary is not None:
+            reasons.append("round 1 prior_review_boundary must be null")
+        snapshot_missing, snapshot_reasons = validate_hosted_snapshot_attestation(
+            evidence.get("review_attestation"),
+            head_sha=evidence.get("head_sha"),
+            invocation_id=evidence.get("gate_invocation_id"),
+            hosted_findings=evidence.get("hosted_findings"),
+            prior_review_boundary=boundary,
+            required=(
+                independent_required
+                if isinstance(independent_required, bool)
+                else profile in {"standard", "heavy"}
+            ),
+        )
+        missing.extend(snapshot_missing)
+        reasons.extend(snapshot_reasons)
         try:
             semantic_review = combine_review_findings(
                 review,
