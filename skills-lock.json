@@ -3,103 +3,33 @@
   "algorithm": "sha256",
   "profiles": {
     "core": [
-      "specrail-workflow"
+      "specrail"
     ],
     "heavy": [
-      "specrail-check-impl-against-spec",
-      "specrail-diagnose-ci",
-      "specrail-implement",
-      "specrail-implement-queue",
-      "specrail-install",
-      "specrail-plan-tasks",
-      "specrail-release-note",
-      "specrail-review-pr",
-      "specrail-triage-issue",
-      "specrail-workflow",
-      "specrail-write-product-spec",
-      "specrail-write-tech-spec"
+      "specrail",
+      "specrail-heavy"
     ],
     "all": [
       "implx",
-      "specrail-check-impl-against-spec",
-      "specrail-diagnose-ci",
-      "specrail-implement",
-      "specrail-implement-queue",
-      "specrail-install",
-      "specrail-plan-tasks",
-      "specrail-release-note",
-      "specrail-review-pr",
-      "specrail-triage-issue",
-      "specrail-workflow",
-      "specrail-write-product-spec",
-      "specrail-write-tech-spec"
+      "specrail",
+      "specrail-heavy"
     ]
   },
   "skills": [
     {
       "name": "implx",
       "path": "skills/implx/SKILL.md",
-      "computedHash": "sha256:22728ff2947eb3417102b3fa0fcde13b7b9bdb9e7d92808b66ddadae82fd26c3"
+      "computedHash": "sha256:4812fb26b60d40e1c006efb7be3071f459ccf2261a94f602ffe913aae42a1af4"
     },
     {
-      "name": "specrail-check-impl-against-spec",
-      "path": "skills/specrail-check-impl-against-spec/SKILL.md",
-      "computedHash": "sha256:0646e00c1ace5dfc33138491a0425b2856329098d17aa46e4f2ef0025c816aea"
+      "name": "specrail-heavy",
+      "path": "skills/specrail-heavy/SKILL.md",
+      "computedHash": "sha256:081446cf661a655d050f3a0fc92f053681504e4dc9d8abf8b44d852ddbd33adb"
     },
     {
-      "name": "specrail-diagnose-ci",
-      "path": "skills/specrail-diagnose-ci/SKILL.md",
-      "computedHash": "sha256:dda9d66f43357615d6f26d25b6ac8744dcef5a6fbd232d2e936b4575894435d3"
-    },
-    {
-      "name": "specrail-implement-queue",
-      "path": "skills/specrail-implement-queue/SKILL.md",
-      "computedHash": "sha256:d5597563e6d4e2ae10bff066965fc33d9c3140c12e4ade7f6e1c58cb890172d1"
-    },
-    {
-      "name": "specrail-implement",
-      "path": "skills/specrail-implement/SKILL.md",
-      "computedHash": "sha256:cecf5cf01ac381c3f6c5a279e720ab2c0854bde6fd3eed8f65af4b2760ab2954"
-    },
-    {
-      "name": "specrail-install",
-      "path": "skills/specrail-install/SKILL.md",
-      "computedHash": "sha256:8ff347d0046402bca9b917232da817db3d75754561fe01b4b082051ba00120a5"
-    },
-    {
-      "name": "specrail-plan-tasks",
-      "path": "skills/specrail-plan-tasks/SKILL.md",
-      "computedHash": "sha256:e82624e0fb627f49c35a3132cbee883a7dc884a2ef54b0c230e8d278ace886f7"
-    },
-    {
-      "name": "specrail-release-note",
-      "path": "skills/specrail-release-note/SKILL.md",
-      "computedHash": "sha256:dc90c21d3284995350aca333d4c1324acea21f7993f0419e8458d1fd1cc7f9e8"
-    },
-    {
-      "name": "specrail-review-pr",
-      "path": "skills/specrail-review-pr/SKILL.md",
-      "computedHash": "sha256:ed5548a014c943ba1f03e64087c1cabeae888fb6d7af0d8d4e03c9984507e80d"
-    },
-    {
-      "name": "specrail-triage-issue",
-      "path": "skills/specrail-triage-issue/SKILL.md",
-      "computedHash": "sha256:fd2893611811913e4d10f9091447096efd170838283f99cbd7742387f9e38d16"
-    },
-    {
-      "name": "specrail-workflow",
-      "path": "skills/specrail-workflow/SKILL.md",
-      "computedHash": "sha256:960b3ebfedfbb44a646727c95e24a168c88ac1bdd8ddbcb94d96eb16bcc1da1c"
-    },
-    {
-      "name": "specrail-write-product-spec",
-      "path": "skills/specrail-write-product-spec/SKILL.md",
-      "computedHash": "sha256:37415c27e808b160eabb2ef0f0d44898d89ae9aa97fb9335c9079887aa568fec"
-    },
-    {
-      "name": "specrail-write-tech-spec",
-      "path": "skills/specrail-write-tech-spec/SKILL.md",
-      "computedHash": "sha256:7587c852240c3c720d1abfbf29a748b19a80925ef74d2cef614c4fa0a520579a"
+      "name": "specrail",
+      "path": "skills/specrail/SKILL.md",
+      "computedHash": "sha256:9e8823c63c307ecc8d6828233750c475bd40b773545aae26bd417058c4d12ec7"
     }
   ]
 }

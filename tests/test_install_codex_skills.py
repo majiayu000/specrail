@@ -136,6 +136,42 @@ def test_install_codex_skills_dry_run_writes_nothing(tmp_path: Path) -> None:
     assert not target.exists()
 
 
+def test_repository_catalog_exposes_only_three_explicit_entrypoints() -> None:
+    skill_dirs = {
+        path.name
+        for path in (ROOT / "skills").iterdir()
+        if path.is_dir()
+    }
+    lock = json.loads((ROOT / "skills-lock.json").read_text(encoding="utf-8"))
+
+    assert skill_dirs == {"specrail", "specrail-heavy", "implx"}
+    assert lock["profiles"] == {
+        "core": ["specrail"],
+        "heavy": ["specrail", "specrail-heavy"],
+        "all": ["implx", "specrail", "specrail-heavy"],
+    }
+    for name in skill_dirs:
+        text = (ROOT / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+        description = next(
+            line for line in text.splitlines() if line.startswith("description:")
+        )
+        assert description.startswith("description: Use only when the user explicitly")
+    core = (ROOT / "skills" / "specrail" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Never use for SpecRail Heavy, implx, or ordinary coding tasks" in core
+
+
+def test_repository_default_install_registers_only_specrail(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "target"
+
+    result = run_installer(ROOT, target, "--apply")
+
+    assert result.returncode == 0
+    assert "profile: core" in result.stdout
+    assert {path.name for path in target.iterdir()} == {"specrail"}
+
+
 def test_install_codex_skills_apply_syncs_locked_skill(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     target = tmp_path / "target"
@@ -215,6 +251,23 @@ def test_switching_from_all_to_core_removes_only_stale_managed_skills(
     assert (target / "specrail" / "SKILL.md").is_file()
     assert not (target / "specrail-heavy").exists()
     assert not (target / "implx").exists()
+    assert (target / "user-owned" / "SKILL.md").read_text() == "keep me\n"
+
+
+def test_apply_removes_legacy_managed_skill_directories(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_profiled_skill_repo(repo)
+    write_text(target / "specrail-workflow" / "SKILL.md", "legacy router\n")
+    write_text(target / "specrail-install" / "SKILL.md", "legacy installer\n")
+    write_text(target / "user-owned" / "SKILL.md", "keep me\n")
+
+    result = run_installer(repo, target, "--profile", "core", "--apply")
+
+    assert result.returncode == 0
+    assert "removed 2 stale managed skills" in result.stdout
+    assert not (target / "specrail-workflow").exists()
+    assert not (target / "specrail-install").exists()
     assert (target / "user-owned" / "SKILL.md").read_text() == "keep me\n"
 
 

@@ -6,8 +6,9 @@ installing a repository-specific enforcement layer.
 
 The active package contains:
 
-- focused skills for triage, planning, implementation, review, CI diagnosis,
-  release-note drafting, and queue execution;
+- one default `specrail` entrypoint for opt-in workflow routing;
+- one explicit `specrail-heavy` entrypoint for deeper planning and verification;
+- one explicit `implx` entrypoint for authorized queue execution;
 - English and Chinese templates for Issues, specs, task plans, and PRs;
 - an optional local skill installer;
 - an optional queue runner for explicitly authorized unattended runs.
@@ -26,24 +27,40 @@ type-check, review, and GitHub status instead.
 6. Address review threads on the original PR.
 7. Push, comment, close, or merge only with the caller's authorization.
 
-## Install the skills
+Ordinary coding requests do not activate SpecRail. The user must explicitly
+say `SpecRail`, `SpecRail Heavy`, or `implx`.
 
-Preview:
+## Install profiles
+
+Preview the default `core` profile:
 
 ```sh
 python3 tools/install_codex_skills.py --repo .
 ```
 
-Apply:
+Install only the single `specrail` entrypoint:
 
 ```sh
-python3 tools/install_codex_skills.py --repo . --apply
+python3 tools/install_codex_skills.py --repo . --profile core --apply
 ```
 
-Verify an installed copy:
+Install `specrail` plus the explicit Heavy entrypoint:
 
 ```sh
-python3 tools/install_codex_skills.py --repo . --check-installed
+python3 tools/install_codex_skills.py --repo . --profile heavy --apply
+```
+
+Install all three explicit entrypoints, including `implx`:
+
+```sh
+python3 tools/install_codex_skills.py --repo . --profile all --apply
+```
+
+Switching profiles removes stale SpecRail-managed entrypoints and preserves
+unrelated user skills. Verify the selected profile without writing:
+
+```sh
+python3 tools/install_codex_skills.py --repo . --profile core --check-installed
 ```
 
 ## Historical archive
