@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Expanded installed-skill integrity diagnosis with explicit target status,
+  expected/actual hashes, safe-path checks, and read-only coverage.
 - Removed the SpecRail gate/check execution layer, evidence schemas, dedicated
   fixtures, policy evaluator configuration, and associated CI steps.
 - Replaced enforcement-oriented skill text with direct development playbooks.

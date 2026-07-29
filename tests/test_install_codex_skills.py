@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -75,7 +76,12 @@ def add_locked_skill(repo: Path, name: str) -> None:
     write_text(lock_path, json.dumps(lock))
 
 
-def run_installer(repo: Path, target: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+def run_installer(
+    repo: Path,
+    target: Path,
+    *extra: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             sys.executable,
@@ -90,6 +96,7 @@ def run_installer(repo: Path, target: Path, *extra: str) -> subprocess.Completed
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -143,8 +150,25 @@ def test_check_installed_returns_zero_when_all_hashes_match(tmp_path: Path) -> N
 
     assert result.returncode == 0
     assert "mode: check-installed (read-only)" in result.stdout
+    assert "status: match" in result.stdout
     assert "specrail-example: match" in result.stdout
+    assert "expected sha256:" in result.stdout
+    assert "actual sha256:" in result.stdout
+    assert f"path {target / 'specrail-example' / 'SKILL.md'}" in result.stdout
     assert "all 1 installed skills match skills-lock.json" in result.stdout
+
+
+def test_check_installed_skips_absent_target_root(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "not-installed"
+    write_skill_repo(repo)
+
+    result = run_installer(repo, target, "--check-installed")
+
+    assert result.returncode == 0
+    assert "status: not_installed" in result.stdout
+    assert "target root is absent; installed-copy check skipped" in result.stdout
+    assert not target.exists()
 
 
 def test_check_installed_reports_all_missing_and_drift(tmp_path: Path) -> None:
@@ -157,11 +181,142 @@ def test_check_installed_reports_all_missing_and_drift(tmp_path: Path) -> None:
     result = run_installer(repo, target, "--check-installed")
 
     assert result.returncode == 1
+    assert "status: invalid" in result.stdout
     assert "specrail-example: drift" in result.stdout
+    assert "expected sha256:" in result.stdout
+    assert "actual sha256:" in result.stdout
     assert "specrail-missing: missing" in result.stdout
+    assert "actual missing" in result.stdout
     assert "rerun this installer with --apply" in result.stderr
     assert "restart Codex" in result.stderr
     assert not (target / "specrail-missing").exists()
+
+
+def test_check_installed_rejects_symlink_escape(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    outside = tmp_path / "outside" / "specrail-example"
+    write_skill_repo(repo)
+    write_text(outside / "SKILL.md", "outside\n")
+    target.mkdir()
+    (target / "specrail-example").symlink_to(outside, target_is_directory=True)
+
+    result = run_installer(repo, target, "--check-installed")
+
+    assert result.returncode == 1
+    assert "specrail-example: unsafe" in result.stdout
+    assert "symbolic links are not accepted" in result.stdout
+    assert "outside" not in result.stdout
+
+
+def test_check_installed_rejects_broken_target_symlink(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_skill_repo(repo)
+    target.symlink_to(tmp_path / "missing-target", target_is_directory=True)
+
+    result = run_installer(repo, target, "--check-installed")
+
+    assert result.returncode == 1
+    assert "status: invalid" in result.stdout
+    assert "specrail-example: unsafe" in result.stdout
+    assert "target root must be a real directory" in result.stdout
+
+
+def test_check_installed_reports_multiple_drift(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_skill_repo(repo)
+    add_locked_skill(repo, "specrail-second")
+    write_text(target / "specrail-example" / "SKILL.md", "first drift\n")
+    write_text(target / "specrail-second" / "SKILL.md", "second drift\n")
+
+    result = run_installer(repo, target, "--check-installed")
+
+    assert result.returncode == 1
+    assert result.stdout.count(": drift") == 2
+    assert result.stdout.count("actual sha256:") == 2
+
+
+def test_check_installed_uses_codex_home_when_target_is_not_explicit(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    codex_home = tmp_path / "codex-home"
+    target = codex_home / "skills"
+    write_skill_repo(repo)
+    assert run_installer(repo, target, "--apply").returncode == 0
+    environment = dict(os.environ)
+    environment["CODEX_HOME"] = str(codex_home)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "install_codex_skills.py"),
+            "--repo",
+            str(repo),
+            "--check-installed",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0
+    assert f"target: {target}" in result.stdout
+    assert "specrail-example: match" in result.stdout
+
+
+def test_check_installed_uses_home_fallback_when_codex_home_is_unset(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    user_home = tmp_path / "user-home"
+    target = user_home / ".codex" / "skills"
+    write_skill_repo(repo)
+    assert run_installer(repo, target, "--apply").returncode == 0
+    environment = dict(os.environ)
+    environment.pop("CODEX_HOME", None)
+    environment["HOME"] = str(user_home)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "install_codex_skills.py"),
+            "--repo",
+            str(repo),
+            "--check-installed",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0
+    assert f"target: {target}" in result.stdout
+    assert "specrail-example: match" in result.stdout
+
+
+def test_check_installed_does_not_modify_target(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_skill_repo(repo)
+    assert run_installer(repo, target, "--apply").returncode == 0
+    installed_file = target / "specrail-example" / "SKILL.md"
+    before_bytes = installed_file.read_bytes()
+    before_stat = installed_file.stat()
+
+    result = run_installer(repo, target, "--check-installed")
+
+    after_stat = installed_file.stat()
+    assert result.returncode == 0
+    assert installed_file.read_bytes() == before_bytes
+    assert after_stat.st_mtime_ns == before_stat.st_mtime_ns
+    assert after_stat.st_ctime_ns == before_stat.st_ctime_ns
 
 
 def test_check_installed_and_apply_are_mutually_exclusive(tmp_path: Path) -> None:

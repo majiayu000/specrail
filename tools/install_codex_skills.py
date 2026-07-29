@@ -28,6 +28,12 @@ class LockedSkill:
     expected_hash: str
 
 
+@dataclass(frozen=True)
+class InstalledCheck:
+    messages: tuple[str, ...]
+    status: str
+
+
 def read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -222,30 +228,78 @@ def install_skills(repo: Path, target_dir: Path, apply: bool) -> list[str]:
     return messages
 
 
-def check_installed_skills(repo: Path, target_dir: Path) -> tuple[list[str], bool]:
-    """Compare every installed SKILL.md with its locked source hash."""
+def check_installed_skills(repo: Path, target_dir: Path) -> InstalledCheck:
+    """Compare installed skills with the lock without following unsafe links."""
     skills = load_locked_skills(repo.resolve())
+    target_dir = target_dir.expanduser()
+
+    if not target_dir.exists() and not target_dir.is_symlink():
+        return InstalledCheck(messages=(), status="not_installed")
+
     messages: list[str] = []
-    matches = True
+    invalid = False
+    target_is_unsafe = target_dir.is_symlink() or not target_dir.is_dir()
+    target_root = target_dir.resolve()
 
     for skill in skills:
-        installed_file = target_dir.expanduser() / skill.name / "SKILL.md"
-        if not installed_file.is_file():
-            matches = False
-            messages.append(f"{skill.name}: missing ({installed_file})")
-            continue
+        skill_dir = target_dir / skill.name
+        installed_file = skill_dir / "SKILL.md"
+        common = (
+            f"expected {skill.expected_hash}, "
+            f"path {installed_file}"
+        )
 
-        digest = "sha256:" + hashlib.sha256(installed_file.read_bytes()).hexdigest()
-        if digest != skill.expected_hash:
-            matches = False
+        if target_is_unsafe:
+            invalid = True
             messages.append(
-                f"{skill.name}: drift "
-                f"(expected {skill.expected_hash}, got {digest})"
+                f"{skill.name}: unsafe ({common}, actual unavailable, "
+                "target root must be a real directory)"
             )
             continue
-        messages.append(f"{skill.name}: match")
+        if skill_dir.is_symlink() or installed_file.is_symlink():
+            invalid = True
+            messages.append(
+                f"{skill.name}: unsafe ({common}, actual unavailable, "
+                "symbolic links are not accepted)"
+            )
+            continue
+        if not installed_file.is_file():
+            invalid = True
+            messages.append(
+                f"{skill.name}: missing ({common}, actual missing)"
+            )
+            continue
 
-    return messages, matches
+        try:
+            resolved_file = installed_file.resolve(strict=True)
+            resolved_file.relative_to(target_root)
+            resolved_file.relative_to(skill_dir.resolve(strict=True))
+            digest = (
+                "sha256:"
+                + hashlib.sha256(installed_file.read_bytes()).hexdigest()
+            )
+        except (OSError, ValueError) as exc:
+            invalid = True
+            messages.append(
+                f"{skill.name}: unsafe ({common}, actual unavailable, "
+                f"cannot safely read installed file: {exc})"
+            )
+            continue
+
+        if digest != skill.expected_hash:
+            invalid = True
+            messages.append(
+                f"{skill.name}: drift ({common}, actual {digest})"
+            )
+            continue
+        messages.append(
+            f"{skill.name}: match ({common}, actual {digest})"
+        )
+
+    return InstalledCheck(
+        messages=tuple(messages),
+        status="invalid" if invalid else "match",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -284,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.check_installed:
-            messages, matches = check_installed_skills(repo, target_dir)
+            installed_check = check_installed_skills(repo, target_dir)
         else:
             messages = install_skills(repo, target_dir, args.apply)
     except InstallError as exc:
@@ -294,16 +348,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_installed:
         print("mode: check-installed (read-only)")
         print(f"target: {target_dir}")
-        for message in messages:
+        print(f"status: {installed_check.status}")
+        if installed_check.status == "not_installed":
+            print("target root is absent; installed-copy check skipped")
+            return 0
+        for message in installed_check.messages:
             print(message)
-        if not matches:
+        if installed_check.status != "match":
             print(
                 "repair: rerun this installer with --apply, then restart Codex "
                 "to load the reinstalled skills",
                 file=sys.stderr,
             )
             return 1
-        print(f"all {len(messages)} installed skills match skills-lock.json")
+        print(
+            f"all {len(installed_check.messages)} installed skills "
+            "match skills-lock.json"
+        )
         return 0
 
     mode = "apply" if args.apply else "dry-run"
