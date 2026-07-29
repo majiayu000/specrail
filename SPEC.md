@@ -29,6 +29,10 @@ repository and its maintainers.
 6. Historical artifacts under `archive/` never participate in active work.
 7. Installation and activation are separate: `core` installs one entrypoint,
    and no entrypoint activates from an ordinary coding request.
+8. User-level skills install to `~/.agents/skills`; every active entrypoint
+   carries machine-readable metadata that disables implicit invocation.
+9. Legacy cleanup removes only known SpecRail-managed skill directories and
+   preserves unrelated user skills.
 
 ## Non-goals
 
