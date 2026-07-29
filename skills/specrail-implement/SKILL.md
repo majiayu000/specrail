@@ -1,62 +1,22 @@
 ---
 name: specrail-implement
-description: Use when implementing a SpecRail-governed issue after the implementation gate. Executes the scoped task plan, keeps changes tied to linked specs and acceptance criteria, runs deterministic verification, and preserves human approval, merge, and security boundaries. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
+description: Implement a linked issue from its current requirements and repository instructions, using the original branch and PR when present and repository-native verification.
 ---
 
-# SpecRail Implement
+# Implement
 
-Use this skill for the `implement` route.
+1. Read the Issue, current code, repository instructions, and available current
+   requirement documents.
+2. Search for an existing PR, remote branch, or overlapping implementation.
+3. State scope and done-when; for non-trivial work, present a short plan before
+   editing.
+4. Reproduce bugs before fixing them.
+5. Implement the smallest complete change on the original branch.
+6. Add or update tests for changed behavior without weakening existing tests.
+7. Run the repository's build, type-check, lint, and test commands appropriate
+   to the change.
+8. Review the current diff for scope, errors, security, and missing coverage.
+9. Report exact results and remaining risks.
 
-## Steps
-
-1. Read the linked issue and selected verification profile. Read the complete
-   product/tech/tasks packet when the profile is `heavy`; for `fastlane` and
-   `standard`, use the smallest current plan that makes done-when testable.
-   Standard requires a configured task plan or a Done-When/Acceptance Criteria
-   checklist collected from the current Issue.
-2. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
-   checks. If it exists, the route gate is mandatory; a missing checker blocks:
-
-```sh
-python3 checks/github_issue_evidence.py --repo . --github-repo OWNER/REPO \
-  --issue <issue-number> --json > issue-evidence.json
-python3 checks/route_gate.py --repo . --route implement --issue <issue-number> \
-  --github-repo OWNER/REPO --profile <fastlane|standard|heavy> \
-  --evidence issue-evidence.json \
-  --mode required --json
-```
-
-For `heavy`, append the exact maintainer-supplied
-`--approved-spec-revision <40-char-sha>`.
-3. Continue only when the gate returns `allowed`; stop and report every other
-   decision and its missing evidence. For heavy work, the current trusted
-   `ready_to_implement` label records the decision, while an exact
-   maintainer-supplied approved revision binds product/tech/tasks content.
-   Never infer the revision from the current branch.
-4. Implement only the scoped tasks. Search before adding files, workflows,
-   schemas, templates, policies, or public APIs.
-5. Keep machine-facing IDs in English and human-facing text in the selected
-   locale.
-6. Run focused verification for touched behavior, then run the pack check when
-   workflow assets changed:
-
-```sh
-python3 checks/check_workflow.py --repo .
-```
-
-7. For a GitHub PR, review the exact current-head diff, validate the compact
-   review JSON with `checks/review_json_gate.py`, collect current PR evidence,
-   then run `checks/pr_gate.py` serially. Follow the canonical profile policy:
-   fastlane self-review; standard/heavy independent review. A current P0/P1
-   blocks.
-8. Record changed files, commands, results, and remaining human gates.
-
-## Boundaries
-
-- Do not provide final approval.
-- Do not merge without explicit human authorization and a passing PR gate.
-- Do not publish secrets or private security details.
-- Do not weaken tests or deterministic checks to make implementation pass.
-- Fix every reported rejection item before one bounded retry. If the same
-  rejection repeats, stop and report it instead of creating persistent retry
-  state.
+External writes require caller authorization. Never force-push or publish
+security-sensitive details.

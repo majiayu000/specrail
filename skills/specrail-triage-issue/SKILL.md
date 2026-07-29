@@ -1,46 +1,19 @@
 ---
 name: specrail-triage-issue
-description: Use when triaging a GitHub issue or issue-like request in a SpecRail-governed repository. Handles search-first duplicate checks, issue classification, readiness label proposals, security-private routing, and triage handoffs without bypassing human gates. Explicit invocation only: use when the user names this skill or a SpecRail skill/workflow route explicitly delegates to it; do not self-activate from descriptive language.
+description: Triage a GitHub Issue by searching for duplicates and existing ownership, clarifying scope and done-when, and recommending the next direct action.
 ---
 
-# SpecRail Triage Issue
+# Triage issue
 
-Use this skill for the `triage_issue` route.
+1. Read repository instructions and search Issues, PRs, branches, docs, and
+   code for duplicate or overlapping work.
+2. Determine goal, context, constraints, done-when, severity, and affected
+   users.
+3. Identify whether the next action is clarification, specification, direct
+   implementation, CI repair, review, or closure.
+4. Route suspected vulnerabilities through the repository's private security
+   process.
+5. Report missing information and a concrete next action.
 
-## Steps
-
-1. Read the active SpecRail contract: `AGENTS.md`, `AGENT_USAGE.md`,
-   `workflow.yaml`, `states.yaml`, and `labels.yaml`.
-2. Search existing issues, PRs, specs, and templates before creating or
-   recommending new workflow artifacts.
-3. Identify one current state from `new_issue`, `needs_info`, `ready_to_spec`,
-   `ready_to_implement`, `in_progress`, `review`, `done`, or `parked`.
-   `duplicate`, `abandoned`, and `security_private` are outcome labels.
-4. If `workflow.yaml` is absent, report `not_adopted` and use repository-native
-   checks. If it exists, the route gate is mandatory; a missing checker blocks:
-
-```sh
-python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issue-number> --json > issue-evidence.json
-python3 checks/route_gate.py --repo . --route triage_issue --issue <issue-number> --github-repo <owner/repo> --evidence issue-evidence.json --json
-python3 checks/route_gate.py --repo . --route triage_issue --issue <issue-number> --state <state> --json
-```
-
-5. Treat `checks/github_issue_evidence.py` as a read-only collector. It may
-   gather labels and state hints, but it must not write labels or comments.
-6. Produce or update the triage result expected by the repository, usually
-   `artifacts/triage/issue-<issue-number>.json`.
-7. Propose labels only when evidence supports them. Keep label IDs and state IDs
-   in English.
-8. If the issue may involve private security details, stop public drafting and
-   hand off to the maintainer security process.
-
-## Boundaries
-
-- Do not close disputed issues.
-- Do not grant readiness, final approval, merge, or security-disclosure
-  authority.
-- Do not invent missing fields; report missing evidence as missing evidence.
-- Keep human-facing triage text in the selected locale.
-
-Fix every reported rejection item before one bounded retry. Do not persist a
-parallel retry ledger.
+Do not create, label, comment on, or close an Issue unless the caller requests
+and authorizes that external write.
