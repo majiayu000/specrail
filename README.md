@@ -132,7 +132,11 @@ python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 
 `checks/github_pr_evidence.py` is a read-only collector for GitHub CLI output.
 It verifies the complete REST-paginated changed-file set against GitHub's
-reported count and includes current hosted review-thread state for
+reported count, re-reads PR identity after pagination, and compares the
+beginning and end of the complete PR/partial-Issue snapshot. This closes the
+collector's documented double-snapshot contract; it does not claim remote
+state cannot change after the final API observation. It also includes current
+hosted review-thread state for
 the canonical standard/heavy profiles. Fastlane never requires hosted/GraphQL
 review evidence. The collector preserves `review` byte-for-byte at the JSON
 value level and writes server-canonical threads separately as

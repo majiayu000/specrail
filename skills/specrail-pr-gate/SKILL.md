@@ -10,14 +10,25 @@ approves or merges.
 
 ## Collect
 
+Fastlane uses one self-review collection and no attestation inputs:
+
 ```sh
 python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr> \
-  --issue <issue> --profile <fastlane|standard|heavy> \
+  --issue <issue> --profile fastlane \
+  --gate-invocation-id <current-id> --review <review.json> \
+  --json > pr-evidence.json
+```
+
+Standard/heavy uses the trusted two-stage flow:
+
+```sh
+python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr> \
+  --issue <issue> --profile <standard|heavy> \
   --gate-invocation-id <current-id> --review <review.json> \
   --hosted-snapshot-template --json > hosted-snapshot.json
 # Trusted host/coordinator confirms the template and injects its digest.
 python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <pr> \
-  --issue <issue> --profile <fastlane|standard|heavy> \
+  --issue <issue> --profile <standard|heavy> \
   --gate-invocation-id <current-id> --review <review.json> \
   --review-attestation <host-attestation.json> \
   --json > pr-evidence.json

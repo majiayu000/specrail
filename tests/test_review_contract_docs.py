@@ -217,6 +217,23 @@ def test_review_and_ci_degradation_inputs_are_trusted_host_bound() -> None:
     assert "Every profile requires an exact current-head checkout" in gate
 
 
+def test_queue_pr_gate_commands_are_split_by_profile() -> None:
+    text = (
+        REPO / "skills/specrail-implement-queue/SKILL.md"
+    ).read_text(encoding="utf-8")
+    fastlane = text.split(
+        "Fastlane uses self-review", 1
+    )[1].split("Standard/heavy uses", 1)[0]
+    standard_heavy = text.split("Standard/heavy uses", 1)[1]
+
+    assert "--profile fastlane" in fastlane
+    assert "--review-attestation" not in fastlane
+    assert "--hosted-snapshot-template" not in fastlane
+    assert "--profile <standard|heavy>" in standard_heavy
+    assert "--hosted-snapshot-template" in standard_heavy
+    assert "--review-attestation" in standard_heavy
+
+
 def test_active_review_guidance_uses_canonical_independence_policy() -> None:
     for relative_path in (
         "README.md",

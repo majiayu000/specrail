@@ -41,20 +41,10 @@ from specrail_lib import (
 
 
 PR_VIEW_FIELDS = [
-    "number",
-    "state",
-    "isDraft",
-    "headRefOid",
-    "headRefName",
-    "headRepository",
-    "headRepositoryOwner",
-    "baseRefName",
-    "baseRefOid",
-    "mergeStateStatus",
-    "body",
-    "closingIssuesReferences",
-    "statusCheckRollup",
-    "changedFiles",
+    "number", "state", "isDraft", "headRefOid", "headRefName",
+    "headRepository", "headRepositoryOwner", "baseRefName", "baseRefOid",
+    "mergeStateStatus", "body", "closingIssuesReferences",
+    "statusCheckRollup", "changedFiles",
 ]
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 PROFILES = {"fastlane", "standard", "heavy"}
@@ -151,10 +141,23 @@ def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
     count = payload.get("changedFiles")
     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
         raise EvidenceError("changedFiles must be a non-negative integer")
+    identity = {
+        "changedFiles": count,
+        "headRefOid": _require_string(payload, "headRefOid"),
+    }
     payload["files"] = [
         {"path": path}
         for path in collect_changed_files(github_repo, pr_number, count)
     ]
+    final = json_object(
+        run_gh_json([
+            "pr", "view", str(pr_number), "--repo", github_repo,
+            "--json", "headRefOid,changedFiles",
+        ]),
+        "final gh pr view response",
+    )
+    if final != identity:
+        raise EvidenceError("PR identity changed while collecting changed files")
     return payload
 
 
@@ -534,9 +537,13 @@ def collect_snapshot(
 
     parse_github_repo(github_repo)
     before = collect_pr_view(github_repo, pr_number)
+    before_relation = relation_snapshot(before)
+    partial_issue = (
+        expected_issue is not None and expected_issue not in before_relation[1]
+    )
     issue_payload = (
         collect_issue_view(github_repo, expected_issue)
-        if expected_issue is not None
+        if partial_issue and expected_issue is not None
         else None
     )
     before_head = _require_string(before, "headRefOid")
@@ -548,7 +555,6 @@ def collect_snapshot(
             _require_string(before, "headRefName"),
             before_head,
         )
-    before_relation = relation_snapshot(before)
     before_paths = _changed_files(before)
     linked_issue = _linked_issue(before, expected_issue, issue_payload)
     collection_profile = _effective_collection_profile(
@@ -617,6 +623,11 @@ def collect_snapshot(
             "hosted review findings changed while collecting gate evidence; "
             "rerun collection"
         )
+    if partial_issue and expected_issue is not None:
+        if collect_issue_view(github_repo, expected_issue) != issue_payload:
+            raise EvidenceError(
+                "partial issue changed while collecting gate evidence; rerun"
+            )
     return after, issue_payload, after_hosted, prior_review_boundary
 
 
@@ -689,14 +700,9 @@ def collect_hosted_snapshot_template(
         config=config,
     )
     payload = hosted_snapshot_payload(
-        _require_string(after, "headRefOid"),
-        gate_invocation_id,
-        hosted,
-        boundary,
+        _require_string(after, "headRefOid"), gate_invocation_id, hosted, boundary
     )
-    payload["hosted_snapshot_sha256"] = canonical_hosted_snapshot_sha256(
-        **payload
-    )
+    payload["hosted_snapshot_sha256"] = canonical_hosted_snapshot_sha256(**payload)
     return payload
 
 

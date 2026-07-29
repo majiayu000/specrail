@@ -130,11 +130,27 @@ Implementation and review agents must not mint or edit this digest.
 
 ## PR Gate
 
-Collect current evidence, then run the compact gate:
+Fastlane uses self-review and must not pass hosted snapshot or review
+attestation inputs:
 
 ```sh
 python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <n> \
-  --issue <issue> --profile <profile> --gate-invocation-id <id> \
+  --issue <issue> --profile fastlane --gate-invocation-id <id> \
+  --review <review.json> \
+  --json > pr-evidence.json
+python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
+```
+
+Standard/heavy uses the trusted two-stage flow:
+
+```sh
+python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <n> \
+  --issue <issue> --profile <standard|heavy> --gate-invocation-id <id> \
+  --review <review.json> --hosted-snapshot-template \
+  --json > hosted-snapshot.json
+# Trusted host/coordinator confirms the snapshot and injects its digest.
+python3 checks/github_pr_evidence.py --github-repo OWNER/REPO --pr <n> \
+  --issue <issue> --profile <standard|heavy> --gate-invocation-id <id> \
   --review <review.json> --review-attestation <host-attestation.json> \
   --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
