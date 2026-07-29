@@ -142,6 +142,15 @@ python3 checks/github_pr_evidence.py \
   --profile <profile> \
   --gate-invocation-id <id> \
   --review <review.json> \
+  --hosted-snapshot-template \
+  --json > hosted-snapshot.json
+# A trusted host/coordinator confirms the snapshot and injects its digest.
+python3 checks/github_pr_evidence.py \
+  --github-repo OWNER/REPO \
+  --pr <pr-number> \
+  --profile <profile> \
+  --gate-invocation-id <id> \
+  --review <review.json> \
   --review-attestation <host-attestation.json> \
   --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
@@ -159,6 +168,12 @@ including the embedded prior review. Hash exactly the review file passed with
 server-canonical threads in top-level `hosted_findings`, and the PR gate
 combines the layers only after validating the raw attestation. Fastlane
 self-review omits the flag.
+For standard/heavy, `hosted_snapshot_sha256` additionally binds canonical JSON
+for `head_sha`, `invocation_id`, `hosted_findings`, and
+`prior_review_boundary`. The first command is read-only acquisition; the
+trusted host/coordinator confirms its template and injects the digest into the
+ephemeral attestation. The second command recollects and requires an exact
+match. Implementation and review agents must not mint or edit this digest.
 Round 1 is
 full and binds the exact PR base-to-head diff with `base_head_sha` and
 `diff_sha256`; round 2 is diff-only after P0/P1 fixes. P2/P3 are

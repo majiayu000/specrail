@@ -31,6 +31,11 @@ it. Hash the raw review exactly as produced; hosted threads are collector-owned
 top-level PR evidence and must not be inserted into the review before hashing.
 `self_review` omits it.
 
+The PR-evidence host attestation also carries `hosted_snapshot_sha256`, but the
+standalone review gate does not interpret that snapshot binding. Only a trusted
+host/coordinator may confirm the read-only collector template and inject this
+ephemeral digest; the implementation or review agent must not mint or edit it.
+
 ## Contract
 
 <!-- specrail-bounded-review-contract-v1:start -->

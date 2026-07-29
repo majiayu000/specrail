@@ -116,6 +116,15 @@ python3 checks/github_pr_evidence.py \
   --pr 123 \
   --gate-invocation-id <id> \
   --review <review.json> \
+  --hosted-snapshot-template \
+  --json > hosted-snapshot.json
+# A trusted host/coordinator confirms this snapshot and injects its digest
+# into the ephemeral host-attestation.json.
+python3 checks/github_pr_evidence.py \
+  --github-repo OWNER/REPO \
+  --pr 123 \
+  --gate-invocation-id <id> \
+  --review <review.json> \
   --review-attestation <host-attestation.json> \
   --json > pr-evidence.json
 python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
@@ -130,7 +139,11 @@ value level and writes server-canonical threads separately as
 `hosted_findings`; `pr_gate.py` validates the attestation against the raw
 review first, then overlays hosted state only in memory. Consequently,
 `review_sha256` is always computed from the review file supplied on the command
-line—callers never predict or hash a hosted overlay.
+line—callers never predict or hash a hosted overlay. The separate
+`hosted_snapshot_sha256` hashes canonical JSON for `head_sha`, `invocation_id`,
+`hosted_findings`, and `prior_review_boundary`. The second collector run must
+reproduce that trusted snapshot exactly. Implementation and review agents must
+not mint or edit either ephemeral digest.
 The standard/heavy example requires the trusted host/coordinator to inject the
 separate reviewer-lane attestation; fastlane self-review omits that flag.
 `checks/pr_gate.py` owns the offline merge-readiness decision.

@@ -70,6 +70,7 @@ ATTESTATION_COMMON_FIELDS = {
     "review_sha256",
 }
 ATTESTATION_PRIOR_FIELDS = {"prior_artifact_id", "prior_head_sha"}
+ATTESTATION_SNAPSHOT_FIELDS = {"hosted_snapshot_sha256"}
 DEFAULT_OUTCOME_LABELS = {"duplicate", "abandoned", "security_private"}
 HOSTED_FINDING_FIELDS = {
     "_created_at",
@@ -116,6 +117,40 @@ def canonical_review_sha256(review: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def hosted_snapshot_payload(
+    head_sha: Any,
+    invocation_id: Any,
+    hosted_findings: Any,
+    prior_review_boundary: Any,
+) -> dict[str, Any]:
+    return {
+        "head_sha": head_sha,
+        "hosted_findings": hosted_findings,
+        "invocation_id": invocation_id,
+        "prior_review_boundary": prior_review_boundary,
+    }
+
+
+def canonical_hosted_snapshot_sha256(
+    head_sha: Any,
+    invocation_id: Any,
+    hosted_findings: Any,
+    prior_review_boundary: Any,
+) -> str:
+    payload = json.dumps(
+        hosted_snapshot_payload(
+            head_sha,
+            invocation_id,
+            hosted_findings,
+            prior_review_boundary,
+        ),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def validate_review_attestation(
     review: dict[str, Any],
     attestation: dict[str, Any] | None,
@@ -136,7 +171,11 @@ def validate_review_attestation(
     if not _non_empty(gate_invocation_id):
         missing.append("gate_invocation_id")
 
-    allowed = ATTESTATION_COMMON_FIELDS | ATTESTATION_PRIOR_FIELDS
+    allowed = (
+        ATTESTATION_COMMON_FIELDS
+        | ATTESTATION_PRIOR_FIELDS
+        | ATTESTATION_SNAPSHOT_FIELDS
+    )
     unknown = sorted(set(attestation) - allowed)
     absent = sorted(ATTESTATION_COMMON_FIELDS - set(attestation))
     if unknown:
@@ -154,6 +193,15 @@ def validate_review_attestation(
     ):
         if field in attestation and not _non_empty(attestation.get(field)):
             reasons.append(f"review_attestation.{field} must be non-empty")
+    snapshot_digest = attestation.get("hosted_snapshot_sha256")
+    if snapshot_digest is not None and (
+        not isinstance(snapshot_digest, str)
+        or re.fullmatch(r"[0-9a-fA-F]{64}", snapshot_digest) is None
+    ):
+        reasons.append(
+            "review_attestation.hosted_snapshot_sha256 must be a 64-character "
+            "hex digest"
+        )
     if attestation.get("head_sha") != review.get("head_sha"):
         reasons.append("review_attestation.head_sha must match review head_sha")
     if attestation.get("artifact_id") != review.get("artifact_id"):
@@ -188,6 +236,34 @@ def validate_review_attestation(
     elif set(attestation) & ATTESTATION_PRIOR_FIELDS:
         reasons.append("round 1 review_attestation must not bind prior review")
     return missing, reasons
+
+
+def validate_hosted_snapshot_attestation(
+    attestation: dict[str, Any] | None,
+    *,
+    head_sha: Any,
+    invocation_id: Any,
+    hosted_findings: Any,
+    prior_review_boundary: Any,
+    required: bool,
+) -> tuple[list[str], list[str]]:
+    if not required or not isinstance(attestation, dict):
+        return [], []
+    field = "review_attestation.hosted_snapshot_sha256"
+    if "hosted_snapshot_sha256" not in attestation:
+        return [field], []
+    try:
+        expected = canonical_hosted_snapshot_sha256(
+            head_sha,
+            invocation_id,
+            hosted_findings,
+            prior_review_boundary,
+        )
+    except (TypeError, ValueError):
+        return [], ["hosted snapshot must be JSON-serializable"]
+    if attestation.get("hosted_snapshot_sha256") != expected:
+        return [], [f"{field} must match canonical hosted snapshot"]
+    return [], []
 
 
 def validate_hosted_findings(value: Any) -> list[str]:

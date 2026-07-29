@@ -109,6 +109,21 @@ def test_review_gate_allows_valid_compact_review() -> None:
     assert "compact review contract v3 valid" in result["satisfied"]
 
 
+def test_standalone_review_gate_does_not_interpret_hosted_snapshot_digest() -> None:
+    review = valid_review()
+    attestation = review_attestation_for(review)
+    assert attestation is not None
+    attestation["hosted_snapshot_sha256"] = "0" * 64
+
+    result = evaluate_review_gate(
+        review,
+        load_diff(),
+        attestation=attestation,
+    )
+
+    assert result["decision"] == "allowed", result["reasons"]
+
+
 def test_review_gate_reports_all_missing_fields() -> None:
     result = evaluate_review_gate({}, load_diff())
 

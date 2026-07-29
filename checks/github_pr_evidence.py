@@ -21,7 +21,13 @@ from github_evidence_common import (
     normalize_checks,
 )
 from github_issue_reference import normalize_issue_reference, relation_snapshot
-from rejection_items import validate_hosted_findings, validate_review_attestation
+from rejection_items import (
+    canonical_hosted_snapshot_sha256,
+    hosted_snapshot_payload,
+    validate_hosted_findings,
+    validate_hosted_snapshot_attestation,
+    validate_review_attestation,
+)
 from sensitive_enforcement import classify_sensitive_changes, sensitive_registry
 from specrail_lib import (
     PackConfig,
@@ -442,15 +448,28 @@ def build_evidence(
         invocation_id=gate_invocation_id.strip(),
         required=profile in {"standard", "heavy"},
     )
-    if hosted_findings is not None:
-        hosted_errors = validate_hosted_findings(hosted_findings)
-        if hosted_errors:
-            raise EvidenceError("; ".join(hosted_errors))
-    if prior_review_boundary is not None and (
+    hosted_findings = [] if hosted_findings is None else hosted_findings
+    hosted_errors = validate_hosted_findings(hosted_findings)
+    if hosted_errors:
+        raise EvidenceError("; ".join(hosted_errors))
+    round_two = review.get("round") == 2
+    if round_two and (
         not isinstance(prior_review_boundary, str)
         or not prior_review_boundary.strip()
     ):
-        raise EvidenceError("prior_review_boundary must be a non-empty string")
+        raise EvidenceError("round 2 prior_review_boundary must be non-empty")
+    if not round_two and prior_review_boundary is not None:
+        raise EvidenceError("round 1 prior_review_boundary must be null")
+    snapshot_missing, snapshot_reasons = validate_hosted_snapshot_attestation(
+        review_attestation,
+        head_sha=head_sha,
+        invocation_id=gate_invocation_id.strip(),
+        hosted_findings=hosted_findings,
+        prior_review_boundary=prior_review_boundary,
+        required=profile in {"standard", "heavy"},
+    )
+    if snapshot_missing or snapshot_reasons:
+        raise EvidenceError("; ".join([*snapshot_missing, *snapshot_reasons]))
     evidence: dict[str, Any] = {
         "contract_version": 3,
         "repository": repository,
@@ -478,12 +497,8 @@ def build_evidence(
         evidence["human_merge_authorization"] = authorization
     if review_attestation is not None:
         evidence["review_attestation"] = dict(review_attestation)
-    if hosted_findings is not None:
-        evidence["hosted_findings"] = [
-            dict(finding) for finding in hosted_findings
-        ]
-    if prior_review_boundary is not None:
-        evidence["prior_review_boundary"] = prior_review_boundary
+    evidence["hosted_findings"] = [dict(finding) for finding in hosted_findings]
+    evidence["prior_review_boundary"] = prior_review_boundary
     if checks_unavailable is not None:
         evidence["checks_unavailable"] = checks_unavailable
         default_base_ref = checks_unavailable.get("default_base_ref")
@@ -504,20 +519,17 @@ def _load_json(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
-def collect_evidence(
+def collect_snapshot(
     github_repo: str,
     pr_number: int,
     *,
     profile: str,
     gate_invocation_id: str,
     review: dict[str, Any],
-    authorization: dict[str, Any] | None = None,
-    checks_unavailable: dict[str, Any] | None = None,
-    review_attestation: dict[str, Any] | None = None,
     expected_issue: int | None = None,
     repo: Path | None = None,
     config: PackConfig | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]], str | None]:
     """Collect twice and reject a moving head, issue relation, or file set."""
 
     parse_github_repo(github_repo)
@@ -530,7 +542,7 @@ def collect_evidence(
     before_head = _require_string(before, "headRefOid")
     before_head_repository = _head_repository_name(before)
     prior_review_boundary = None
-    if isinstance(review.get("prior_review"), dict):
+    if review.get("round") == 2:
         prior_review_boundary = collect_head_push_boundary(
             before_head_repository,
             _require_string(before, "headRefName"),
@@ -605,6 +617,33 @@ def collect_evidence(
             "hosted review findings changed while collecting gate evidence; "
             "rerun collection"
         )
+    return after, issue_payload, after_hosted, prior_review_boundary
+
+
+def collect_evidence(
+    github_repo: str,
+    pr_number: int,
+    *,
+    profile: str,
+    gate_invocation_id: str,
+    review: dict[str, Any],
+    authorization: dict[str, Any] | None = None,
+    checks_unavailable: dict[str, Any] | None = None,
+    review_attestation: dict[str, Any] | None = None,
+    expected_issue: int | None = None,
+    repo: Path | None = None,
+    config: PackConfig | None = None,
+) -> dict[str, Any]:
+    after, issue_payload, hosted, boundary = collect_snapshot(
+        github_repo,
+        pr_number,
+        profile=profile,
+        gate_invocation_id=gate_invocation_id,
+        review=review,
+        expected_issue=expected_issue,
+        repo=repo,
+        config=config,
+    )
     return build_evidence(
         after,
         repository=github_repo,
@@ -618,9 +657,47 @@ def collect_evidence(
         authorization=authorization,
         checks_unavailable=checks_unavailable,
         review_attestation=review_attestation,
-        hosted_findings=after_hosted,
-        prior_review_boundary=prior_review_boundary,
+        hosted_findings=hosted,
+        prior_review_boundary=boundary,
     )
+
+
+def collect_hosted_snapshot_template(
+    github_repo: str,
+    pr_number: int,
+    *,
+    profile: str,
+    gate_invocation_id: str,
+    review: dict[str, Any],
+    expected_issue: int | None = None,
+    repo: Path | None = None,
+    config: PackConfig | None = None,
+) -> dict[str, Any]:
+    if profile not in PROFILES:
+        raise EvidenceError("profile must be fastlane, standard, or heavy")
+    if not isinstance(gate_invocation_id, str) or not gate_invocation_id.strip():
+        raise EvidenceError("gate_invocation_id must be a non-empty string")
+    gate_invocation_id = gate_invocation_id.strip()
+    after, _issue, hosted, boundary = collect_snapshot(
+        github_repo,
+        pr_number,
+        profile=profile,
+        gate_invocation_id=gate_invocation_id,
+        review=review,
+        expected_issue=expected_issue,
+        repo=repo,
+        config=config,
+    )
+    payload = hosted_snapshot_payload(
+        _require_string(after, "headRefOid"),
+        gate_invocation_id,
+        hosted,
+        boundary,
+    )
+    payload["hosted_snapshot_sha256"] = canonical_hosted_snapshot_sha256(
+        **payload
+    )
+    return payload
 
 
 def main() -> int:
@@ -642,6 +719,11 @@ def main() -> int:
     parser.add_argument(
         "--checks-unavailable",
         help="Trusted hosted-checks-unavailable declaration JSON",
+    )
+    parser.add_argument(
+        "--hosted-snapshot-template",
+        action="store_true",
+        help="Collect the trusted hosted snapshot template without PR evidence",
     )
     parser.add_argument("--json", action="store_true", help="Retained for CLI symmetry")
     args = parser.parse_args()
@@ -674,19 +756,27 @@ def main() -> int:
                 attestation_path,
                 "review attestation",
             )
-        evidence = collect_evidence(
-            args.github_repo,
-            args.pr,
-            profile=args.profile,
-            gate_invocation_id=args.gate_invocation_id,
-            review=_load_json(review_path, "review"),
-            authorization=authorization,
-            checks_unavailable=checks_unavailable,
-            review_attestation=review_attestation,
-            expected_issue=args.issue,
-            repo=repo,
-            config=load_pack(repo),
-        )
+        common = {
+            "profile": args.profile,
+            "gate_invocation_id": args.gate_invocation_id,
+            "review": _load_json(review_path, "review"),
+            "expected_issue": args.issue,
+            "repo": repo,
+            "config": load_pack(repo),
+        }
+        if args.hosted_snapshot_template:
+            evidence = collect_hosted_snapshot_template(
+                args.github_repo, args.pr, **common
+            )
+        else:
+            evidence = collect_evidence(
+                args.github_repo,
+                args.pr,
+                authorization=authorization,
+                checks_unavailable=checks_unavailable,
+                review_attestation=review_attestation,
+                **common,
+            )
     except (EvidenceError, SpecRailError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

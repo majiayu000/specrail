@@ -23,6 +23,8 @@
     "enforcement_sensitive",
     "sensitive_classification",
     "review",
+    "hosted_findings",
+    "prior_review_boundary",
     "gate_invocation_id"
   ],
   "properties": {
@@ -180,14 +182,17 @@
       }
     },
     "prior_review_boundary": {
-      "type": "string", "minLength": 1, "pattern": ".*\\S.*"
+      "anyOf": [
+        {"type": "null"},
+        {"type": "string", "minLength": 1, "pattern": ".*\\S.*"}
+      ]
     },
     "review_attestation": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "artifact_id", "head_sha", "invocation_id", "lane_id", "reviewer_actor",
-        "review_sha256"
+        "review_sha256", "hosted_snapshot_sha256"
       ],
       "properties": {
         "artifact_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
@@ -196,6 +201,9 @@
         "lane_id": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
         "reviewer_actor": {"type": "string", "minLength": 1, "pattern": ".*\\S.*"},
         "review_sha256": {
+          "type": "string", "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "hosted_snapshot_sha256": {
           "type": "string", "pattern": "^[0-9a-fA-F]{64}$"
         },
         "prior_artifact_id": {
@@ -261,6 +269,9 @@
       },
       "then": {
         "properties": {
+          "prior_review_boundary": {
+            "type": "string", "minLength": 1, "pattern": ".*\\S.*"
+          },
           "review_attestation": {
             "required": ["prior_artifact_id", "prior_head_sha"]
           }
@@ -268,6 +279,7 @@
       },
       "else": {
         "properties": {
+          "prior_review_boundary": {"type": "null"},
           "review_attestation": {
             "properties": {
               "prior_artifact_id": {"type": "null"},

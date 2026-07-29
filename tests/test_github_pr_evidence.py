@@ -15,13 +15,17 @@ from github_pr_evidence import (
     build_evidence,
     collect_evidence,
     collect_head_push_boundary,
+    collect_hosted_snapshot_template,
     collect_hosted_findings,
     collect_pr_view,
     combine_review_findings,
 )
 from pr_gate import evaluate_pr_gate
 from review_json_gate import evaluate_review_gate
-from rejection_items import canonical_review_sha256
+from rejection_items import (
+    canonical_hosted_snapshot_sha256,
+    canonical_review_sha256,
+)
 from specrail_lib import PackConfig
 
 
@@ -70,6 +74,8 @@ def review_attestation(
     head: str = "a" * 40,
     invocation_id: str = "gate-1",
     review_payload: dict[str, object] | None = None,
+    hosted_findings: list[dict[str, object]] | None = None,
+    prior_review_boundary: str | None = None,
 ) -> dict[str, str]:
     current = review() if review_payload is None else review_payload
     result = {
@@ -79,6 +85,12 @@ def review_attestation(
         "review_sha256": canonical_review_sha256(current),
         "head_sha": head,
         "invocation_id": invocation_id,
+        "hosted_snapshot_sha256": canonical_hosted_snapshot_sha256(
+            head,
+            invocation_id,
+            hosted_findings or [],
+            prior_review_boundary,
+        ),
     }
     prior = current.get("prior_review")
     if current.get("round") == 2 and isinstance(prior, dict):
@@ -193,6 +205,21 @@ def test_review_attestation_is_bound_to_current_head_and_invocation(
             gate_invocation_id="gate-1",
             review=review(),
             review_attestation=review_attestation(invocation_id="old-gate"),
+            expected_issue=208,
+            repo=tmp_path,
+            config=config(tmp_path),
+        )
+
+    missing_snapshot = review_attestation()
+    missing_snapshot.pop("hosted_snapshot_sha256")
+    with pytest.raises(EvidenceError, match="hosted_snapshot_sha256"):
+        build_evidence(
+            pr_payload(),
+            repository="acme/widgets",
+            profile="standard",
+            gate_invocation_id="gate-1",
+            review=review(),
+            review_attestation=missing_snapshot,
             expected_issue=208,
             repo=tmp_path,
             config=config(tmp_path),
@@ -886,7 +913,8 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
         gate_invocation_id="gate-1",
         review=current_review,
         review_attestation=review_attestation(
-            review_payload=current_review
+            review_payload=current_review,
+            hosted_findings=[hosted_finding],
         ),
         repo=tmp_path,
         config=config(tmp_path, ["src/**"]),
@@ -896,6 +924,80 @@ def test_sensitive_fastlane_collection_includes_hosted_findings(
     assert hosted_calls == ["a" * 40, "a" * 40]
     assert result["review"] == current_review
     assert result["hosted_findings"] == [hosted_finding]
+
+
+def test_collector_rejects_attestation_for_a_different_hosted_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot = pr_payload()
+    hosted_finding = {
+        "id": "hosted:changed",
+        "severity": "P2",
+        "status": "unresolved",
+        "summary": "Appeared after attestation.",
+        "fix_paths": ["src/app.py"],
+        "origin": "hosted",
+        "outdated": False,
+    }
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_pr_view",
+        lambda _repo, _pr: snapshot,
+    )
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_hosted_findings",
+        lambda _repo, _pr, _head: [dict(hosted_finding)],
+    )
+    current_review = review()
+
+    with pytest.raises(EvidenceError, match="canonical hosted snapshot"):
+        collect_evidence(
+            "acme/widgets",
+            42,
+            profile="standard",
+            gate_invocation_id="gate-1",
+            review=current_review,
+            review_attestation=review_attestation(
+                review_payload=current_review,
+            ),
+            repo=tmp_path,
+            config=config(tmp_path),
+        )
+
+
+def test_hosted_snapshot_template_uses_the_canonical_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hosted = [
+        {
+            "id": "hosted:P2-template",
+            "severity": "P2",
+            "status": "unresolved",
+            "summary": "Template finding.",
+            "fix_paths": ["src/app.py"],
+            "origin": "hosted",
+            "outdated": False,
+        }
+    ]
+    monkeypatch.setattr(
+        "github_pr_evidence.collect_snapshot",
+        lambda *_args, **_kwargs: (pr_payload(), None, hosted, None),
+    )
+
+    template = collect_hosted_snapshot_template(
+        "acme/widgets",
+        42,
+        profile="standard",
+        gate_invocation_id="gate-1",
+        review=review(),
+    )
+
+    assert template["hosted_snapshot_sha256"] == canonical_hosted_snapshot_sha256(
+        "a" * 40,
+        "gate-1",
+        hosted,
+        None,
+    )
 
 
 def test_round_two_local_finding_collects_and_passes_pr_gate(
@@ -1023,6 +1125,7 @@ def test_round_two_local_finding_collects_and_passes_pr_gate(
         review_attestation=review_attestation(
             head=current_head,
             review_payload=current,
+            prior_review_boundary="2026-07-29T00:00:00Z",
         ),
         repo=repo,
         config=config(repo),
@@ -1106,6 +1209,8 @@ def test_collect_evidence_rejects_head_push_activity_drift(
         "2026-07-28T09:31:00Z",
     ]
     current_review = review()
+    current_review["round"] = 2
+    current_review["mode"] = "diff_only"
     current_review["prior_review"] = review(head="b" * 40)
     monkeypatch.setattr(
         "github_pr_evidence.collect_pr_view",
@@ -1144,6 +1249,8 @@ def test_collect_evidence_uses_fork_head_repository_for_boundary(
     snapshots = [first, second]
     boundary_repositories: list[str] = []
     current_review = review()
+    current_review["round"] = 2
+    current_review["mode"] = "diff_only"
     current_review["prior_review"] = review(head="b" * 40)
     monkeypatch.setattr(
         "github_pr_evidence.collect_pr_view",
@@ -1167,7 +1274,10 @@ def test_collect_evidence_uses_fork_head_repository_for_boundary(
         profile="standard",
         gate_invocation_id="gate-1",
         review=current_review,
-        review_attestation=review_attestation(review_payload=current_review),
+        review_attestation=review_attestation(
+            review_payload=current_review,
+            prior_review_boundary="2026-07-28T09:30:00Z",
+        ),
     )
 
     assert boundary_repositories == ["forker/widgets-fork", "forker/widgets-fork"]
