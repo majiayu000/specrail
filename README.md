@@ -125,7 +125,12 @@ python3 checks/pr_gate.py --repo . --evidence pr-evidence.json --json
 It verifies the complete REST-paginated changed-file set against GitHub's
 reported count and includes current hosted review-thread state for
 the canonical standard/heavy profiles. Fastlane never requires hosted/GraphQL
-review evidence.
+review evidence. The collector preserves `review` byte-for-byte at the JSON
+value level and writes server-canonical threads separately as
+`hosted_findings`; `pr_gate.py` validates the attestation against the raw
+review first, then overlays hosted state only in memory. Consequently,
+`review_sha256` is always computed from the review file supplied on the command
+line—callers never predict or hash a hosted overlay.
 The standard/heavy example requires the trusted host/coordinator to inject the
 separate reviewer-lane attestation; fastlane self-review omits that flag.
 `checks/pr_gate.py` owns the offline merge-readiness decision.

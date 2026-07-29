@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from checks_availability import evaluate_checks_unavailable
-from github_evidence_common import EvidenceError
+from github_evidence_common import EvidenceError, combine_review_findings
 from github_pr_evidence import parse_github_repo
 from rejection_items import (
     add_prior_rejection_argument,
@@ -22,6 +22,7 @@ from rejection_items import (
     finalize_items,
     item_from_reason,
     items_from_legacy,
+    validate_review_attestation,
 )
 from review_json_gate import evaluate_review_gate
 from sensitive_enforcement import classify_sensitive_changes, sensitive_registry
@@ -56,11 +57,13 @@ EVIDENCE_KEYS = {
     "gate_query_head_sha",
     "head_sha",
     "human_merge_authorization",
+    "hosted_findings",
     "is_draft",
     "linked_issue",
     "merge_state",
     "pr",
     "profile",
+    "prior_review_boundary",
     "repository",
     "review",
     "review_attestation",
@@ -569,14 +572,41 @@ def evaluate_pr_gate(
     review = evidence.get("review")
     review_result: dict[str, Any] | None = None
     if isinstance(review, dict):
-        review_diff, review_diff_bytes, review_diff_reasons = _review_diff(
+        independent_required = profile_policy.get("requires_independent_review")
+        att_missing, att_reasons = validate_review_attestation(
             review,
+            evidence.get("review_attestation"),
+            gate_invocation_id=evidence.get("gate_invocation_id"),
+            required=(
+                independent_required
+                if isinstance(independent_required, bool)
+                else profile in {"standard", "heavy"}
+            ),
+        )
+        missing.extend(f"review: {field}" for field in att_missing)
+        reasons.extend(f"review: {reason}" for reason in att_reasons)
+        boundary = evidence.get("prior_review_boundary")
+        if "prior_review_boundary" in evidence and not _non_empty_string(boundary):
+            reasons.append("prior_review_boundary must be a non-empty string")
+        try:
+            semantic_review = combine_review_findings(
+                review,
+                evidence.get("hosted_findings", []),
+                prior_review_boundary=(
+                    str(boundary) if _non_empty_string(boundary) else None
+                ),
+            )
+        except EvidenceError as exc:
+            reasons.append(str(exc))
+            semantic_review = review
+        review_diff, review_diff_bytes, review_diff_reasons = _review_diff(
+            semantic_review,
             evidence.get("base_sha"),
             repo,
         )
         reasons.extend(review_diff_reasons)
         review_result = evaluate_review_gate(
-            review,
+            semantic_review,
             review_diff,
             repo=repo,
             diff_bytes=review_diff_bytes,
@@ -586,7 +616,7 @@ def evaluate_pr_gate(
                 "requires_independent_review"
             ),
             gate_invocation_id=evidence.get("gate_invocation_id"),
-            attestation=evidence.get("review_attestation"),
+            _attestation_validated=True,
         )
         if review.get("repository") != evidence.get("repository"):
             reasons.append("review.repository must match PR evidence")

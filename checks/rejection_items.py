@@ -71,6 +71,33 @@ ATTESTATION_COMMON_FIELDS = {
 }
 ATTESTATION_PRIOR_FIELDS = {"prior_artifact_id", "prior_head_sha"}
 DEFAULT_OUTCOME_LABELS = {"duplicate", "abandoned", "security_private"}
+HOSTED_FINDING_FIELDS = {
+    "_created_at",
+    "_last_edited_at",
+    "_original_head_sha",
+    "_review_head_sha",
+    "_review_id",
+    "_review_submitted_at",
+    "_subject_type",
+    "fix_paths",
+    "id",
+    "line",
+    "origin",
+    "outdated",
+    "path",
+    "severity",
+    "status",
+    "summary",
+}
+HOSTED_FINDING_REQUIRED = {
+    "fix_paths",
+    "id",
+    "origin",
+    "outdated",
+    "severity",
+    "status",
+    "summary",
+}
 
 
 def _non_empty(value: Any) -> bool:
@@ -161,6 +188,82 @@ def validate_review_attestation(
     elif set(attestation) & ATTESTATION_PRIOR_FIELDS:
         reasons.append("round 1 review_attestation must not bind prior review")
     return missing, reasons
+
+
+def validate_hosted_findings(value: Any) -> list[str]:
+    """Validate the closed server-canonical hosted finding evidence layer."""
+
+    if not isinstance(value, list):
+        return ["hosted_findings must be an array"]
+    reasons: list[str] = []
+    seen: set[str] = set()
+    for index, finding in enumerate(value, start=1):
+        prefix = f"hosted finding #{index}"
+        if not isinstance(finding, dict):
+            reasons.append(f"{prefix} must be an object")
+            continue
+        unknown = sorted(set(finding) - HOSTED_FINDING_FIELDS)
+        missing = sorted(HOSTED_FINDING_REQUIRED - set(finding))
+        if unknown:
+            reasons.append(
+                f"{prefix} contains unsupported fields: {', '.join(unknown)}"
+            )
+        reasons.extend(f"{prefix} missing {field}" for field in missing)
+        for field in (
+            "_created_at",
+            "_review_id",
+            "_review_submitted_at",
+            "id",
+            "summary",
+        ):
+            if field in finding and not _non_empty(finding[field]):
+                reasons.append(f"{prefix} {field} must be non-empty")
+        finding_id = finding.get("id")
+        if _non_empty(finding_id):
+            if str(finding_id) in seen:
+                reasons.append(f"{prefix} id must be unique")
+            seen.add(str(finding_id))
+        if finding.get("origin") != "hosted":
+            reasons.append(f"{prefix} origin must be hosted")
+        if finding.get("severity") not in {"P0", "P1", "P2", "P3"}:
+            reasons.append(f"{prefix} severity is invalid")
+        if finding.get("status") not in {"resolved", "unresolved"}:
+            reasons.append(f"{prefix} status is invalid")
+        if (
+            "_subject_type" in finding
+            and finding.get("_subject_type") not in {"FILE", "LINE"}
+        ):
+            reasons.append(f"{prefix} _subject_type is invalid")
+        if not isinstance(finding.get("outdated"), bool):
+            reasons.append(f"{prefix} outdated must be a boolean")
+        paths = finding.get("fix_paths")
+        if (
+            not isinstance(paths, list)
+            or not paths
+            or not all(_non_empty(path) for path in paths)
+        ):
+            reasons.append(f"{prefix} fix_paths must contain non-empty strings")
+        for field in (
+            "_original_head_sha",
+            "_review_head_sha",
+        ):
+            if field in finding and (
+                not isinstance(finding[field], str)
+                or re.fullmatch(r"[0-9a-fA-F]{40}", finding[field]) is None
+            ):
+                reasons.append(f"{prefix} {field} must be a 40-character Git SHA")
+        if "_last_edited_at" in finding and finding["_last_edited_at"] is not None:
+            if not _non_empty(finding["_last_edited_at"]):
+                reasons.append(f"{prefix} _last_edited_at must be non-empty or null")
+        if "path" in finding and not _non_empty(finding.get("path")):
+            reasons.append(f"{prefix} path must be non-empty")
+        if "line" in finding and (
+            not isinstance(finding["line"], int)
+            or isinstance(finding["line"], bool)
+            or finding["line"] <= 0
+        ):
+            reasons.append(f"{prefix} line must be positive")
+    return reasons
 
 
 def validate_issue_labels(

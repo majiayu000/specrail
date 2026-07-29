@@ -116,7 +116,11 @@ cannot approve or merge. Raw current and embedded prior review artifacts never
 contain `review_attestation`; the trusted host supplies one separate current
 attestation, which also binds prior artifact ID and head for round 2.
 Its `review_sha256` binds the complete canonical raw review JSON, including the
-embedded prior artifact.
+embedded prior artifact. Hash the raw review file directly. The collector
+keeps it unchanged, stores live server threads in top-level `hosted_findings`,
+and the PR gate combines those layers only after attestation validation.
+Round-2 embedded local findings remain complete; only authenticated
+hosted-origin history is eligible for server reconciliation.
 
 ## PR Gate
 

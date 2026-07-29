@@ -14,7 +14,12 @@ from schema_validation import (
     load_json_schema,
     validate_instance,
 )
-from rejection_items import finalize_items, is_substantive_text, item_from_reason
+from rejection_items import (
+    finalize_items,
+    is_substantive_text,
+    item_from_reason,
+    validate_hosted_findings,
+)
 
 
 STATUS_CONTEXT_STATES = {"SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED"}
@@ -642,6 +647,9 @@ def combine_review_findings(
     prior_review_boundary: str | None = None,
 ) -> dict[str, Any]:
     """Reconcile local findings with current and authenticated historical threads."""
+    hosted_errors = validate_hosted_findings(hosted_findings)
+    if hosted_errors:
+        raise EvidenceError("; ".join(hosted_errors))
     hosted_by_id: dict[str, dict[str, Any]] = {}
     for finding in hosted_findings:
         finding_id = finding.get("id")
@@ -665,10 +673,15 @@ def combine_review_findings(
             if not isinstance(finding, dict):
                 normalized["findings"].append(finding)
                 continue
-            excluded = {"origin", "outdated", "subject_type"}
-            if trusted_history:
+            claimed_hosted = finding.get("origin") == "hosted"
+            excluded = {"subject_type"}
+            if not trusted_history and claimed_hosted:
+                excluded.update({"origin", "outdated"})
+            if trusted_history and claimed_hosted:
                 excluded.update(
                     {
+                        "origin",
+                        "outdated",
                         "severity",
                         "status",
                         "summary",
@@ -684,7 +697,7 @@ def combine_review_findings(
                 if not key.startswith("_") and key not in excluded
             }
             canonical = hosted_by_id.get(str(sanitized.get("id")))
-            if trusted_history and _trusted_hosted_history(
+            if trusted_history and claimed_hosted and _trusted_hosted_history(
                 artifact,
                 canonical,
                 prior_review_boundary,

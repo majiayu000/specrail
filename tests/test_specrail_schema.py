@@ -352,6 +352,80 @@ def test_optional_closed_fields_reject_explicit_null() -> None:
         validate_instance(schema, checks, "available checks null declaration")
 
 
+def test_hosted_findings_schema_runtime_parity_matrix() -> None:
+    schema = load_json_schema(ROOT / "schemas" / "pr_review_gate.schema.json")
+    hosted = {
+        "id": "hosted:P2-follow-up",
+        "severity": "P2",
+        "status": "unresolved",
+        "summary": "Follow up after merge.",
+        "origin": "hosted",
+        "outdated": False,
+        "fix_paths": ["src/app.py"],
+    }
+    cases = [
+        (("hosted_findings",), None, "hosted_findings must be an array"),
+        (
+            ("hosted_findings", 0, "id"),
+            " ",
+            "hosted finding #1 id must be non-empty",
+        ),
+        (
+            ("hosted_findings", 0, "summary"),
+            None,
+            "hosted finding #1 summary must be non-empty",
+        ),
+        (
+            ("hosted_findings", 0, "fix_paths", 0),
+            " ",
+            "hosted finding #1 fix_paths must contain non-empty strings",
+        ),
+        (
+            ("hosted_findings", 0, "_review_id"),
+            None,
+            "hosted finding #1 _review_id must be non-empty",
+        ),
+        (
+            ("hosted_findings", 0, "_review_head_sha"),
+            None,
+            "hosted finding #1 _review_head_sha must be a 40-character Git SHA",
+        ),
+        (
+            ("prior_review_boundary",),
+            None,
+            "prior_review_boundary must be a non-empty string",
+        ),
+        (
+            ("prior_review_boundary",),
+            " ",
+            "prior_review_boundary must be a non-empty string",
+        ),
+    ]
+    for path, value, expected_reason in cases:
+        payload = valid_pr_evidence()
+        payload["hosted_findings"] = [copy.deepcopy(hosted)]
+        if path == ("prior_review_boundary",):
+            payload["prior_review_boundary"] = value
+        else:
+            set_path(payload, path, value)
+        with pytest.raises(SpecRailError):
+            validate_instance(schema, payload, ".".join(map(str, path)))
+        runtime = evaluate_pr_gate(payload, None, None)
+        assert runtime["decision"] == "blocked"
+        assert expected_reason in " ".join(
+            [*runtime["missing"], *runtime["reasons"]]
+        )
+
+    unknown = valid_pr_evidence()
+    unknown["hosted_findings"] = [{**hosted, "caller_claim": "trusted"}]
+    with pytest.raises(SpecRailError):
+        validate_instance(schema, unknown, "unknown hosted finding field")
+    runtime = evaluate_pr_gate(unknown, None, None)
+    assert "hosted finding #1 contains unsupported fields: caller_claim" in " ".join(
+        runtime["reasons"]
+    )
+
+
 def test_round_two_attestation_binds_current_and_prior_artifacts() -> None:
     schema = load_json_schema(ROOT / "schemas" / "pr_review_gate.schema.json")
     payload = valid_pr_evidence()
