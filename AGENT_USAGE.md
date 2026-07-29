@@ -200,12 +200,37 @@ unresolved P0/P1 finding forward.
 For a partial implementation slice whose body contains a standalone
 `Refs #<issue-number>` directive, bind the intended issue explicitly:
 
+Fastlane uses the same single-stage self-review collection with `--issue`:
+
 ```sh
 python3 checks/github_pr_evidence.py \
   --github-repo OWNER/REPO \
   --pr <pr-number> \
   --issue <issue-number> \
-  --profile <profile> \
+  --profile fastlane \
+  --gate-invocation-id <id> \
+  --review <review.json> \
+  --json > pr-evidence.json
+```
+
+Standard/heavy keeps `--issue` on both trusted stages:
+
+```sh
+python3 checks/github_pr_evidence.py \
+  --github-repo OWNER/REPO \
+  --pr <pr-number> \
+  --issue <issue-number> \
+  --profile <standard|heavy> \
+  --gate-invocation-id <id> \
+  --review <review.json> \
+  --hosted-snapshot-template \
+  --json > hosted-snapshot.json
+# A trusted host/coordinator confirms the snapshot and injects its digest.
+python3 checks/github_pr_evidence.py \
+  --github-repo OWNER/REPO \
+  --pr <pr-number> \
+  --issue <issue-number> \
+  --profile <standard|heavy> \
   --gate-invocation-id <id> \
   --review <review.json> \
   --review-attestation <host-attestation.json> \
