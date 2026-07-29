@@ -261,6 +261,16 @@ permission.
 10. Before treating an agent review artifact as publishable evidence, validate
     it against the diff:
 
+Fastlane `self_review`:
+
+```sh
+python3 checks/review_json_gate.py --repo . \
+  --review artifacts/review/pr-<pr-number>.json --diff <patch> \
+  --json
+```
+
+Standard/heavy `independent_lane` with the trusted host attestation:
+
 ```sh
 python3 checks/review_json_gate.py --repo . \
   --review artifacts/review/pr-<pr-number>.json --diff <patch> \

@@ -166,6 +166,16 @@ Issues.
 
 Validate an advisory review artifact against a unified diff:
 
+Fastlane `self_review`:
+
+```sh
+python3 checks/review_json_gate.py --repo . \
+  --review artifacts/review/pr-123.json --diff pr.diff \
+  --json
+```
+
+Standard/heavy `independent_lane`:
+
 ```sh
 python3 checks/review_json_gate.py --repo . \
   --review artifacts/review/pr-123.json --diff pr.diff \
