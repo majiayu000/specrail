@@ -37,6 +37,11 @@ def write_skill_repo(repo: Path, name: str = "specrail-example") -> None:
             {
                 "version": 1,
                 "algorithm": "sha256",
+                "profiles": {
+                    "core": [name],
+                    "heavy": [name],
+                    "all": [name],
+                },
                 "skills": [
                     {
                         "name": name,
@@ -73,6 +78,24 @@ def add_locked_skill(repo: Path, name: str) -> None:
             "computedHash": f"sha256:{digest}",
         }
     )
+    lock["skills"].sort(key=lambda item: item["path"])
+    for profile in lock["profiles"].values():
+        profile.append(name)
+        profile.sort()
+    write_text(lock_path, json.dumps(lock))
+
+
+def write_profiled_skill_repo(repo: Path) -> None:
+    write_skill_repo(repo, "specrail")
+    add_locked_skill(repo, "specrail-heavy")
+    add_locked_skill(repo, "implx")
+    lock_path = repo / "skills-lock.json"
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["profiles"] = {
+        "core": ["specrail"],
+        "heavy": ["specrail", "specrail-heavy"],
+        "all": ["implx", "specrail", "specrail-heavy"],
+    }
     write_text(lock_path, json.dumps(lock))
 
 
@@ -128,6 +151,90 @@ def test_install_codex_skills_apply_syncs_locked_skill(tmp_path: Path) -> None:
         repo / "skills" / "specrail-example" / "SKILL.md"
     ).read_text(encoding="utf-8")
     assert not (target / "specrail-example" / "stale.txt").exists()
+
+
+def test_default_core_profile_installs_only_core_skill(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_profiled_skill_repo(repo)
+
+    result = run_installer(repo, target, "--apply")
+
+    assert result.returncode == 0
+    assert "profile: core" in result.stdout
+    assert (target / "specrail" / "SKILL.md").is_file()
+    assert not (target / "specrail-heavy").exists()
+    assert not (target / "implx").exists()
+
+
+def test_heavy_profile_installs_core_and_heavy_only(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_profiled_skill_repo(repo)
+
+    result = run_installer(repo, target, "--profile", "heavy", "--apply")
+
+    assert result.returncode == 0
+    assert "profile: heavy" in result.stdout
+    assert (target / "specrail" / "SKILL.md").is_file()
+    assert (target / "specrail-heavy" / "SKILL.md").is_file()
+    assert not (target / "implx").exists()
+
+
+def test_all_profile_installs_every_locked_skill(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_profiled_skill_repo(repo)
+
+    result = run_installer(repo, target, "--profile", "all", "--apply")
+
+    assert result.returncode == 0
+    assert "profile: all" in result.stdout
+    for name in ("specrail", "specrail-heavy", "implx"):
+        assert (target / name / "SKILL.md").is_file()
+
+
+def test_switching_from_all_to_core_removes_only_stale_managed_skills(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_profiled_skill_repo(repo)
+    assert (
+        run_installer(repo, target, "--profile", "all", "--apply").returncode
+        == 0
+    )
+    write_text(target / "user-owned" / "SKILL.md", "keep me\n")
+
+    result = run_installer(repo, target, "--profile", "core", "--apply")
+
+    assert result.returncode == 0
+    assert "remove stale managed skill" in result.stdout
+    assert "installed 1 skills" in result.stdout
+    assert "removed 2 stale managed skills" in result.stdout
+    assert (target / "specrail" / "SKILL.md").is_file()
+    assert not (target / "specrail-heavy").exists()
+    assert not (target / "implx").exists()
+    assert (target / "user-owned" / "SKILL.md").read_text() == "keep me\n"
+
+
+def test_profile_switch_dry_run_does_not_remove_stale_skills(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_profiled_skill_repo(repo)
+    assert (
+        run_installer(repo, target, "--profile", "all", "--apply").returncode
+        == 0
+    )
+
+    result = run_installer(repo, target, "--profile", "core")
+
+    assert result.returncode == 0
+    assert "remove stale managed skill" in result.stdout
+    assert (target / "specrail-heavy" / "SKILL.md").is_file()
+    assert (target / "implx" / "SKILL.md").is_file()
 
 
 def test_install_codex_skills_refuses_source_target(tmp_path: Path) -> None:
@@ -190,6 +297,25 @@ def test_check_installed_reports_all_missing_and_drift(tmp_path: Path) -> None:
     assert "rerun this installer with --apply" in result.stderr
     assert "restart Codex" in result.stderr
     assert not (target / "specrail-missing").exists()
+
+
+def test_check_installed_reports_unselected_managed_skill_as_stale(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    target = tmp_path / "target"
+    write_profiled_skill_repo(repo)
+    assert (
+        run_installer(repo, target, "--profile", "all", "--apply").returncode
+        == 0
+    )
+
+    result = run_installer(repo, target, "--profile", "core", "--check-installed")
+
+    assert result.returncode == 1
+    assert "specrail: match" in result.stdout
+    assert "specrail-heavy: stale" in result.stdout
+    assert "implx: stale" in result.stdout
 
 
 def test_check_installed_rejects_symlink_escape(tmp_path: Path) -> None:
