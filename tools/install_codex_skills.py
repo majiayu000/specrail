@@ -329,25 +329,36 @@ def install_skills(
         messages.append(f"remove stale managed skill: {destination}")
 
     if apply:
-        for destination in stale_destinations:
-            shutil.rmtree(destination)
-        for skill in skills:
-            destination = target_dir / skill.name
-            if destination.exists():
-                shutil.rmtree(destination)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(skill.source_dir, destination)
+        try:
+            for skill in skills:
+                destination = target_dir / skill.name
+                if destination.exists():
+                    shutil.rmtree(destination)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(skill.source_dir, destination)
 
-        for skill in skills:
-            installed_file = target_dir / skill.name / "SKILL.md"
-            if not installed_file.is_file():
-                raise InstallError(f"installed skill missing SKILL.md: {installed_file}")
-            digest = "sha256:" + hashlib.sha256(installed_file.read_bytes()).hexdigest()
-            if digest != skill.expected_hash:
-                raise InstallError(
-                    f"installed skill hash mismatch for {skill.name}: "
-                    f"expected {skill.expected_hash}, got {digest}"
+            for skill in skills:
+                installed_file = target_dir / skill.name / "SKILL.md"
+                if not installed_file.is_file():
+                    raise InstallError(
+                        f"installed skill missing SKILL.md: {installed_file}"
+                    )
+                digest = (
+                    "sha256:"
+                    + hashlib.sha256(installed_file.read_bytes()).hexdigest()
                 )
+                if digest != skill.expected_hash:
+                    raise InstallError(
+                        f"installed skill hash mismatch for {skill.name}: "
+                        f"expected {skill.expected_hash}, got {digest}"
+                    )
+
+            for destination in stale_destinations:
+                shutil.rmtree(destination)
+        except OSError as exc:
+            raise InstallError(
+                f"cannot apply profile {profile} to {target_dir}: {exc}"
+            ) from exc
     return InstallResult(
         messages=tuple(messages),
         installed_count=len(skills),
